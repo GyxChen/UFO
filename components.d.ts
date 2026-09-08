@@ -11,6 +11,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    FloatingWindow: typeof import('./src/components/FloatingWindow.vue')['default']
     GreetComponent: typeof import('./src/components/GreetComponent.vue')['default']
+    MainWindow: typeof import('./src/components/MainWindow.vue')['default']
   }
 }

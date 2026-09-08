@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-greet"
+description = "Enables the greet command."
+commands.allow = ["greet"]

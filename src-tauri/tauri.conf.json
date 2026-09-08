@@ -12,11 +12,36 @@
   "app": {
     "windows": [
       {
+        "label": "floating",
+        "title": "tauri-app launcher",
+        "width": 72,
+        "height": 72,
+        "x": 24,
+        "y": 24,
+        "visible": true,
+        "decorations": false,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": true
+      },
+      {
+        "label": "main",
         "title": "tauri-app",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "visible": false,
+        "skipTaskbar": true
       }
     ],
+    "trayIcon": {
+      "id": "main",
+      "iconPath": "icons/icon.png",
+      "tooltip": "tauri-app",
+      "showMenuOnLeftClick": false
+    },
     "security": {
       "csp": {
         "default-src": "'self' customprotocol: asset:",
