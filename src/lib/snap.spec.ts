@@ -57,22 +57,57 @@ describe('snapToWorkArea', () => {
     })
   })
 
-  it('does not snap when outside the threshold', () => {
+  it('snaps to the nearest edge when outside the threshold', () => {
     expect(snapToWorkArea({ x: 25, y: 200 }, windowSize, baseSize, workArea)).toEqual({
-      position: { x: 25, y: 200 },
-      size: { width: 80, height: 80 },
-      docked: { left: false, top: false, right: false, bottom: false },
+      position: { x: 0, y: 200 },
+      size: { width: 80, height: 320 },
+      docked: { left: true, top: false, right: false, bottom: false },
     })
   })
 
-  it('restores the base size when dragged away from every edge', () => {
+  it('chooses each nearest edge when no edge is within the threshold', () => {
+    expect(snapToWorkArea({ x: 1810, y: 200 }, windowSize, baseSize, workArea)).toEqual({
+      position: { x: 1840, y: 200 },
+      size: { width: 80, height: 320 },
+      docked: { left: false, top: false, right: true, bottom: false },
+    })
+    expect(snapToWorkArea({ x: 400, y: 25 }, windowSize, baseSize, workArea)).toEqual({
+      position: { x: 400, y: 0 },
+      size: { width: 320, height: 80 },
+      docked: { left: false, top: true, right: false, bottom: false },
+    })
+    expect(snapToWorkArea({ x: 400, y: 930 }, windowSize, baseSize, workArea)).toEqual({
+      position: { x: 400, y: 960 },
+      size: { width: 320, height: 80 },
+      docked: { left: false, top: false, right: false, bottom: true },
+    })
+  })
+
+  it('uses a stable edge priority when distances are equal', () => {
+    // 左边和上边都相距 400，按 left → right → top → bottom 的顺序选择左边。
+    expect(snapToWorkArea({ x: 400, y: 400 }, windowSize, baseSize, workArea)).toEqual({
+      position: { x: 0, y: 400 },
+      size: { width: 80, height: 320 },
+      docked: { left: true, top: false, right: false, bottom: false },
+    })
+  })
+
+  it('keeps an expanded window inside the work area on the other axis', () => {
+    expect(snapToWorkArea({ x: 1700, y: 25 }, windowSize, baseSize, workArea)).toEqual({
+      position: { x: 1600, y: 0 },
+      size: { width: 320, height: 80 },
+      docked: { left: false, top: true, right: false, bottom: false },
+    })
+  })
+
+  it('falls back to the nearest edge after leaving a previously docked position', () => {
     // 模拟一个已贴边放大的 160×160 窗口被拖回屏幕中间。
     expect(
       snapToWorkArea({ x: 400, y: 400 }, { width: 160, height: 160 }, baseSize, workArea),
     ).toEqual({
-      position: { x: 400, y: 400 },
-      size: { width: 80, height: 80 },
-      docked: { left: false, top: false, right: false, bottom: false },
+      position: { x: 0, y: 400 },
+      size: { width: 80, height: 320 },
+      docked: { left: true, top: false, right: false, bottom: false },
     })
   })
 

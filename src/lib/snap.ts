@@ -35,7 +35,8 @@ export interface SnapResult {
  * - 上下贴边时宽度翻倍，窗口变成沿该边展开的横条；
  * - 左右贴边时高度翻倍，窗口变成沿该边展开的竖条；
  * - 角落贴边时宽高同时翻倍（基础尺寸为正方形时即保持方形）；
- * - 未贴边时恢复基础尺寸。
+ * - 未命中阈值时吸附到距离最近的单条边缘；
+ * - 贴边时依据吸附到的边缘恢复对应的窗口尺寸。
  * 返回吸附后的位置、尺寸以及各边缘是否贴边。
  */
 export function snapToWorkArea(
@@ -80,19 +81,37 @@ export function snapToWorkArea(
     docked.bottom = true
   }
 
+  // 阈值没有命中时仍然吸附到最近的一条边。此时只选择一条边，
+  // 避免窗口在远离边缘时因为两个坐标轴分别取最近边而意外变成角落形态。
+  if (!docked.left && !docked.right && !docked.top && !docked.bottom) {
+    const nearest = [
+      { edge: 'left' as const, distance: distance(x, areaLeft) },
+      { edge: 'right' as const, distance: distance(x + windowSize.width, areaRight) },
+      { edge: 'top' as const, distance: distance(y, areaTop) },
+      { edge: 'bottom' as const, distance: distance(y + windowSize.height, areaBottom) },
+    ].reduce((closest, candidate) => (candidate.distance < closest.distance ? candidate : closest))
+    docked[nearest.edge] = true
+  }
+
   const size = dockedSize(baseSize, docked)
 
   // 贴边后尺寸变化，需重新锚定位置使窗口仍紧贴对应边缘；
-  // 未贴边的一侧保持吸附后的坐标不变。
+  // 未贴边的坐标轴也要依据新尺寸重新限制，避免展开后越出工作区。
+  const maxSnappedX = Math.max(areaLeft, areaRight - size.width)
+  const maxSnappedY = Math.max(areaTop, areaBottom - size.height)
   if (docked.left) {
     x = areaLeft
   } else if (docked.right) {
-    x = areaRight - size.width
+    x = clamp(areaRight - size.width, areaLeft, maxSnappedX)
+  } else {
+    x = clamp(x, areaLeft, maxSnappedX)
   }
   if (docked.top) {
     y = areaTop
   } else if (docked.bottom) {
-    y = areaBottom - size.height
+    y = clamp(areaBottom - size.height, areaTop, maxSnappedY)
+  } else {
+    y = clamp(y, areaTop, maxSnappedY)
   }
 
   return { position: { x, y }, size, docked }
