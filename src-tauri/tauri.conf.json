@@ -14,18 +14,19 @@
       {
         "label": "floating",
         "title": "tauri-app launcher",
-        "width": 72,
-        "height": 72,
+        "width": 56,
+        "height": 56,
         "x": 24,
         "y": 24,
         "visible": true,
         "decorations": false,
+        "transparent": true,
         "resizable": false,
         "maximizable": false,
         "minimizable": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "shadow": true
+        "shadow": false
       },
       {
         "label": "main",

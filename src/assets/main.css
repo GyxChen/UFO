@@ -26,6 +26,13 @@ body {
   @apply min-h-screen;
 }
 
+/* 透明原生窗口需要让 WebView 的三层根节点都保持透明，圆角才能显示。 */
+html.is-floating-window,
+html.is-floating-window body,
+html.is-floating-window #app {
+  background: transparent;
+}
+
 .main-window {
   @apply flex min-h-screen flex-col items-center justify-center;
 }

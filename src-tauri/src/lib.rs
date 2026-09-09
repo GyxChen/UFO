@@ -5,6 +5,7 @@ use tauri::{
 };
 
 const MAIN_WINDOW: &str = "main";
+const FLOATING_WINDOW: &str = "floating";
 const TRAY_ICON: &str = "main";
 const SHOW_MENU_ITEM: &str = "show";
 const HIDE_MENU_ITEM: &str = "hide";
@@ -49,6 +50,11 @@ pub fn run() {
 
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                window.open_devtools();
+            }
+            //悬浮窗的devtools,如果不用直接注释掉即可
+            #[cfg(debug_assertions)]
+            if let Some(window) = app.get_webview_window(FLOATING_WINDOW) {
                 window.open_devtools();
             }
 

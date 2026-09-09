@@ -63,6 +63,7 @@ function scheduleSnap() {
   if (snapTimer) {
     clearTimeout(snapTimer)
   }
+  // 原生窗口移动事件会连续触发；等待事件稳定后再读取最终位置并吸附。
   snapTimer = setTimeout(() => {
     snapTimer = undefined
     void snapWindow().catch((error) => {
@@ -76,7 +77,8 @@ async function snapWindow() {
   if (!monitor) {
     return
   }
-
+  console.log(monitor.workArea)
+  // 使用窗口外框的物理坐标和尺寸进行吸附，避免受浏览器 CSS 像素和 DPI 缩放影响。
   const [position, size] = await Promise.all([window.outerPosition(), window.outerSize()])
   const snapped = snapToWorkArea(
     { x: position.x, y: position.y },
@@ -115,15 +117,17 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <button
-    class="floating-launcher"
-    type="button"
-    aria-label="打开应用"
-    @pointerdown="onPointerDown"
-    @pointermove="onPointerMove"
-    @pointerup="onPointerUp"
-    @pointercancel="onPointerUp"
-  >
-    <span class="floating-launcher__mark" aria-hidden="true">U</span>
-  </button>
+  <div class="w-full h-full rounded-2xl bg-gray-500">
+    <button
+      class="floating-launcher"
+      type="button"
+      aria-label="打开应用"
+      @pointerdown="onPointerDown"
+      @pointermove="onPointerMove"
+      @pointerup="onPointerUp"
+      @pointercancel="onPointerUp"
+    >
+      <span class="floating-launcher__mark" aria-hidden="true">U</span>
+    </button>
+  </div>
 </template>
