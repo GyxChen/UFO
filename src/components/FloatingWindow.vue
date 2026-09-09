@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { currentMonitor, getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window'
+import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
 import { snapToWorkArea } from '@/lib/snap'
 import { showMainWindow } from '@/lib/window'
 
@@ -10,6 +10,8 @@ const dragging = ref(false)
 let snapTimer: ReturnType<typeof setTimeout> | undefined
 let unlistenMoved: (() => void) | undefined
 let unlistenScaleChanged: (() => void) | undefined
+// 悬浮窗的基础尺寸,未贴边时恢复为该尺寸;挂载时读取。
+let baseSize: { width: number; height: number } = { width: 56, height: 56 }
 
 function onPointerDown(event: PointerEvent) {
   if (event.button !== 0) {
@@ -79,17 +81,21 @@ async function snapWindow() {
   }
   // 使用窗口外框的物理坐标和尺寸进行吸附，避免受浏览器 CSS 像素和 DPI 缩放影响。
   const [position, size] = await Promise.all([window.outerPosition(), window.outerSize()])
-  const snapped = snapToWorkArea(
+  const result = snapToWorkArea(
     { x: position.x, y: position.y },
     { width: size.width, height: size.height },
+    baseSize,
     {
       position: { x: monitor.workArea.position.x, y: monitor.workArea.position.y },
       size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
     },
   )
 
-  if (snapped.x !== position.x || snapped.y !== position.y) {
-    await window.setPosition(new PhysicalPosition(snapped.x, snapped.y))
+  if (result.position.x !== position.x || result.position.y !== position.y) {
+    await window.setPosition(new PhysicalPosition(result.position.x, result.position.y))
+  }
+  if (result.size.width !== size.width || result.size.height !== size.height) {
+    await window.setSize(new PhysicalSize(result.size.width, result.size.height))
   }
 }
 
@@ -102,6 +108,8 @@ function onScaleChanged() {
 }
 
 onMounted(async () => {
+  // const size = await window.outerSize()
+  // baseSize = { width: size.width, height: size.height }
   unlistenMoved = await window.onMoved(onMoved)
   unlistenScaleChanged = await window.onScaleChanged(onScaleChanged)
 })
@@ -116,7 +124,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="w-full h-full rounded-2xl bg-gray-500">
+  <div class="rounded-2xl bg-gray-500" style="height: 100vh;width: 100vw;">
     <button
       class="floating-launcher"
       type="button"

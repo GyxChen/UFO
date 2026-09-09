@@ -14,7 +14,6 @@ export const useStore = defineStore('main', {
   actions: {
     initApp() {
       this.isInitialized = true
-      console.log('app initialized!')
     },
   },
 
