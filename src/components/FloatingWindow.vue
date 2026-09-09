@@ -77,7 +77,6 @@ async function snapWindow() {
   if (!monitor) {
     return
   }
-  console.log(monitor.workArea)
   // 使用窗口外框的物理坐标和尺寸进行吸附，避免受浏览器 CSS 像素和 DPI 缩放影响。
   const [position, size] = await Promise.all([window.outerPosition(), window.outerSize()])
   const snapped = snapToWorkArea(

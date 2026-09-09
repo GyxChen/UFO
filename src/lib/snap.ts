@@ -37,7 +37,6 @@ export function snapToWorkArea(
   // 当窗口大于工作区时，Math.max 会将其固定在工作区左上角。
   const maxX = Math.max(areaLeft, areaRight - windowSize.width)
   const maxY = Math.max(areaTop, areaBottom - windowSize.height)
-  console.log("winsize",maxX,maxY,areaLeft,areaRight,windowSize.width)
   // 先将拖拽后的位置限制在工作区内，再以限制后的坐标计算吸附距离。
   let x = clamp(position.x, areaLeft, maxX)
   let y = clamp(position.y, areaTop, maxY)
@@ -46,10 +45,8 @@ export function snapToWorkArea(
   // 将窗口左上角移至 maxX，使窗口右侧恰好与工作区右侧重合。
   if (distance(x, areaLeft) <= threshold) {
     x = areaLeft
-    console.log(x,y,1)
   } else if (distance(x + windowSize.width, areaRight) <= threshold) {
     x = maxX
-    console.log(x,y,2)
   }
 
   // 上下方向采用相同规则，因此窗口可同时吸附到任意一个角落。
