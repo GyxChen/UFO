@@ -23,7 +23,7 @@ export default defineConfig({
     topLevelAwait(),
     nodePolyfills(),
     vue(),
-    vueDevTools(),
+    process.env.VITE_DEVTOOLS === 'true' && vueDevTools(),
     AutoImport({
       imports: [
         'vue',
