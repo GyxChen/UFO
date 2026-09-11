@@ -59,7 +59,7 @@ src-tauri/src/
 |---|---|
 | `Provider` | `Claude` / `Codex`，支持 `"claude-code"` / `"codex-cli"` 别名解析 |
 | `SessionPhase` | `Running` / `Waiting` / `Error` / `Unknown` / `Completed` |
-| `AgentEvent` | hook 写入的原始事件，含 schema_version、event_id、provider、session_id、event、sequence、pid、error_code、outcome |
+| `AgentEvent` | hook 写入的原始事件，含 schema_version、event_id、provider、session_id、event、sequence、pid、error_code、outcome、notification_type |
 | `SessionSnapshot` | 注册表中的会话状态，含 phase、source、confidence、completed_at_ms、remove_at_ms、is_flashing、termination_confirmed |
 | `StatusSnapshot` | 广播给前端的全量快照，含 revision、sessions[]、counts、source_health |
 
@@ -83,22 +83,31 @@ src-tauri/src/
 3. 已见事件（key:event_id 去重）→ 拒绝。
 4. sequence 乱序（incoming ≤ last）→ 拒绝。
 5. 已 completed 且未过 remove_at_ms → 拒绝后续事件。
-6. 当前为 Error 且新事件非 Error → 保持 Error（错误态保护）。
-7. 通过 `phase_for_event` 映射事件名到 SessionPhase。
+6. 已 completed 且未过 remove_at_ms → 拒绝后续事件。
+7. 当前为 Error 且新事件非 Error → 保持 Error（错误态保护）；例外：`UserPromptSubmit` / `SessionStart` 允许恢复为 Running。
+8. 通过 `phase_for_event` 映射事件名到 SessionPhase。
 
 **phase_for_event 映射规则：**
 
-优先检查 error_code / outcome 字段，然后精确匹配归一化后的事件名：
+优先检查 error_code / 失败 outcome 字段，然后精确匹配归一化后的事件名：
 
-| 阶段 | 事件 |
-|---|---|
-| `Running` | `session_start`, `setup`, `user_prompt_submit`, `user_prompt_expansion`, `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `post_tool_batch`, `permission_request`, `subagent_start`, `subagent_stop`, `task_created`, `message_display`, `pre_compact`, `post_compact`, `pre_model_switch`, `post_model_switch`, `elicit`, `elicit_result`, `instructions_loaded`, `config_change`, `cwd_changed`, `directory_added`, `file_changed`, `worktree_create`, `worktree_remove` |
-| `Waiting` | `stop`, `notification`, `permission_denied`, `task_completed`, `teammate_idle` |
-| `Completed` | `session_end`（outcome 为 success/completed/ok/done） |
-| `Error` | `stop_failure`, 任何带 error_code 的事件, outcome 为 error/failed/cancelled/denied 的事件 |
-| 其他 | fallback 子串匹配 → `Unknown` |
+| 阶段 | 灯色 | 事件 |
+|---|---|---|
+| `Running` | 🟢 常亮 | `session_start`, `setup`, `user_prompt_submit`, `user_prompt_expansion`, `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `post_tool_batch`, `subagent_start`, `subagent_stop`, `task_created`, `task_completed`, `teammate_idle`, `permission_denied`, `message_display`, `pre_compact`, `post_compact`, `elicit_result` / `elicitation_result`, `instructions_loaded`, `config_change`, `cwd_changed`, `directory_added`, `file_changed`, `worktree_create`, `worktree_remove`；以及非等待类 `notification` |
+| `Waiting` | 🟡；Stop 额外先绿闪 | `stop`（先绿闪，retention 后黄常亮）；`permission_request`；`elicit` / `elicitation`；`notification` 且 `notification_type` ∈ `idle_prompt` / `permission_prompt` / `elicitation_dialog` / `agent_needs_input`（缺 type 不进 Waiting） |
+| `Completed` | 🟢 + 闪烁后移除 | 任意 `session_end`（SessionEnd 只有 `reason`，不再按 success outcome 分流；红灯不靠 SessionEnd） |
+| `Error` | 🔴 | `stop_failure`；任何带 error_code 的事件；outcome 为 error/failed/cancelled/denied 的事件 |
+| 其他 | — | fallback 子串匹配 → `Unknown` |
 
 事件名经过 `normalize_event_name` 预处理：CamelCase → snake_case，`-`/`.`/`:` → `_`，统一小写。
+
+**灯色语义（已锁定）：**
+
+- 🟢 常亮 = Running（正在执行）
+- 🟢 + 闪烁 → 🟡 = Stop 一轮执行完成（Waiting + is_flashing，闪完落黄）
+- 🟡 = Waiting 稳态 / 权限 / Elicitation 等弹窗等人
+- 🔴 = Error（接口/不可抗力）
+- 🟢 + 闪烁 → 移除 = Completed（对话已完成）
 
 **apply_event 额外逻辑：**
 
@@ -113,21 +122,32 @@ src-tauri/src/
 **状态灯更新全流程示例：**
 
 ```text
-t=0    hook: SessionStart       → apply_event → Running  🟢+动画
-t=1    hook: UserPromptSubmit   → apply_event → Running  🟢+动画
-t=2    hook: PreToolUse(Bash)   → apply_event → Running  🟢+动画
-t=3    hook: PostToolUse(Bash)  → apply_event → Running  🟢+动画
-t=4    hook: PreToolUse(Write)  → apply_event → Running  🟢+动画
-t=5    hook: PostToolUse(Write) → apply_event → Running  🟢+动画
-t=6    hook: Stop               → apply_event → Waiting  🟡（绿灯变黄灯）
-                                   （黄灯保留在屏幕上，不消失）
+t=0    hook: SessionStart       → apply_event → Running  🟢常亮
+t=1    hook: UserPromptSubmit   → apply_event → Running  🟢常亮
+t=2    hook: PreToolUse(Bash)   → apply_event → Running  🟢常亮
+t=3    hook: PostToolUse(Bash)  → apply_event → Running  🟢常亮
+t=4    hook: PermissionRequest  → apply_event → Waiting  🟡（弹窗等人，不闪）
+t=5    hook: PostToolUse(Write) → apply_event → Running  🟢常亮
+t=6    hook: Stop               → apply_event → Waiting + is_flashing  🟢闪烁
+                                   （一轮完成：先绿闪）
+t=36   cleanup: retention 到期  → Waiting，关闪烁 → 🟡常亮
+                                   （对话未结束，黄灯保留）
        ... 用户思考中 ...
-t=60   hook: UserPromptSubmit   → apply_event → Running  🟢+动画
-                                   （旧 Waiting 被自动清理，黄灯变绿灯）
-t=61   hook: PreToolUse(Bash)   → apply_event → Running  🟢+动画
-t=62   hook: SessionEnd         → apply_event → Completed 🟢无动画
-                                   （绿灯保留 30 秒后消失）
+t=60   hook: UserPromptSubmit   → apply_event → Running  🟢常亮
+                                   （旧 Waiting 被自动清理）
+t=61   hook: PreToolUse(Bash)   → apply_event → Running  🟢常亮
+t=62   hook: SessionEnd(reason=prompt_input_exit)
+                                → apply_event → Completed 🟢闪烁
+                                   （对话结束：绿闪后移除）
 t=92   cleanup: now ≥ remove_at → 删除 Completed 会话 → 灯消失
+```
+
+**错误恢复示例：**
+
+```text
+t=0    StopFailure              → Error     🔴
+t=1    PreToolUse               → 仍 Error  🔴（粘性保护）
+t=2    UserPromptSubmit         → Running   🟢（允许恢复）
 ```
 
 **apply_event 内部逐步解析：**
@@ -142,13 +162,17 @@ t=92   cleanup: now ≥ remove_at → 删除 Completed 会话 → 灯消失
     │     提取 previous_error、previous_started_at、previous_pid、previous_error_code
     │
     ├─ ③ phase_for_event 判定：
-    │     error_code/outcome → Error（红灯）
+    │     error_code/失败 outcome → Error（红灯）
     │     精确匹配事件名 → Running/Waiting/Completed/Error
+    │     Notification 看 notification_type 分流
+    │     SessionEnd 一律 Completed（不看 reason）
     │     fallback 子串匹配 → Unknown
     │
     ├─ ④ 错误态保护：
-    │     previous_error && 新 phase ≠ Error → 保持 Error
-    │     （红灯一旦亮起，只有 session 被清理后重建才能恢复）
+    │     previous_error && 新 phase ≠ Error
+    │       && 事件不是 UserPromptSubmit/SessionStart
+    │       → 保持 Error
+    │     UserPromptSubmit/SessionStart → 允许 Error → Running
     │
     ├─ ⑤ 清理旧 Waiting：
     │     if phase == Running
@@ -156,14 +180,24 @@ t=92   cleanup: now ≥ remove_at → 删除 Completed 会话 → 灯消失
     │       （这就是"黄灯保留到下次运行"的核心机制）
     │
     ├─ ⑥ 构建 SessionSnapshot：
-    │     phase → 决定灯的颜色
+    │     phase → 决定灯的基础颜色
+    │     Stop Waiting → is_flashing=true，remove_at=闪烁结束（不移除）
+    │     Completed → is_flashing=true，remove_at=移除时间
+    │     其它 Waiting → 不闪，直接黄
     │     last_seen_at_ms = now → 用于超时判断
-    │     is_flashing = (Completed && retention > 0) → 闪烁动画
-    │     remove_at_ms = completed_at + retention → 闪烁结束时间
     │     pid/error_code → 继承自 previous 或来自新事件
     │
     └─ ⑦ 写入 sessions 表，revision++
           return true → 触发 emit_snapshot → 前端更新
+```
+
+**cleanup 对 Stop 绿闪的额外处理：**
+
+```text
+Waiting && is_flashing && now ≥ remove_at
+  → is_flashing=false，remove_at=None（落成黄常亮，会话保留）
+Completed && now ≥ remove_at
+  → 删除会话
 ```
 
 **cleanup 定时清理决策树：**
@@ -192,11 +226,13 @@ cleanup(now, is_alive) 每 10 秒执行
 snapshot → store.applySnapshot（revision 检查，忽略旧快照）
          → sessions 响应式更新
          → AgentStatusModule.vue 遍历 sessions
-         → 每个 session 根据 phase 决定颜色：
-             running/completed → 绿色圆点（bg-emerald-400）
-             waiting/unknown   → 黄色圆点（bg-amber-300）
-             error             → 红色圆点（bg-rose-500）
+         → 每个 session 根据 colorForSession 决定颜色：
+             running/completed           → 绿色圆点（bg-emerald-400）
+             waiting && is_flashing      → 绿色圆点（Stop 绿闪期间）
+             waiting/unknown             → 黄色圆点（bg-amber-300）
+             error                       → 红色圆点（bg-rose-500）
            根据 is_flashing 决定是否加闪烁动画
+             （Completed 绿闪后移除；Stop Waiting 绿闪后落黄）
 ```
 
 ### 2.4 hook.rs — Hook Bridge
@@ -207,12 +243,14 @@ snapshot → store.applySnapshot（revision 检查，忽略旧快照）
 
 1. 从参数提取 `--provider`（支持 `=` 和空格两种格式）。
 2. 从 stdin 读取 JSON，限制 64 KiB。
-3. 从 payload 提取白名单字段（session_id、event、pid、event_id、sequence、error_code、outcome 等），支持多种命名风格。
+3. 从 payload 提取白名单字段（session_id、event、pid、event_id、sequence、error_code、outcome、notification_type 等），支持多种命名风格。
 4. 归一化为 `AgentEvent`。
 5. 写入 `inbox/<unique-id>.json`：先写临时文件 `.tmp`，`sync_all` 后原子 rename。
 6. session_id 长度限制 256 字符。
 
 状态目录优先级：`--status-dir` 参数 > `UFO_STATUS_DIR` 环境变量 > 默认 app-data 路径。
+
+`outcome` 同时承接 SessionEnd.`reason` 等结果别名；`notification_type` 单独提取，避免与 outcome 混用污染状态判定。
 
 ### 2.5 mod.rs — 监测器
 
@@ -338,13 +376,14 @@ src/
 
 `colorForSession` 映射：
 
-| phase | 颜色 |
-|---|---|
-| running | green |
-| completed | green |
-| waiting | yellow |
-| unknown | yellow |
-| error | red |
+| phase | 颜色 | 表现 |
+|---|---|---|
+| running | green | 常亮 |
+| completed | green | 配合 `is_flashing` 闪烁后移除 |
+| waiting + `is_flashing` | green | Stop 绿闪期间 |
+| waiting | yellow | 常亮（含 Stop 闪完后的稳态） |
+| unknown | yellow | 常亮 |
+| error | red | 常亮 |
 
 ### 3.3 floating-modules.ts — 模块系统
 
@@ -481,7 +520,7 @@ html.is-floating-window #app {
 }
 ```
 
-闪烁动画：
+闪烁动画（`is_flashing`：Completed 或 Stop 刚完成）：
 
 ```css
 @keyframes agent-status-flash {
@@ -490,48 +529,41 @@ html.is-floating-window #app {
 }
 ```
 
+Running 为绿常亮，不加脉动。闪烁用于：
+- Completed：绿闪后移除
+- Waiting+Stop：绿闪后落成黄常亮
+
 状态灯颜色：green → `bg-emerald-400`，yellow → `bg-amber-300`，red → `bg-rose-500`。
 
 ## 4. 测试覆盖
 
 ### 4.1 Rust 测试（54 个）
 
-**model.rs（5 个）：**
+**model.rs：**
 
 - provider_parse_known_values — claude/claude-code/CLAUDE/codex/codex-cli/CODEX
 - provider_parse_rejects_unknown — 空字符串、unknown、gpt
 - session_key_includes_provider_namespace — claude:abc / codex:abc
 - now_ms_returns_positive_value
-- agent_event_serialization_roundtrip — 序列化/反序列化往返
+- agent_event_serialization_roundtrip — 含 notification_type
+- agent_event_missing_notification_type_deserializes_as_none — 旧 inbox 兼容
 
-**reducer.rs（29 个）：**
+**reducer.rs 关键断言（重排后）：**
 
-- keeps_multiple_provider_sessions_separate
-- completed_sessions_flash_until_retention_expires
-- dead_error_sessions_are_removed_by_liveness_check
-- stop_and_notification_mean_waiting_not_success
-- session_end_is_the_completed_signal
-- event_ids_are_scoped_to_the_session
-- stale_sequences_and_completed_sessions_are_ignored
-- duplicate_events_do_not_change_revision
-- wrong_schema_version_is_rejected
-- empty_event_id_is_rejected
-- empty_session_id_is_rejected
-- custom_retention_affects_remove_at
-- liveness_check_preserves_completed_green_lights
-- no_pid_unknown_liveness_keeps_confirmed_sessions
-- stale_error_sessions_are_removed_after_timeout
+- stop_means_waiting_with_green_flash_then_settles_yellow
+- permission_waiting_does_not_flash
+- permission_request_and_elicitation_mean_waiting
+- waiting_notification_types_map_to_waiting
+- non_waiting_or_missing_notification_type_maps_to_running
+- permission_denied_and_task_completed_stay_running
+- session_end_is_the_completed_signal_regardless_of_reason
+- stop_failure_maps_to_error
 - error_state_is_protected_from_non_error_events
-- source_health_starts_healthy
-- custom_retention_zero_disables_flashing
-- concurrent_sessions_same_provider_different_ids（8 个并发）
-- normalize_event_name_handles_camel_case — TurnCompleted → turn_completed
-- normalize_event_name_handles_separators — session-end / session.end / session:end
-- normalize_event_name_lowercases — STOP → stop, Start → start
-- waiting_sessions_cleared_when_new_run_starts — Waiting 状态在新 Running 事件到来时清理
-- waiting_sessions_not_cleared_by_other_provider — 不同 provider 的 Waiting 互不影响
-- stop_failure_maps_to_error — StopFailure 映射为 Error
-- notification_maps_to_waiting — Notification 映射为 Waiting
+- user_prompt_submit_recovers_from_error
+- waiting_sessions_cleared_when_new_run_starts
+- waiting_sessions_not_cleared_by_other_provider
+- completed_sessions_flash_until_retention_expires
+- 以及既有去重 / sequence / schema / retention / liveness 等测试
 
 **hook.rs（11 个）：**
 

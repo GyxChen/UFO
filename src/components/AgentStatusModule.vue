@@ -12,36 +12,12 @@ import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import claudeIcon from '@/assets/claude.svg'
 import codexIcon from '@/assets/codex.svg'
-import test from 'node:test'
 
 const props = defineProps<{ layoutMode: FloatingLayout }>()
 const store = useAgentStatusStore()
 const modules = useFloatingModulesStore()
 const floatingWindow = inject(floatingWindowKey, null)
 
-// {
-//   const testSession = new Array(9).fill({
-//     key: `claude`,
-//     provider: 'claude',
-//     session_id: Math.random().toFixed(32),
-//     phase:"123",
-//     source: 'hook',
-//     confidence: 100,
-//     started_at_ms: 0,
-//     last_seen_at_ms: 0,
-//     completed_at_ms: 123,
-//     remove_at_ms: 123,
-//     is_flashing: 123,
-//     pid: null,
-//     error_code: null,
-//     last_sequence: null,
-//     termination_confirmed: 123,
-//   }) 
-//   const windowCells = computed(() => windowCellsForSessions(testSession.length, layoutMax.value))
-//   const partitioned = computed(() =>
-//     partitionIndicatorSessions(testSession, props.layoutMode, layoutMax.value, windowCells.value),
-//   )
-// }
 const layoutMax = computed(() => modules.maxCellsFor(props.layoutMode))
 const windowCells = computed(() => windowCellsForSessions(store.sessions.length, layoutMax.value))
 const grid = computed(() => indicatorGrid(props.layoutMode, windowCells.value))

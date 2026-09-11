@@ -78,7 +78,16 @@ impl StatusRegistry {
             };
 
         let phase_for_update = phase_for_event(&event);
-        let phase = if previous_error && phase_for_update != SessionPhase::Error {
+        // Error 粘性：普通非 Error 事件不能冲掉红灯；
+        // 但 UserPromptSubmit / SessionStart 视为用户重新开跑，允许 Error → Running。
+        let allows_error_recovery = matches!(
+            normalize_event_name(&event.event).as_str(),
+            "user_prompt_submit" | "session_start" | "session_started"
+        );
+        let phase = if previous_error
+            && phase_for_update != SessionPhase::Error
+            && !allows_error_recovery
+        {
             SessionPhase::Error
         } else {
             phase_for_update
@@ -97,13 +106,26 @@ impl StatusRegistry {
         }
 
         let started_at_ms = previous_started_at.unwrap_or(now);
+        let event_name = normalize_event_name(&event.event);
+        // Stop：一轮执行完成 → Waiting，但先绿闪，retention 后落成黄常亮。
+        // SessionEnd：Completed，绿闪后移除。
+        // 其它 Waiting（权限/Elicitation 等）：直接黄灯，不闪。
+        let is_stop_turn = event_name == "stop";
+        let flash_deadline = if retention_ms > 0
+            && (phase == SessionPhase::Completed
+                || (phase == SessionPhase::Waiting && is_stop_turn))
+        {
+            Some(now.saturating_add(retention_ms.min(i64::MAX as u64) as i64))
+        } else {
+            None
+        };
         let completed_at_ms = if phase == SessionPhase::Completed {
             Some(now)
         } else {
             None
         };
-        let remove_at_ms = completed_at_ms
-            .map(|completed| completed.saturating_add(retention_ms.min(i64::MAX as u64) as i64));
+        // Completed：remove_at = 移除时间；Waiting+Stop：remove_at = 绿闪结束时间（不移除）。
+        let remove_at_ms = flash_deadline;
 
         self.sessions.insert(
             key.clone(),
@@ -118,7 +140,7 @@ impl StatusRegistry {
                 last_seen_at_ms: now,
                 completed_at_ms,
                 remove_at_ms,
-                is_flashing: phase == SessionPhase::Completed && retention_ms > 0,
+                is_flashing: flash_deadline.is_some(),
                 pid: event.pid.or(previous_pid),
                 error_code: event.error_code.or(previous_error_code),
                 last_sequence: event.sequence,
@@ -134,6 +156,22 @@ impl StatusRegistry {
         F: FnMut(&SessionSnapshot) -> Option<bool>,
     {
         let before = self.sessions.len();
+        let mut flash_settled = false;
+
+        // Waiting + Stop 绿闪到期：关掉 is_flashing，落成黄常亮（会话保留）。
+        for session in self.sessions.values_mut() {
+            if session.phase == SessionPhase::Waiting
+                && session.is_flashing
+                && session
+                    .remove_at_ms
+                    .is_some_and(|remove_at| now >= remove_at)
+            {
+                session.is_flashing = false;
+                session.remove_at_ms = None;
+                flash_settled = true;
+            }
+        }
+
         self.sessions.retain(|_, session| {
             match session.phase {
                 // Completed: follow retention timer, then remove.
@@ -160,7 +198,7 @@ impl StatusRegistry {
             }
         });
 
-        let changed = before != self.sessions.len();
+        let changed = flash_settled || before != self.sessions.len();
         if changed {
             self.revision = self.revision.saturating_add(1);
         }
@@ -206,8 +244,17 @@ const ERROR_TIMEOUT_MS: i64 = 60 * 1000; // 1 minute
 /// when the next run starts, but this prevents leaks if no run ever starts.
 const WAITING_TIMEOUT_MS: i64 = 30 * 60 * 1000; // 30 minutes
 
+/// 将 hook 事件映射为会话阶段。
+///
+/// 灯色语义：
+/// - Running → 绿常亮（正在执行）
+/// - Waiting → 黄灯（等待用户操作，对话未结束）
+///   - 其中 Stop 会额外先绿闪，retention 后落成黄常亮（见 apply_event / cleanup）
+/// - Error → 红灯（接口/不可抗力错误）
+/// - Completed → 绿闪后移除（对话已完成，非错误结束）
 fn phase_for_event(event: &AgentEvent) -> SessionPhase {
     // Error from payload fields takes priority regardless of event name.
+    // SessionEnd.reason（clear/resume/...）不是失败 outcome，不会命中这里。
     if event.error_code.is_some()
         || event.outcome.as_deref().is_some_and(|outcome| {
             matches!(
@@ -221,37 +268,37 @@ fn phase_for_event(event: &AgentEvent) -> SessionPhase {
 
     let event_name = normalize_event_name(&event.event);
     match event_name.as_str() {
-        // ── Agent actively working (green + animation) ──
+        // ── 正在执行（绿常亮） ──
         "session_start" | "session_started" | "setup" | "user_prompt_submit"
         | "user_prompt_expansion" | "pre_tool_use" | "post_tool_use" | "post_tool_use_failure"
-        | "post_tool_batch" | "permission_request" | "subagent_start" | "subagent_stop"
-        | "task_created" | "message_display" | "pre_compact" | "post_compact"
-        | "pre_model_switch" | "post_model_switch" | "elicit" | "elicit_result"
+        | "post_tool_batch" | "subagent_start" | "subagent_stop" | "task_created"
+        | "message_display" | "pre_compact" | "post_compact" | "pre_model_switch"
+        | "post_model_switch" | "elicit_result" | "elicitation_result"
         | "instructions_loaded" | "config_change" | "cwd_changed" | "directory_added"
-        | "file_changed" | "worktree_create" | "worktree_remove" => SessionPhase::Running,
+        | "file_changed" | "worktree_create" | "worktree_remove"
+        // 非「等人操作」信号，保持执行链路语义
+        | "permission_denied" | "task_completed" | "teammate_idle" => SessionPhase::Running,
 
-        // ── Waiting for user input (yellow) ──
-        "notification" | "permission_denied" => SessionPhase::Waiting,
+        // ── 等待用户操作（黄灯） ──
+        // Stop：一轮回复结束，等下一条 prompt
+        // PermissionRequest / Elicitation：弹窗等人选择或输入
+        "stop" | "permission_request" | "elicit" | "elicitation" => SessionPhase::Waiting,
 
-        // ── Agent finished responding, waiting for next input (yellow) ──
-        // These stay visible until the next run clears them.
-        "stop" | "task_completed" | "teammate_idle" => SessionPhase::Waiting,
-
-        // ── Session ended (green, no animation, with retention) ──
-        "session_end" | "session_ended" | "session_completed" | "session_done" => {
-            if event.outcome.as_deref().is_none_or(|outcome| {
-                matches!(
-                    outcome.to_ascii_lowercase().as_str(),
-                    "success" | "succeeded" | "completed" | "ok" | "done"
-                )
-            }) {
-                SessionPhase::Completed
+        // Notification：仅等待类 notification_type 进黄灯，其它保持 Running
+        "notification" => {
+            if is_waiting_notification(event.notification_type.as_deref()) {
+                SessionPhase::Waiting
             } else {
-                SessionPhase::Error
+                SessionPhase::Running
             }
         }
 
-        // ── API / turn failure (red) ──
+        // ── 对话结束（绿闪）；SessionEnd 只有 reason，不再按 success 分流 ──
+        "session_end" | "session_ended" | "session_completed" | "session_done" => {
+            SessionPhase::Completed
+        }
+
+        // ── 本轮 API/模型错误（红灯）；会话通常仍可继续 ──
         "stop_failure" => SessionPhase::Error,
 
         // ── Fallback for unknown events ──
@@ -268,6 +315,21 @@ fn phase_for_event(event: &AgentEvent) -> SessionPhase {
             SessionPhase::Unknown
         }
     }
+}
+
+/// 判断 Notification 是否属于「等待用户操作」类型。
+fn is_waiting_notification(notification_type: Option<&str>) -> bool {
+    notification_type
+        .map(|value| value.to_ascii_lowercase())
+        .is_some_and(|value| {
+            matches!(
+                value.as_str(),
+                "idle_prompt"
+                    | "permission_prompt"
+                    | "elicitation_dialog"
+                    | "agent_needs_input"
+            )
+        })
 }
 
 fn normalize_event_name(value: &str) -> String {
@@ -311,7 +373,20 @@ mod tests {
             pid: None,
             error_code: None,
             outcome: None,
+            notification_type: None,
         }
+    }
+
+    /// 构造带 notification_type 的事件，用于 Notification 分流测试。
+    fn notification_event(
+        id: &str,
+        session_id: &str,
+        notification_type: Option<&str>,
+        received: i64,
+    ) -> AgentEvent {
+        let mut event = event(id, Provider::Claude, session_id, "Notification", received);
+        event.notification_type = notification_type.map(str::to_string);
+        event
     }
 
     #[test]
@@ -349,16 +424,54 @@ mod tests {
     }
 
     #[test]
-    fn stop_and_notification_mean_waiting_not_success() {
+    fn stop_means_waiting_with_green_flash_then_settles_yellow() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(event("1", Provider::Claude, "one", "Stop", 100), 30_000);
+        let session = &registry.snapshot(100).sessions[0];
+        // Stop 仍是 Waiting（对话未结束），但先绿闪。
+        assert_eq!(session.phase, SessionPhase::Waiting);
+        assert!(session.is_flashing);
+        assert_eq!(session.remove_at_ms, Some(30_100));
+
+        // retention 未到：仍闪烁，不移除。
+        assert!(!registry.cleanup(30_099, |_| Some(true)));
+        assert!(registry.snapshot(30_099).sessions[0].is_flashing);
+
+        // retention 到期：关掉闪烁，落成黄常亮，会话保留。
+        assert!(registry.cleanup(30_100, |_| Some(true)));
+        let settled = &registry.snapshot(30_100).sessions[0];
+        assert_eq!(settled.phase, SessionPhase::Waiting);
+        assert!(!settled.is_flashing);
+        assert_eq!(settled.remove_at_ms, None);
+    }
+
+    #[test]
+    fn permission_waiting_does_not_flash() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "PermissionRequest", 100),
+            30_000,
+        );
+        let session = &registry.snapshot(100).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Waiting);
+        assert!(!session.is_flashing);
+        assert_eq!(session.remove_at_ms, None);
+    }
+
+    #[test]
+    fn permission_request_and_elicitation_mean_waiting() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "PermissionRequest", 100),
+            30_000,
+        );
         assert_eq!(
             registry.snapshot(100).sessions[0].phase,
             SessionPhase::Waiting
         );
 
         registry.apply_event(
-            event("2", Provider::Claude, "one", "Notification", 200),
+            event("2", Provider::Claude, "one", "Elicitation", 200),
             30_000,
         );
         assert_eq!(
@@ -368,12 +481,85 @@ mod tests {
     }
 
     #[test]
-    fn session_end_is_the_completed_signal() {
+    fn waiting_notification_types_map_to_waiting() {
+        let mut registry = StatusRegistry::new();
+        for (idx, notification_type) in [
+            "idle_prompt",
+            "permission_prompt",
+            "elicitation_dialog",
+            "agent_needs_input",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let received = 100 + idx as i64;
+            registry.apply_event(
+                notification_event(
+                    &format!("n-{idx}"),
+                    &format!("sess-{idx}"),
+                    Some(notification_type),
+                    received,
+                ),
+                30_000,
+            );
+            let session = registry
+                .snapshot(received)
+                .sessions
+                .into_iter()
+                .find(|session| session.session_id == format!("sess-{idx}"))
+                .expect("session present");
+            assert_eq!(session.phase, SessionPhase::Waiting);
+        }
+    }
+
+    #[test]
+    fn non_waiting_or_missing_notification_type_maps_to_running() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "SessionEnd", 100),
+            notification_event("1", "one", Some("auth_success"), 100),
             30_000,
         );
+        assert_eq!(
+            registry.snapshot(100).sessions[0].phase,
+            SessionPhase::Running
+        );
+
+        registry.apply_event(notification_event("2", "two", None, 200), 30_000);
+        assert_eq!(
+            registry.snapshot(200).sessions[0].phase,
+            SessionPhase::Running
+        );
+    }
+
+    #[test]
+    fn permission_denied_and_task_completed_stay_running() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "PermissionDenied", 100),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(100).sessions[0].phase,
+            SessionPhase::Running
+        );
+
+        registry.apply_event(
+            event("2", Provider::Claude, "one", "TaskCompleted", 200),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(200).sessions[0].phase,
+            SessionPhase::Running
+        );
+    }
+
+    #[test]
+    fn session_end_is_the_completed_signal_regardless_of_reason() {
+        let mut registry = StatusRegistry::new();
+        let mut end = event("1", Provider::Claude, "one", "SessionEnd", 100);
+        // SDK SessionEnd 只有 reason（如 clear），没有 success outcome。
+        end.outcome = Some("clear".to_string());
+        registry.apply_event(end, 30_000);
         let session = &registry.snapshot(100).sessions[0];
         assert_eq!(session.phase, SessionPhase::Completed);
         assert!(session.is_flashing);
@@ -504,10 +690,37 @@ mod tests {
     fn error_state_is_protected_from_non_error_events() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(event("1", Provider::Claude, "one", "error", 100), 30_000);
-        registry.apply_event(event("2", Provider::Claude, "one", "start", 200), 30_000);
+        // 普通执行事件不能冲掉红灯。
+        registry.apply_event(
+            event("2", Provider::Claude, "one", "PreToolUse", 200),
+            30_000,
+        );
         assert_eq!(
             registry.snapshot(200).sessions[0].phase,
             SessionPhase::Error
+        );
+    }
+
+    #[test]
+    fn user_prompt_submit_recovers_from_error() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "StopFailure", 100),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(100).sessions[0].phase,
+            SessionPhase::Error
+        );
+
+        // StopFailure 后用户再发 prompt，应恢复 Running。
+        registry.apply_event(
+            event("2", Provider::Claude, "one", "UserPromptSubmit", 200),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(200).sessions[0].phase,
+            SessionPhase::Running
         );
     }
 
@@ -616,19 +829,6 @@ mod tests {
         assert_eq!(
             registry.snapshot(100).sessions[0].phase,
             SessionPhase::Error
-        );
-    }
-
-    #[test]
-    fn notification_maps_to_waiting() {
-        let mut registry = StatusRegistry::new();
-        registry.apply_event(
-            event("1", Provider::Claude, "one", "Notification", 100),
-            30_000,
-        );
-        assert_eq!(
-            registry.snapshot(100).sessions[0].phase,
-            SessionPhase::Waiting
         );
     }
 }

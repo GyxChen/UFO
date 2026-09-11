@@ -36,19 +36,38 @@ pub enum StatusSource {
     ProcessFallback,
 }
 
+/// Hook 归一化后的原始事件。
+///
+/// `outcome` 同时承载 SessionEnd 的 `reason` 以及其它结果字段别名；
+/// `notification_type` 单独存放 Notification 的类型，避免污染 outcome 判定。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentEvent {
+    /// 协议版本，必须与 SCHEMA_VERSION 一致
     pub schema_version: u16,
+    /// 事件去重 ID
     pub event_id: String,
+    /// 来源 provider
     pub provider: Provider,
+    /// 会话标识
     pub session_id: String,
+    /// 原始 hook 事件名（可被 normalize_event_name 归一化）
     pub event: String,
+    /// 可选序号，用于乱序过滤
     pub sequence: Option<u64>,
+    /// 事件发生时间（毫秒）
     pub occurred_at_ms: Option<i64>,
+    /// 被 UFO 接收的时间（毫秒）
     pub received_at_ms: i64,
+    /// 可选进程 ID，用于存活检查
     pub pid: Option<u32>,
+    /// 错误码；存在时优先映射为 Error
     pub error_code: Option<String>,
+    /// 结果/退出原因（SessionEnd.reason 等）
     pub outcome: Option<String>,
+    /// Notification 的 notification_type，用于区分是否等人操作。
+    /// 旧 inbox 事件可能缺此字段，缺省反序列化为 None。
+    #[serde(default)]
+    pub notification_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -151,6 +170,7 @@ mod tests {
             pid: Some(1234),
             error_code: None,
             outcome: None,
+            notification_type: Some("idle_prompt".to_string()),
         };
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: AgentEvent = serde_json::from_str(&json).unwrap();
@@ -159,5 +179,29 @@ mod tests {
         assert_eq!(deserialized.session_id, "sess-123");
         assert_eq!(deserialized.sequence, Some(42));
         assert_eq!(deserialized.pid, Some(1234));
+        assert_eq!(
+            deserialized.notification_type.as_deref(),
+            Some("idle_prompt")
+        );
+    }
+
+    #[test]
+    fn agent_event_missing_notification_type_deserializes_as_none() {
+        // 旧 inbox 事件缺字段时应兼容为 None，不破坏消费。
+        let json = r#"{
+            "schema_version": 1,
+            "event_id": "legacy",
+            "provider": "claude",
+            "session_id": "s1",
+            "event": "Stop",
+            "sequence": null,
+            "occurred_at_ms": null,
+            "received_at_ms": 1,
+            "pid": null,
+            "error_code": null,
+            "outcome": null
+        }"#;
+        let deserialized: AgentEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.notification_type, None);
     }
 }

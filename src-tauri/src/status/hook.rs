@@ -98,6 +98,8 @@ fn run_status_hook(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.is_empty() && value.len() <= 256)
         .unwrap_or_else(unique_event_id);
 
+    // outcome 同时承接 SessionEnd.reason 等结果别名；
+    // notification_type 单独提取，避免与 outcome 混用污染状态判定。
     let normalized = AgentEvent {
         schema_version: SCHEMA_VERSION,
         event_id,
@@ -111,6 +113,7 @@ fn run_status_hook(args: &[String]) -> Result<(), String> {
         pid,
         error_code: string_field(&payload, &["error_code", "error", "failure_reason"]),
         outcome: string_field(&payload, &["outcome", "reason", "status", "stop_reason"]),
+        notification_type: string_field(&payload, &["notification_type", "notificationType"]),
     };
 
     let inbox = status_dir.join("inbox");

@@ -50,6 +50,10 @@ describe('colorForSession', () => {
     expect(colorForSession(session('waiting'))).toBe('yellow')
   })
 
+  it('maps flashing waiting (Stop turn complete) to green', () => {
+    expect(colorForSession(session('waiting', { is_flashing: true }))).toBe('green')
+  })
+
   it('maps unknown to yellow', () => {
     expect(colorForSession(session('unknown'))).toBe('yellow')
   })

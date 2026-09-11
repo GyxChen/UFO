@@ -40,9 +40,19 @@ export interface StatusSnapshot {
   source_health: string
 }
 
+/**
+ * 按会话阶段映射指示灯颜色：
+ * - running → 绿常亮（正在执行）
+ * - completed → 绿（配合 is_flashing 闪烁，表示对话已完成）
+ * - waiting + is_flashing → 绿闪（一轮 Stop 刚完成，闪完后落黄）
+ * - waiting / unknown → 黄（等待用户操作）
+ * - error → 红（接口/不可抗力错误）
+ */
 export function colorForSession(session: SessionSnapshot): StatusColor {
   if (session.phase === 'error') return 'red'
   if (session.phase === 'running' || session.phase === 'completed') return 'green'
+  // Stop 进入 Waiting 时会先绿闪；闪烁期间按绿色渲染。
+  if (session.phase === 'waiting' && session.is_flashing) return 'green'
   return 'yellow'
 }
 
