@@ -325,7 +325,6 @@ setup 阶段：
 
 - core:default、core:event:default
 - 窗口操作（hide/show/set-focus/set-position/set-size/start-dragging/unminimize）
-- allow-greet
 - allow-get-status-snapshot、allow-get-floating-module-config
 
 `src-tauri/capabilities/main-module-settings.json`（仅 main）：

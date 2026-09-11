@@ -18,13 +18,6 @@ const SHOW_MENU_ITEM: &str = "show";
 const HIDE_MENU_ITEM: &str = "hide";
 const QUIT_MENU_ITEM: &str = "quit";
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    println!("Backend was called with an argument: {}", name);
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 fn show_main<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
         return Ok(());
@@ -117,7 +110,6 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_prevent_default::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
             get_status_snapshot,
             module_config::get_floating_module_config,
             module_config::set_floating_module_config,

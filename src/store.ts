@@ -8,25 +8,19 @@ export const useStore = defineStore('main', {
     debug: import.meta.env.MODE === 'development',
     version: versionString,
     isInitialized: false,
-    name: '',
   }),
 
   actions: {
+    /** 标记应用已完成前端初始化。 */
     initApp() {
       this.isInitialized = true
     },
   },
 
   getters: {
+    /** 是否仍未完成初始化（历史命名保留）。 */
     isReady: (state) => {
       return !state.isInitialized
-    },
-
-    storeGreet: (state) => {
-      if (state.name.length > 0) {
-        return `Greetings from Pinia store, ${state.name}!`
-      }
-      return ''
     },
   },
 })

@@ -13,7 +13,6 @@
     "core:window:allow-set-size",
     "core:window:allow-start-dragging",
     "core:window:allow-unminimize",
-    "allow-greet",
     "allow-get-status-snapshot",
     "allow-get-floating-module-config"
   ]

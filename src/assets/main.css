@@ -1,16 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 
 @plugin "@egoist/tailwindcss-icons" {
   prefixes: mdi;
 }
 
+/*
+ * UFO Matte Panel 设计系统（方案 A）
+ * 主窗口与后续 UI 统一使用这些 token；悬浮窗背景复用 --ufo-bg。
+ */
 @theme {
-  --font-sans: -apple-system, BlinkMacSystemFont, Segoe UI, system-ui, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, sans-serif, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol, Noto Color Emoji;
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, Segoe UI, system-ui, Ubuntu,
+    Cantarell, Noto Sans, Helvetica Neue, Arial, sans-serif;
   --font-mono: Cascadia Code, Consolas, Menlo, Ubuntu Mono, DejaVu Sans Mono, Courier New, monospace;
+
+  --color-ufo-bg: rgba(61, 61, 61, 0.8);
+  --color-ufo-bg-main: #3d3d3d;
+  --color-ufo-surface: #2a2a2a;
+  --color-ufo-surface-2: #323232;
+  --color-ufo-border: rgba(255, 255, 255, 0.08);
+  --color-ufo-border-strong: rgba(255, 255, 255, 0.14);
+  --color-ufo-text: #f3f4f6;
+  --color-ufo-muted: #a3a3a3;
+  --color-ufo-accent: #34d399;
+  --color-ufo-accent-soft: rgba(52, 211, 153, 0.16);
+  --color-ufo-accent-on: #052e1d;
+  --color-ufo-danger: #f87171;
+  --color-ufo-input: #1f1f1f;
+  --color-ufo-ring: rgba(52, 211, 153, 0.55);
+  --color-ufo-status-green: #34d399;
+  --color-ufo-status-yellow: #fbbf24;
+  --color-ufo-status-red: #f87171;
+  --radius-ufo: 12px;
+}
+
+:root {
+  color-scheme: dark;
+  --ufo-bg: rgba(61, 61, 61, 0.8);
+  /* 主窗实色，不做透明合成 / backdrop-filter */
+  --ufo-bg-main: #3d3d3d;
+  --ufo-surface: #2a2a2a;
+  --ufo-surface-2: #323232;
+  --ufo-border: rgba(255, 255, 255, 0.08);
+  --ufo-border-strong: rgba(255, 255, 255, 0.14);
+  --ufo-text: #f3f4f6;
+  --ufo-muted: #a3a3a3;
+  --ufo-accent: #34d399;
+  --ufo-accent-soft: rgba(52, 211, 153, 0.16);
+  --ufo-accent-on: #052e1d;
+  --ufo-danger: #f87171;
+  --ufo-input: #1f1f1f;
+  --ufo-ring: rgba(52, 211, 153, 0.55);
+  --ufo-status-green: #34d399;
+  --ufo-status-yellow: #fbbf24;
+  --ufo-status-red: #f87171;
+  --ufo-radius: 12px;
 }
 
 html {
-  @apply text-[14px] text-gray-200 bg-gray-800;
+  @apply text-[14px] font-sans;
+  color: var(--ufo-text);
+  background:
+    radial-gradient(circle at top left, #4a4a4a 0%, #1c1c1c 55%),
+    #141414;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -26,15 +78,127 @@ body {
   @apply min-h-screen;
 }
 
-/* 透明原生窗口需要让 WebView 的三层根节点都保持透明，圆角才能显示。 */
+/* 透明原生窗口：根节点透明，圆角外才能透出桌面（仅角上一点）。 */
 html.is-floating-window,
 html.is-floating-window body,
-html.is-floating-window #app {
+html.is-floating-window #app,
+html.is-main-window,
+html.is-main-window body,
+html.is-main-window #app {
   background: transparent;
 }
 
+/* 主窗：锁死整窗滚动，只允许内部 .main-window 滚动。 */
+html.is-main-window,
+html.is-main-window body,
+html.is-main-window #app {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 主窗外壳：实色填充（无 alpha / 无 blur），避免毛玻璃合成开销。 */
+.main-shell {
+  @apply flex h-full max-h-full min-h-0 flex-col overflow-hidden rounded-2xl;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--ufo-bg-main);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  /* box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); */
+  color: var(--ufo-text);
+}
+
+.main-titlebar {
+  @apply relative flex h-10 shrink-0 items-center border-b px-2 select-none;
+  border-color: var(--ufo-border);
+  background: rgba(0, 0, 0, 0.18);
+  cursor: grab;
+}
+
+.main-titlebar:active {
+  cursor: grabbing;
+}
+
+.main-titlebar__title {
+  @apply pointer-events-none flex-1 pr-10 pl-2 text-left text-xs;
+  color: var(--ufo-muted);
+}
+
+/* 关闭按钮：整块 36×36 可点，避免只能点到图标像素才响应。 */
+.main-titlebar__close {
+  @apply absolute top-1/2 right-1 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg border-0 p-0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.main-titlebar__close-icon {
+  @apply block h-4 w-4 object-contain opacity-70;
+  pointer-events: none;
+}
+
+.main-titlebar__close:hover {
+  background: rgba(248, 113, 113, 0.18);
+}
+
+.main-titlebar__close:hover .main-titlebar__close-icon {
+  opacity: 1;
+}
+
+.main-titlebar__close:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
 .main-window {
-  @apply flex min-h-screen flex-col items-center justify-center;
+  @apply flex min-h-0 flex-1 flex-col items-center justify-start gap-4 overflow-x-hidden overflow-y-auto px-4 py-6;
+  color: var(--ufo-text);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+/* WebKit 滚动条：细轨 + 圆角滑块，贴合 Matte 深色 */
+.main-window::-webkit-scrollbar {
+  width: 10px;
+}
+
+.main-window::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 8px 0;
+}
+
+.main-window::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: rgba(255, 255, 255, 0.22);
+}
+
+.main-window::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(52, 211, 153, 0.55);
+}
+
+.main-window::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.main-window__hero {
+  @apply flex w-full max-w-md flex-col gap-1.5;
+}
+
+.main-window__badge {
+  @apply w-fit rounded-full px-2 py-1 text-[11px] font-semibold tracking-wide uppercase;
+  background: var(--ufo-accent-soft);
+  color: var(--ufo-accent);
+}
+
+.main-window__title {
+  @apply m-0 text-[22px] font-bold tracking-tight;
+}
+
+.main-window__subtitle {
+  @apply m-0 text-[13px] leading-relaxed;
+  color: var(--ufo-muted);
 }
 
 .floating-launcher {
@@ -48,7 +212,10 @@ html.is-floating-window #app {
 }
 
 .floating-launcher__mark {
-  @apply relative z-10 flex shrink-0 items-center justify-center rounded-2xl border border-sky-300/40 bg-sky-500 text-2xl font-bold text-white shadow-lg shadow-sky-950/50;
+  @apply relative z-10 flex shrink-0 items-center justify-center rounded-2xl border text-2xl font-bold text-white shadow-lg;
+  border-color: color-mix(in srgb, var(--ufo-accent) 40%, transparent);
+  background: var(--ufo-accent);
+  color: var(--ufo-accent-on);
   width: min(100%, 3.5rem);
   height: min(100%, 3.5rem);
   aspect-ratio: 1;
@@ -57,7 +224,7 @@ html.is-floating-window #app {
 
 .floating-shell {
   @apply relative h-screen w-screen overflow-hidden rounded-2xl p-0.5;
-  background-color: rgba(61, 61, 61,0.8);
+  background-color: var(--ufo-bg);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -104,15 +271,18 @@ html.is-floating-window #app {
 }
 
 .agent-status-module__item--green .agent-status-module__dot {
-  @apply bg-emerald-400 shadow-emerald-300/70;
+  background: var(--ufo-status-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-green) 28%, transparent);
 }
 
 .agent-status-module__item--yellow .agent-status-module__dot {
-  @apply bg-amber-300 shadow-amber-300/70;
+  background: var(--ufo-status-yellow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-yellow) 28%, transparent);
 }
 
 .agent-status-module__item--red .agent-status-module__dot {
-  @apply bg-rose-500 shadow-rose-300/70;
+  background: var(--ufo-status-red);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-red) 28%, transparent);
 }
 
 .agent-status-module__item.is-flashing .agent-status-module__dot {
@@ -126,7 +296,6 @@ html.is-floating-window #app {
 
 .agent-status-module__overflow {
   @apply font-semibold tabular-nums leading-none;
-/* font-size: 32px; */
 }
 
 @keyframes agent-status-flash {
@@ -141,37 +310,74 @@ html.is-floating-window #app {
   }
 }
 
+.ufo-card {
+  @apply grid w-full max-w-md gap-3 rounded-[var(--ufo-radius)] p-3.5;
+  background: var(--ufo-surface);
+  border: 1px solid var(--ufo-border);
+}
+
+.ufo-card__header {
+  @apply flex items-baseline justify-between gap-2;
+}
+
+.ufo-card__title {
+  @apply m-0 text-[13px] font-semibold;
+  color: #e5e5e5;
+}
+
+.ufo-card__hint {
+  @apply text-[11px];
+  color: var(--ufo-muted);
+}
+
 .module-settings {
-  @apply my-4 w-full max-w-md rounded-xl border border-gray-700 bg-gray-900/40 p-4;
+  @apply my-0;
 }
 
-.module-settings h2 {
-  @apply mb-3 text-base font-semibold;
+.module-settings__toggle {
+  @apply flex items-center justify-between gap-3 py-1;
 }
 
-.module-settings__toggle,
-.module-settings__retention {
-  @apply flex items-center justify-between gap-3 py-2;
+.module-settings__toggle-copy {
+  @apply flex flex-col gap-0.5;
 }
 
-.module-settings__retention input {
-  @apply my-0 w-24;
+.module-settings__toggle-label {
+  @apply text-[13px];
+}
+
+.module-settings__toggle-hint {
+  @apply text-[11px];
+  color: var(--ufo-muted);
+}
+
+.module-settings__retention,
+.module-settings__field {
+  @apply flex flex-col gap-1.5;
+}
+
+.module-settings__retention > span,
+.module-settings__field > span {
+  @apply text-[12px];
+  color: var(--ufo-muted);
 }
 
 .module-settings__caps {
-  @apply mt-2 border-t border-gray-700 pt-2;
+  @apply mt-1 grid grid-cols-2 gap-2.5 border-t pt-3;
+  border-color: var(--ufo-border);
+}
+
+.module-settings__actions {
+  @apply flex justify-end gap-2;
 }
 
 .agent-session-list__meta {
-  @apply w-full max-w-md text-xs text-gray-500;
+  @apply w-full max-w-md text-xs;
+  color: var(--ufo-muted);
 }
 
 .agent-session-list {
-  @apply my-4 w-full max-w-md rounded-xl border border-gray-700 bg-gray-900/40 p-4;
-}
-
-.agent-session-list h2 {
-  @apply mb-3 text-base font-semibold;
+  @apply my-0;
 }
 
 .agent-session-list ul {
@@ -179,40 +385,48 @@ html.is-floating-window #app {
 }
 
 .agent-session-list li {
-  @apply flex items-center gap-2 text-sm text-gray-300;
+  @apply grid items-center gap-2.5 text-sm;
+  grid-template-columns: 10px 1fr auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--ufo-surface-2);
+  border: 1px solid var(--ufo-border);
+  color: var(--ufo-text);
 }
 
 .agent-session-list li > span:last-child {
-  @apply ml-auto text-gray-500;
+  @apply ml-0 text-xs tabular-nums;
+  color: var(--ufo-muted);
 }
 
 .agent-session-list__dot {
-  @apply h-3 w-3 shrink-0 rounded-full;
+  @apply h-2 w-2 shrink-0 rounded-full;
 }
 
 .agent-session-list__dot--green {
-  @apply bg-emerald-400;
+  background: var(--ufo-status-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-green) 18%, transparent);
 }
 
 .agent-session-list__dot--yellow {
-  @apply bg-amber-300;
+  background: var(--ufo-status-yellow);
 }
 
 .agent-session-list__dot--red {
-  @apply bg-rose-500;
+  background: var(--ufo-status-red);
 }
 
 .agent-session-list__empty {
-  @apply text-gray-500;
+  color: var(--ufo-muted);
 }
 
 a,
 button {
-  @apply cursor-default select-none;
+  @apply cursor-pointer select-none;
 }
 
 a {
-  @apply text-sky-500;
+  color: var(--ufo-accent);
 }
 
 h1 {
@@ -223,27 +437,109 @@ p {
   @apply py-1;
 }
 
-.btn {
-  @apply bg-gray-800 text-gray-200 px-3 py-2 rounded-md my-4 border border-gray-700 hover:bg-gray-700 inline-block;
+/* 通用开关：灰轨 → 翠绿填充 */
+.ufo-switch {
+  @apply relative inline-block h-6 w-[42px] shrink-0;
 }
 
-/* Borrowed from tauri-create-app styles */
-.logo {
-  will-change: filter;
-  transition: 0.75s;
-  @apply mx-4 my-6 w-24 h-24;
+.ufo-switch input {
+  @apply absolute m-0 h-0 w-0 opacity-0;
 }
 
-.logo.vite:hover,
-.logo.tauri:hover,
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
+.ufo-switch__track {
+  @apply absolute inset-0 rounded-full border transition-[background-color,border-color] duration-150 ease-out;
+  background: #404040;
+  border-color: var(--ufo-border-strong);
 }
 
-input {
-  @apply bg-gray-700 text-gray-200 px-3 py-2 rounded-md my-4 border border-gray-700 mx-2;
+.ufo-switch__track::after {
+  content: '';
+  @apply absolute top-0.5 left-0.5 h-[18px] w-[18px] rounded-full transition-transform duration-150 ease-out;
+  background: #f5f5f5;
 }
 
-input, textarea {
+.ufo-switch input:checked + .ufo-switch__track {
+  background: var(--ufo-accent);
+  border-color: transparent;
+}
+
+.ufo-switch input:checked + .ufo-switch__track::after {
+  transform: translateX(18px);
+}
+
+.ufo-switch input:focus-visible + .ufo-switch__track {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+/* 通用输入 */
+.ufo-input,
+input.ufo-input {
+  @apply my-0 h-9 w-full rounded-[10px] border px-3 text-[13px] outline-none transition-[border-color,box-shadow] duration-150;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border-strong);
+  color: var(--ufo-text);
+}
+
+.ufo-input:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.ufo-input:focus {
+  border-color: var(--ufo-accent);
+  box-shadow: 0 0 0 3px var(--ufo-accent-soft);
+}
+
+/* 通用按钮 */
+.btn,
+.ufo-btn {
+  @apply inline-flex h-9 items-center justify-center rounded-[10px] border border-transparent px-3.5 text-[13px] font-semibold transition duration-150;
+}
+
+.ufo-btn--primary,
+.btn.ufo-btn--primary {
+  background: var(--ufo-accent);
+  color: var(--ufo-accent-on);
+}
+
+.ufo-btn--primary:hover,
+.btn.ufo-btn--primary:hover {
+  filter: brightness(1.05);
+}
+
+.ufo-btn--ghost,
+.btn.ufo-btn--ghost {
+  background: transparent;
+  border-color: var(--ufo-border-strong);
+  color: var(--ufo-text);
+}
+
+.ufo-btn--ghost:hover,
+.btn.ufo-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ufo-btn:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+input,
+textarea {
   @apply select-auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ufo-switch__track,
+  .ufo-switch__track::after,
+  .ufo-input,
+  .ufo-btn,
+  .btn {
+    transition: none !important;
+  }
+
+  .agent-status-module__item.is-flashing .agent-status-module__dot {
+    animation: none;
+  }
 }
