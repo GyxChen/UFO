@@ -1,0 +1,14 @@
+[[permission]]
+identifier = "allow-get-status-snapshot"
+description = "Allows reading the normalized agent status snapshot."
+commands.allow = ["get_status_snapshot"]
+
+[[permission]]
+identifier = "allow-get-floating-module-config"
+description = "Allows reading floating window module configuration."
+commands.allow = ["get_floating_module_config"]
+
+[[permission]]
+identifier = "allow-set-floating-module-config"
+description = "Allows updating validated floating window module configuration."
+commands.allow = ["set_floating_module_config"]

@@ -38,7 +38,7 @@ html.is-floating-window #app {
 }
 
 .floating-launcher {
-  @apply flex h-full w-full items-center justify-center border-0 bg-transparent p-0;
+  @apply relative flex h-full w-full items-center justify-center overflow-hidden rounded-2xl border-0 bg-transparent p-0;
   cursor: grab;
   -webkit-app-region: no-drag;
 }
@@ -48,8 +48,162 @@ html.is-floating-window #app {
 }
 
 .floating-launcher__mark {
-  @apply flex h-14 w-14 items-center justify-center rounded-2xl border border-sky-300/40 bg-sky-500 text-2xl font-bold text-white shadow-lg shadow-sky-950/50;
+  @apply relative z-10 flex shrink-0 items-center justify-center rounded-2xl border border-sky-300/40 bg-sky-500 text-2xl font-bold text-white shadow-lg shadow-sky-950/50;
+  width: min(100%, 3.5rem);
+  height: min(100%, 3.5rem);
+  aspect-ratio: 1;
   user-select: none;
+}
+
+.floating-shell {
+  @apply relative h-screen w-screen overflow-hidden rounded-2xl p-0.5;
+  background-color: rgba(61, 61, 61,0.8);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: rgba(142, 142, 142, 0.19) 0px 6px 15px 0px;
+  -webkit-box-shadow: rgba(142, 142, 142, 0.19) 0px 6px 15px 0px;
+}
+
+/* 整区留给 Agent 指示灯，不再左右 / 上下分槽。 */
+.floating-module-host {
+  @apply absolute inset-1 z-0 grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.floating-module-host__slot {
+  @apply min-h-0 min-w-0 overflow-hidden;
+}
+
+.agent-status-module {
+  @apply grid h-full w-full content-center justify-items-center gap-1 overflow-hidden p-1;
+  /* 网格列行由组件按形态与格子数内联设置，适配方形 / 横条 / 竖条。 */
+}
+
+.agent-status-module__item {
+  @apply flex h-full w-full min-h-0 min-w-0 items-center justify-center gap-1;
+}
+
+.agent-status-module__identity {
+  @apply flex min-h-0 min-w-0 shrink-0 items-center justify-center;
+  height: 42%;
+  width: auto;
+  aspect-ratio: 1;
+}
+
+.agent-status-module__icon {
+  @apply block h-full w-full object-contain;
+}
+
+.agent-status-module__dot {
+  @apply block shrink-0 rounded-full border border-white/40 shadow-sm;
+  height: 28%;
+  width: auto;
+  aspect-ratio: 1;
+}
+
+.agent-status-module__item--green .agent-status-module__dot {
+  @apply bg-emerald-400 shadow-emerald-300/70;
+}
+
+.agent-status-module__item--yellow .agent-status-module__dot {
+  @apply bg-amber-300 shadow-amber-300/70;
+}
+
+.agent-status-module__item--red .agent-status-module__dot {
+  @apply bg-rose-500 shadow-rose-300/70;
+}
+
+.agent-status-module__item.is-flashing .agent-status-module__dot {
+  animation: agent-status-flash 1s ease-in-out infinite;
+}
+
+/* 溢出格：与灯同尺寸，居中显示 +N */
+.agent-status-module__item--overflow {
+  @apply text-white/90;
+}
+
+.agent-status-module__overflow {
+  @apply font-semibold tabular-nums leading-none;
+/* font-size: 32px; */
+}
+
+@keyframes agent-status-flash {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.78);
+  }
+}
+
+.module-settings {
+  @apply my-4 w-full max-w-md rounded-xl border border-gray-700 bg-gray-900/40 p-4;
+}
+
+.module-settings h2 {
+  @apply mb-3 text-base font-semibold;
+}
+
+.module-settings__toggle,
+.module-settings__retention {
+  @apply flex items-center justify-between gap-3 py-2;
+}
+
+.module-settings__retention input {
+  @apply my-0 w-24;
+}
+
+.module-settings__caps {
+  @apply mt-2 border-t border-gray-700 pt-2;
+}
+
+.agent-session-list__meta {
+  @apply w-full max-w-md text-xs text-gray-500;
+}
+
+.agent-session-list {
+  @apply my-4 w-full max-w-md rounded-xl border border-gray-700 bg-gray-900/40 p-4;
+}
+
+.agent-session-list h2 {
+  @apply mb-3 text-base font-semibold;
+}
+
+.agent-session-list ul {
+  @apply m-0 grid list-none gap-2 p-0;
+}
+
+.agent-session-list li {
+  @apply flex items-center gap-2 text-sm text-gray-300;
+}
+
+.agent-session-list li > span:last-child {
+  @apply ml-auto text-gray-500;
+}
+
+.agent-session-list__dot {
+  @apply h-3 w-3 shrink-0 rounded-full;
+}
+
+.agent-session-list__dot--green {
+  @apply bg-emerald-400;
+}
+
+.agent-session-list__dot--yellow {
+  @apply bg-amber-300;
+}
+
+.agent-session-list__dot--red {
+  @apply bg-rose-500;
+}
+
+.agent-session-list__empty {
+  @apply text-gray-500;
 }
 
 a,

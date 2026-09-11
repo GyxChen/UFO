@@ -4,6 +4,13 @@ use tauri::{
     AppHandle, Manager, Runtime, WindowEvent,
 };
 
+mod module_config;
+mod status;
+
+use module_config::ModuleState;
+pub use status::try_run_status_hook;
+use status::{get_status_snapshot, spawn_monitor, StatusState};
+
 const MAIN_WINDOW: &str = "main";
 const FLOATING_WINDOW: &str = "floating";
 const TRAY_ICON: &str = "main";
@@ -39,6 +46,15 @@ fn hide_main<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            let app_data = app.path().app_data_dir()?;
+            let status_dir = app_data.join("status");
+            let module_config_path = app_data.join("floating-modules.json");
+            let module_state = ModuleState::load(module_config_path);
+            let status_state = StatusState::new(status_dir, module_state.retention_ms());
+            app.manage(status_state.clone());
+            app.manage(module_state);
+            spawn_monitor(app.handle().clone(), status_state);
+
             let show = MenuItemBuilder::with_id(SHOW_MENU_ITEM, "打开主体").build(app)?;
             let hide = MenuItemBuilder::with_id(HIDE_MENU_ITEM, "隐藏主体").build(app)?;
             let quit = MenuItemBuilder::with_id(QUIT_MENU_ITEM, "退出").build(app)?;
@@ -100,7 +116,12 @@ pub fn run() {
         })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_prevent_default::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            get_status_snapshot,
+            module_config::get_floating_module_config,
+            module_config::set_floating_module_config,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

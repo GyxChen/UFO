@@ -140,4 +140,40 @@ describe('snapToWorkArea', () => {
       docked: { left: true, top: true, right: false, bottom: false },
     })
   })
+
+  it('expands edge strips by the requested cell count', () => {
+    expect(
+      snapToWorkArea({ x: 12, y: 200 }, windowSize, baseSize, workArea, { cells: 6 }),
+    ).toEqual({
+      position: { x: 0, y: 200 },
+      size: { width: 80, height: 480 },
+      docked: { left: true, top: false, right: false, bottom: false },
+    })
+    expect(
+      snapToWorkArea({ x: 200, y: 12 }, windowSize, baseSize, workArea, { cells: 6 }),
+    ).toEqual({
+      position: { x: 200, y: 0 },
+      size: { width: 480, height: 80 },
+      docked: { left: false, top: true, right: false, bottom: false },
+    })
+  })
+
+  it('expands corner squares by ceil(sqrt(cells))', () => {
+    // cells=5 → side=3 → 240×240；左下角 y = 1040 - 240 = 800。
+    expect(
+      snapToWorkArea({ x: 10, y: 970 }, windowSize, baseSize, workArea, { cells: 5 }),
+    ).toEqual({
+      position: { x: 0, y: 800 },
+      size: { width: 240, height: 240 },
+      docked: { left: true, top: false, right: false, bottom: true },
+    })
+    // cells=8 → side 仍为 3。
+    expect(
+      snapToWorkArea({ x: 1828, y: 10 }, windowSize, baseSize, workArea, { cells: 8 }),
+    ).toEqual({
+      position: { x: 1680, y: 0 },
+      size: { width: 240, height: 240 },
+      docked: { left: false, top: true, right: true, bottom: false },
+    })
+  })
 })

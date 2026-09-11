@@ -1,17 +1,37 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, provide, ref } from 'vue'
 import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
+import {
+  ABS_MAX_CELLS,
+  ABS_MIN_CELLS,
+  DEFAULT_WINDOW_CELLS,
+  layoutFromDocked,
+} from '@/lib/agent-status-layout'
+import { floatingWindowKey } from '@/lib/floating-window-context'
 import { snapToWorkArea } from '@/lib/snap'
 import { showMainWindow } from '@/lib/window'
+import FloatingModuleHost from './FloatingModuleHost.vue'
 
 const window = getCurrentWindow()
 const pointerStart = ref<{ x: number; y: number } | null>(null)
 const dragging = ref(false)
+const layoutMode = ref<'square' | 'corner' | 'horizontal' | 'vertical'>('square')
 let snapTimer: ReturnType<typeof setTimeout> | undefined
 let unlistenMoved: (() => void) | undefined
 let unlistenScaleChanged: (() => void) | undefined
 // 悬浮窗的基础尺寸,未贴边时恢复为该尺寸;挂载时读取。
 let baseSize: { width: number; height: number } = { width: 56, height: 56 }
+// 模块申请的格子数；不低于默认，不超过绝对上限。
+let requestedCells = DEFAULT_WINDOW_CELLS
+
+function setWindowCells(cells: number) {
+  const next = Math.min(Math.max(Math.floor(cells), ABS_MIN_CELLS), ABS_MAX_CELLS)
+  if (next === requestedCells) return
+  requestedCells = next
+  scheduleSnap()
+}
+
+provide(floatingWindowKey, { layoutMode, setWindowCells })
 
 function onPointerDown(event: PointerEvent) {
   if (event.button !== 0) {
@@ -89,6 +109,7 @@ async function snapWindow() {
       position: { x: monitor.workArea.position.x, y: monitor.workArea.position.y },
       size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
     },
+    { cells: requestedCells },
   )
 
   if (result.position.x !== position.x || result.position.y !== position.y) {
@@ -97,6 +118,7 @@ async function snapWindow() {
   if (result.size.width !== size.width || result.size.height !== size.height) {
     await window.setSize(new PhysicalSize(result.size.width, result.size.height))
   }
+  layoutMode.value = layoutFromDocked(result.docked)
 }
 
 function onMoved() {
@@ -108,8 +130,8 @@ function onScaleChanged() {
 }
 
 onMounted(async () => {
-  // const size = await window.outerSize()
-  // baseSize = { width: size.width, height: size.height }
+  // 先同步当前窗口的布局，避免首次显示内容时仍使用未知形态。
+  scheduleSnap()
   unlistenMoved = await window.onMoved(onMoved)
   unlistenScaleChanged = await window.onScaleChanged(onScaleChanged)
 })
@@ -124,7 +146,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rounded-2xl bg-gray-500" style="height: 100vh;width: 100vw;">
+  <div class="floating-shell">
     <button
       class="floating-launcher"
       type="button"
@@ -134,7 +156,7 @@ onBeforeUnmount(() => {
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
     >
-      <span class="floating-launcher__mark" aria-hidden="true">U</span>
+      <FloatingModuleHost :layout-mode="layoutMode" />
     </button>
   </div>
 </template>

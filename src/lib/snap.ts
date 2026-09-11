@@ -1,3 +1,7 @@
+/** 与 agent-status-layout 的默认容量对齐；此处内联避免循环依赖。 */
+const DEFAULT_WINDOW_CELLS = 4
+const ABS_MAX_CELLS = 8
+
 export interface PhysicalPoint {
   x: number
   y: number
@@ -15,6 +19,8 @@ export interface WorkArea {
 
 export interface SnapOptions {
   threshold?: number
+  /** 当前申请的格子数；默认等于悬浮窗默认容量。 */
+  cells?: number
 }
 
 export interface DockedEdges {
@@ -31,10 +37,10 @@ export interface SnapResult {
 }
 
 /**
- * 将窗口外框吸附到最近的工作区边缘，并依据吸附到的边缘调整窗口尺寸：
- * - 上下贴边时宽度翻倍，窗口变成沿该边展开的横条；
- * - 左右贴边时高度翻倍，窗口变成沿该边展开的竖条；
- * - 角落贴边时宽高同时翻倍（基础尺寸为正方形时即保持方形）；
+ * 将窗口外框吸附到最近的工作区边缘，并依据吸附到的边缘与格子数调整窗口尺寸：
+ * - 上下贴边时沿该边展开为横条（宽 = base × cells）；
+ * - 左右贴边时沿该边展开为竖条（高 = base × cells）；
+ * - 角落贴边时保持正方形（边长倍率 = ceil(sqrt(cells))）；
  * - 未命中阈值时吸附到距离最近的单条边缘；
  * - 贴边时依据吸附到的边缘恢复对应的窗口尺寸。
  * 返回吸附后的位置、尺寸以及各边缘是否贴边。
@@ -44,7 +50,7 @@ export function snapToWorkArea(
   windowSize: PhysicalSize,
   baseSize: PhysicalSize,
   workArea: WorkArea,
-  { threshold = 24 }: SnapOptions = {},
+  { threshold = 24, cells = DEFAULT_WINDOW_CELLS }: SnapOptions = {},
 ): SnapResult {
   // 工作区可位于副屏，因此坐标不能假定从 (0, 0) 开始。
   const areaLeft = workArea.position.x
@@ -93,7 +99,7 @@ export function snapToWorkArea(
     docked[nearest.edge] = true
   }
 
-  const size = dockedSize(baseSize, docked)
+  const size = dockedSize(baseSize, docked, cells)
 
   // 贴边后尺寸变化，需重新锚定位置使窗口仍紧贴对应边缘；
   // 未贴边的坐标轴也要依据新尺寸重新限制，避免展开后越出工作区。
@@ -117,19 +123,23 @@ export function snapToWorkArea(
   return { position: { x, y }, size, docked }
 }
 
-function dockedSize(base: PhysicalSize, docked: DockedEdges): PhysicalSize {
+function dockedSize(base: PhysicalSize, docked: DockedEdges, cells: number): PhysicalSize {
+  const n = Math.min(Math.max(Math.floor(cells), 1), ABS_MAX_CELLS)
   const vertical = docked.top || docked.bottom
   const horizontal = docked.left || docked.right
 
   if (vertical && horizontal) {
-    // 角落贴边 → 正方形：基础尺寸为正方形时，宽高同时翻倍即保持方形。
-    return { width: base.width * 2, height: base.height * 2 }
+    // 角落贴边 → 正方形：边长倍率按 ceil(sqrt(cells)) 扩展。
+    const side = Math.ceil(Math.sqrt(n))
+    return { width: base.width * side, height: base.height * side }
   }
   if (vertical) {
-    return { width: base.width * 4, height: base.height }
+    // 上下贴边 → 横条 N×1
+    return { width: base.width * n, height: base.height }
   }
   if (horizontal) {
-    return { width: base.width, height: base.height * 4 }
+    // 左右贴边 → 竖条 1×N
+    return { width: base.width, height: base.height * n }
   }
   return { width: base.width, height: base.height }
 }
