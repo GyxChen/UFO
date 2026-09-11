@@ -13,11 +13,18 @@ import {
 const MODULE_CONFIG_EVENT = 'floating-module-config'
 let stopListener: UnlistenFn | undefined
 
+/** Running 无事件超时默认 60 秒。 */
+const DEFAULT_RUNNING_TIMEOUT_SECONDS = 60
+/** Running 超时可选范围：1 分钟 ..= 60 分钟。 */
+const MIN_RUNNING_TIMEOUT_SECONDS = 60
+const MAX_RUNNING_TIMEOUT_SECONDS = 60 * 60
+
 const fallbackConfig: FloatingModuleConfig = {
   schema_version: 1,
   revision: 0,
   modules: [{ id: 'agent-status', enabled: true, order: 0 }],
   completed_retention_ms: 30_000,
+  running_timeout_ms: DEFAULT_RUNNING_TIMEOUT_SECONDS * 1000,
   max_cells_by_layout: defaultMaxCellsByLayout(),
 }
 
@@ -35,6 +42,11 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
   getters: {
     agentStatusEnabled: (state) => isModuleEnabled(state.config, 'agent-status'),
     retentionSeconds: (state) => Math.round((state.config?.completed_retention_ms ?? 30_000) / 1000),
+    /** Running 无新 hook 超时（秒），默认 60。 */
+    runningTimeoutSeconds: (state) =>
+      Math.round(
+        (state.config?.running_timeout_ms ?? DEFAULT_RUNNING_TIMEOUT_SECONDS * 1000) / 1000,
+      ),
     maxCellsByLayout: (state): MaxCellsByLayout =>
       state.config?.max_cells_by_layout ?? defaultMaxCellsByLayout(),
   },
@@ -89,6 +101,25 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
         }))
       } catch (error) {
         console.warn('failed to update completed retention', error)
+        throw error
+      }
+    },
+
+    /** 更新 Running 无新 hook 超时（秒）；慢 agent 可拉长避免绿灯被误清。 */
+    async updateRunningTimeoutSeconds(seconds: number) {
+      const current = this.config ?? fallbackConfig
+      const bounded = Math.min(
+        MAX_RUNNING_TIMEOUT_SECONDS,
+        Math.max(MIN_RUNNING_TIMEOUT_SECONDS, Math.round(seconds)),
+      )
+      try {
+        this.applyConfig(
+          await invoke<FloatingModuleConfig>('set_floating_module_config', {
+            config: { ...current, running_timeout_ms: bounded * 1000 },
+          }),
+        )
+      } catch (error) {
+        console.warn('failed to update running timeout', error)
         throw error
       }
     },

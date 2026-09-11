@@ -43,7 +43,11 @@ pub fn run() {
             let status_dir = app_data.join("status");
             let module_config_path = app_data.join("floating-modules.json");
             let module_state = ModuleState::load(module_config_path);
-            let status_state = StatusState::new(status_dir, module_state.retention_ms());
+            let status_state = StatusState::new(
+                status_dir,
+                module_state.retention_ms(),
+                module_state.running_timeout_ms(),
+            );
             app.manage(status_state.clone());
             app.manage(module_state);
             spawn_monitor(app.handle().clone(), status_state);

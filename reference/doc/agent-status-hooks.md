@@ -125,7 +125,7 @@ SDK 中 SessionEnd 使用 `reason`（UFO 归一化进 `outcome`），枚举大�
 | `Completed` | 按配置的 `retention_ms`（默认 30 秒）绿闪后**移除** |
 | `Waiting` + Stop 绿闪 | 按 `retention_ms` 绿闪后**落成黄常亮**（不移除） |
 | `Waiting` | **保留到同一 provider 的下次运行开始时清理**（30 分钟 failsafe 超时） |
-| `Running` | 进程死亡 → 立即移除；60 秒无新事件 → 超时移除 |
+| `Running` | 进程死亡 → 立即移除；无新事件超时由主窗口「执行中超时」配置（默认 **60 秒**，范围 60–3600） |
 | `Error` / `Unknown` | 进程死亡 → 立即移除；60 秒无新事件 → 超时移除 |
 
 关键行为：当同一 provider 的新 `Running` 事件到来时，自动清除该 provider 的所有旧 `Waiting` 会话。

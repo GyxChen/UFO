@@ -22,14 +22,17 @@ pub struct StatusState {
     pub registry: Arc<Mutex<StatusRegistry>>,
     pub status_dir: PathBuf,
     pub retention_ms: Arc<Mutex<u64>>,
+    /// Running 无新 hook 时的超时（毫秒），与 Error 的 60s 分离，可配置。
+    pub running_timeout_ms: Arc<Mutex<u64>>,
 }
 
 impl StatusState {
-    pub fn new(status_dir: PathBuf, retention_ms: u64) -> Self {
+    pub fn new(status_dir: PathBuf, retention_ms: u64, running_timeout_ms: u64) -> Self {
         Self {
             registry: Arc::new(Mutex::new(StatusRegistry::new())),
             status_dir,
             retention_ms: Arc::new(Mutex::new(retention_ms)),
+            running_timeout_ms: Arc::new(Mutex::new(running_timeout_ms)),
         }
     }
 }
@@ -57,10 +60,16 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
         let mut changed = consume_inbox(&app, &inbox, &quarantine, &state);
         let now = now_ms();
         if now >= next_cleanup {
+            let running_timeout = state
+                .running_timeout_ms
+                .lock()
+                .map(|value| *value)
+                .unwrap_or(60_000)
+                .min(i64::MAX as u64) as i64;
             let cleanup_changed = state
                 .registry
                 .lock()
-                .map(|mut registry| registry.cleanup(now, process_alive))
+                .map(|mut registry| registry.cleanup(now, running_timeout, process_alive))
                 .unwrap_or(false);
             changed |= cleanup_changed;
             next_cleanup = now.saturating_add(10_000);

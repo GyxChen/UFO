@@ -32,6 +32,7 @@ async function onCloseMain() {
 }
 
 const retentionInput = ref(modules.retentionSeconds)
+const runningTimeoutInput = ref(modules.runningTimeoutSeconds)
 const maxCellsInput = reactive<MaxCellsByLayout>({ ...modules.maxCellsByLayout })
 
 const layoutLabels: { key: FloatingLayout; label: string }[] = [
@@ -45,6 +46,14 @@ watch(
   () => modules.retentionSeconds,
   (seconds) => {
     retentionInput.value = seconds
+  },
+  { immediate: true },
+)
+
+watch(
+  () => modules.runningTimeoutSeconds,
+  (seconds) => {
+    runningTimeoutInput.value = seconds
   },
   { immediate: true },
 )
@@ -76,6 +85,15 @@ async function updateRetention() {
   }
 }
 
+/** 更新 Running 无新 hook 超时（秒）；慢 agent 可拉长避免绿灯被误清。 */
+async function updateRunningTimeout() {
+  try {
+    await modules.updateRunningTimeoutSeconds(runningTimeoutInput.value)
+  } catch {
+    runningTimeoutInput.value = modules.runningTimeoutSeconds
+  }
+}
+
 /** 更新指定悬浮窗形态的格子上限。 */
 async function updateMaxCells(layout: FloatingLayout) {
   try {
@@ -85,10 +103,17 @@ async function updateMaxCells(layout: FloatingLayout) {
   }
 }
 
-/** 将各形态上限重置为当前 store 中的值。 */
+/** 将各形态上限与超时设置重置为当前 store 中的值。 */
 function resetMaxCells() {
   Object.assign(maxCellsInput, modules.maxCellsByLayout)
   retentionInput.value = modules.retentionSeconds
+  runningTimeoutInput.value = modules.runningTimeoutSeconds
+}
+
+/** 保存完成灯保留 + Running 超时。 */
+async function saveTimeouts() {
+  await updateRetention()
+  await updateRunningTimeout()
 }
 </script>
 
@@ -110,11 +135,8 @@ function resetMaxCells() {
 
     <main class="main-window">
     <header class="main-window__hero">
-      <div class="main-window__badge">Agent Status</div>
       <h1 class="main-window__title">悬浮窗设置</h1>
-      <p class="main-window__subtitle">
-        深色哑光面板。配置 Agent 状态灯、完成保留时长与各形态格子上限。
-      </p>
+      <div class="main-window__badge">Agent Status</div>
     </header>
 
     <section class="ufo-card module-settings" aria-labelledby="module-settings-title">
@@ -152,6 +174,23 @@ function resetMaxCells() {
         />
       </label>
 
+      <label class="module-settings__retention">
+        <span>执行中超时（秒）</span>
+        <input
+          v-model.number="runningTimeoutInput"
+          class="ufo-input"
+          type="number"
+          min="60"
+          max="3600"
+          step="30"
+          title="Running 无新 hook 时移除绿灯；慢 agent 可拉长"
+          @change="updateRunningTimeout"
+        />
+      </label>
+      <p class="module-settings__field-hint">
+        绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。
+      </p>
+
       <div class="module-settings__caps" aria-label="各形态格子上限">
         <label
           v-for="item in layoutLabels"
@@ -175,7 +214,7 @@ function resetMaxCells() {
         <button class="ufo-btn ufo-btn--ghost" type="button" @click="resetMaxCells">
           重置
         </button>
-        <button class="ufo-btn ufo-btn--primary" type="button" @click="updateRetention">
+        <button class="ufo-btn ufo-btn--primary" type="button" @click="saveTimeouts">
           保存
         </button>
       </div>

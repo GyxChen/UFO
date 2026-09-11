@@ -14,6 +14,7 @@ const config: FloatingModuleConfig = {
     { id: 'future-mod', enabled: false, order: 1 },
   ],
   completed_retention_ms: 30_000,
+  running_timeout_ms: 60_000,
   max_cells_by_layout: {
     square: 8,
     corner: 8,

@@ -117,7 +117,8 @@ src-tauri/src/
 
 - `Completed` 阶段：到期（now ≥ remove_at_ms）则移除，未到期则保留。
 - `Waiting` 阶段：保留到同一 provider 的下次运行开始时清理（30 分钟 failsafe 超时）。
-- `Running` / `Error` / `Unknown` 阶段：进程死亡 → 立即移除；60 秒无新事件 → 超时移除。
+- `Running` 阶段：进程死亡 → 立即移除；无新事件超时使用可配置的 `running_timeout_ms`（默认 60 秒，主窗口可改）。
+- `Error` / `Unknown` 阶段：进程死亡 → 立即移除；60 秒无新事件 → 超时移除。
 
 **状态灯更新全流程示例：**
 
@@ -203,7 +204,7 @@ Completed && now ≥ remove_at
 **cleanup 定时清理决策树：**
 
 ```text
-cleanup(now, is_alive) 每 10 秒执行
+cleanup(now, running_timeout_ms, is_alive) 每 10 秒执行
     │
     对每个 session：
     │
@@ -214,8 +215,13 @@ cleanup(now, is_alive) 每 10 秒执行
     │   └─ now - last_seen_at_ms > 30min？ → 删除 : 保留
     │       （正常情况下由下次 Running 事件清理，30 分钟是 failsafe）
     │
-    └─ phase == Running/Error/Unknown？
-        ├─ now - last_seen_at_ms > 60s？ → 删除（超时）
+    ├─ phase == Running？
+    │   ├─ now - last_seen_at_ms > running_timeout_ms？ → 删除（可配置，默认 60s）
+    │   └─ is_alive(session) == Some(false)？ → 删除（进程死亡）
+    │      否则 → 保留
+    │
+    └─ phase == Error/Unknown？
+        ├─ now - last_seen_at_ms > 60s？ → 删除（短超时）
         └─ is_alive(session) == Some(false)？ → 删除（进程死亡）
            否则 → 保留
 ```
@@ -259,6 +265,7 @@ snapshot → store.applySnapshot（revision 检查，忽略旧快照）
 - `registry: Arc<Mutex<StatusRegistry>>`
 - `status_dir: PathBuf`
 - `retention_ms: Arc<Mutex<u64>>` — 与 module_config 联动，配置变更时同步更新。
+- `running_timeout_ms: Arc<Mutex<u64>>` — Running 无新 hook 超时，与 Error 的 60s 分离；配置变更时同步。
 
 `monitor_loop` 在独立线程运行：
 
@@ -282,6 +289,7 @@ snapshot → store.applySnapshot（revision 检查，忽略旧快照）
 | revision | 1 | 每次写入递增 |
 | modules | `[{id:"agent-status",enabled:true,order:0}]` | 模块列表 |
 | completed_retention_ms | 30000 | 完成灯保留时长，clamp 1000~86400000 |
+| running_timeout_ms | 60000 | Running 无新 hook 超时，clamp 60000~3600000；旧配置缺字段回落默认 |
 | max_cells_by_layout | 各形态 8 | 方形/四角/横条/竖条格子上限，各 clamp 4~8；旧 `max_visible_sessions` 加载时迁移后废弃 |
 
 `validate` 规则：
@@ -294,7 +302,7 @@ snapshot → store.applySnapshot（revision 检查，忽略旧快照）
 
 写入策略：先写 `.tmp`，删除旧文件，rename 新文件（Windows 兼容）。
 
-配置变更时同步更新 `StatusState.retention_ms`，使运行中的监测器立即采用新保留时长。
+配置变更时同步更新 `StatusState.retention_ms` 与 `StatusState.running_timeout_ms`，使运行中的监测器立即采用新值。
 
 ### 2.7 lib.rs — Tauri 集成
 
@@ -302,7 +310,7 @@ setup 阶段：
 
 1. 获取 app-data 目录。
 2. 加载 `ModuleState`（从 `floating-modules.json`）。
-3. 用 module_config 的 retention_ms 初始化 `StatusState`。
+3. 用 module_config 的 retention_ms / running_timeout_ms 初始化 `StatusState`。
 4. `app.manage(StatusState)` + `app.manage(ModuleState)`。
 5. `spawn_monitor` 启动唯一监测线程。
 6. 注册托盘菜单和 devtools。
@@ -495,6 +503,8 @@ onMounted(() => {
 模块开关：checkbox 绑定 `modules.agentStatusEnabled`，change 时调用 `modules.updateAgentStatus`，失败时回滚 UI。
 
 保留时长：number input 绑定 `retentionInput`，change 时调用 `modules.updateRetentionSeconds`，失败时回滚。
+
+执行中超时：number input 绑定 `runningTimeoutInput`（60–3600 秒，默认 60），change / 保存时调用 `modules.updateRunningTimeoutSeconds`，失败时回滚；即时同步到 `StatusState.running_timeout_ms`。
 
 会话列表：遍历 `agentStatus.sessions`，显示彩色圆点、provider、短 session id 和 phase。超过 8 个时由前端限制显示，后端保留完整数据。
 

@@ -362,6 +362,11 @@ html.is-main-window #app {
   color: var(--ufo-muted);
 }
 
+.module-settings__field-hint {
+  @apply -mt-1 text-[11px] leading-snug;
+  color: var(--ufo-muted);
+}
+
 .module-settings__caps {
   @apply mt-1 grid grid-cols-2 gap-2.5 border-t pt-3;
   border-color: var(--ufo-border);

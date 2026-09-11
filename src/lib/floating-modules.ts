@@ -31,6 +31,8 @@ export interface FloatingModuleConfig {
   revision: number
   modules: FloatingModuleConfigEntry[]
   completed_retention_ms: number
+  /** Running 无新 hook 时的超时（毫秒）；超时后移除绿灯。 */
+  running_timeout_ms: number
   max_cells_by_layout: MaxCellsByLayout
 }
 

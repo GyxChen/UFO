@@ -13,6 +13,12 @@ const SCHEMA_VERSION: u16 = 1;
 const AGENT_STATUS: &str = "agent-status";
 const DEFAULT_RETENTION_MS: u64 = 30_000;
 const MAX_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
+/// Running 无新 hook 时的默认超时：60 秒（与 Error 下限同档，用户可在主窗口拉长）。
+const DEFAULT_RUNNING_TIMEOUT_MS: u64 = 60 * 1000;
+/// Running 超时下限：1 分钟（不低于旧的 Error 级 60s 门槛）。
+const MIN_RUNNING_TIMEOUT_MS: u64 = 60 * 1000;
+/// Running 超时上限：60 分钟。
+const MAX_RUNNING_TIMEOUT_MS: u64 = 60 * 60 * 1000;
 const MIN_CELLS: u8 = 4;
 const MAX_CELLS: u8 = 8;
 
@@ -63,6 +69,8 @@ pub struct FloatingModuleConfig {
     pub revision: u64,
     pub modules: Vec<FloatingModuleEntry>,
     pub completed_retention_ms: u64,
+    /// Running 阶段无新 hook 事件时的超时（毫秒）；超时后移除绿灯。
+    pub running_timeout_ms: u64,
     pub max_cells_by_layout: MaxCellsByLayout,
 }
 
@@ -73,10 +81,17 @@ struct FloatingModuleConfigWire {
     revision: u64,
     modules: Vec<FloatingModuleEntry>,
     completed_retention_ms: u64,
+    /// 旧配置缺字段时回落默认 60 秒。
+    #[serde(default = "default_running_timeout_ms")]
+    running_timeout_ms: u64,
     #[serde(default)]
     max_cells_by_layout: Option<MaxCellsByLayout>,
     #[serde(default)]
     max_visible_sessions: Option<u8>,
+}
+
+fn default_running_timeout_ms() -> u64 {
+    DEFAULT_RUNNING_TIMEOUT_MS
 }
 
 impl FloatingModuleConfigWire {
@@ -90,6 +105,7 @@ impl FloatingModuleConfigWire {
             revision: self.revision,
             modules: self.modules,
             completed_retention_ms: self.completed_retention_ms,
+            running_timeout_ms: self.running_timeout_ms,
             max_cells_by_layout,
         }
     }
@@ -106,6 +122,7 @@ impl Default for FloatingModuleConfig {
                 order: 0,
             }],
             completed_retention_ms: DEFAULT_RETENTION_MS,
+            running_timeout_ms: DEFAULT_RUNNING_TIMEOUT_MS,
             max_cells_by_layout: MaxCellsByLayout::default(),
         }
     }
@@ -117,6 +134,9 @@ impl FloatingModuleConfig {
             return Err("unsupported module config schema".to_string());
         }
         self.completed_retention_ms = self.completed_retention_ms.clamp(1_000, MAX_RETENTION_MS);
+        self.running_timeout_ms = self
+            .running_timeout_ms
+            .clamp(MIN_RUNNING_TIMEOUT_MS, MAX_RUNNING_TIMEOUT_MS);
         self.max_cells_by_layout = self.max_cells_by_layout.clamp_each();
         for module in &self.modules {
             if module.id.len() > 64 || module.id.contains(['/', '\\']) {
@@ -160,6 +180,14 @@ impl ModuleState {
             .map(|config| config.completed_retention_ms)
             .unwrap_or(DEFAULT_RETENTION_MS)
     }
+
+    /// 读取 Running 无事件超时（毫秒），供 StatusState 初始化。
+    pub fn running_timeout_ms(&self) -> u64 {
+        self.config
+            .lock()
+            .map(|config| config.running_timeout_ms)
+            .unwrap_or(DEFAULT_RUNNING_TIMEOUT_MS)
+    }
 }
 
 #[tauri::command]
@@ -200,9 +228,13 @@ pub fn set_floating_module_config(
         .config
         .lock()
         .map_err(|_| "module config lock poisoned".to_string())? = config.clone();
+    // 即时同步给状态监测：完成灯保留 + Running 无事件超时。
     if let Some(status_state) = app.try_state::<StatusState>() {
         if let Ok(mut retention_ms) = status_state.retention_ms.lock() {
             *retention_ms = config.completed_retention_ms;
+        }
+        if let Ok(mut running_timeout_ms) = status_state.running_timeout_ms.lock() {
+            *running_timeout_ms = config.running_timeout_ms;
         }
     }
     let _ = app.emit("floating-module-config", &config);
@@ -229,6 +261,13 @@ mod tests {
     }
 
     #[test]
+    fn default_running_timeout_is_sixty_seconds() {
+        let config = FloatingModuleConfig::default();
+        assert_eq!(config.running_timeout_ms, DEFAULT_RUNNING_TIMEOUT_MS);
+        assert_eq!(config.running_timeout_ms, 60_000);
+    }
+
+    #[test]
     fn default_max_cells_are_eight() {
         let config = FloatingModuleConfig::default();
         assert_eq!(config.max_cells_by_layout, MaxCellsByLayout::filled(MAX_CELLS));
@@ -245,6 +284,19 @@ mod tests {
         config.completed_retention_ms = u64::MAX;
         let validated = config.validate().unwrap();
         assert_eq!(validated.completed_retention_ms, MAX_RETENTION_MS);
+    }
+
+    #[test]
+    fn validate_clamps_running_timeout_to_range() {
+        let mut config = FloatingModuleConfig::default();
+        config.running_timeout_ms = 0;
+        let validated = config.validate().unwrap();
+        assert_eq!(validated.running_timeout_ms, MIN_RUNNING_TIMEOUT_MS);
+
+        let mut config = FloatingModuleConfig::default();
+        config.running_timeout_ms = u64::MAX;
+        let validated = config.validate().unwrap();
+        assert_eq!(validated.running_timeout_ms, MAX_RUNNING_TIMEOUT_MS);
     }
 
     #[test]
@@ -334,6 +386,8 @@ mod tests {
         let wire: FloatingModuleConfigWire = serde_json::from_str(json).unwrap();
         let config = wire.into_config().validate().unwrap();
         assert_eq!(config.max_cells_by_layout, MaxCellsByLayout::filled(5));
+        // 旧配置缺 running_timeout_ms 时回落默认 60 秒。
+        assert_eq!(config.running_timeout_ms, DEFAULT_RUNNING_TIMEOUT_MS);
     }
 
     #[test]

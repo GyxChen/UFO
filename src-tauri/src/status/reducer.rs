@@ -151,12 +151,17 @@ impl StatusRegistry {
         true
     }
 
-    pub fn cleanup<F>(&mut self, now: i64, mut is_alive: F) -> bool
+    /// 清理过期会话。
+    ///
+    /// `running_timeout_ms`：Running 无新 hook 的可配置超时（与 Error/Unknown 的 60s 分离）。
+    pub fn cleanup<F>(&mut self, now: i64, running_timeout_ms: i64, mut is_alive: F) -> bool
     where
         F: FnMut(&SessionSnapshot) -> Option<bool>,
     {
         let before = self.sessions.len();
         let mut flash_settled = false;
+        // 兜底：配置异常时至少保留 60s，避免 Running 被瞬间清掉。
+        let running_timeout = running_timeout_ms.max(ERROR_TIMEOUT_MS);
 
         // Waiting + Stop 绿闪到期：关掉 is_flashing，落成黄常亮（会话保留）。
         for session in self.sessions.values_mut() {
@@ -185,8 +190,18 @@ impl StatusRegistry {
                 SessionPhase::Waiting => {
                     now.saturating_sub(session.last_seen_at_ms) <= WAITING_TIMEOUT_MS
                 }
-                // Running / Error / Unknown: process liveness + short timeout.
-                _ => {
+                // Running：可配置的长超时 + 进程存活检查（慢 agent 不会被 60s 误杀）。
+                SessionPhase::Running => {
+                    if now.saturating_sub(session.last_seen_at_ms) > running_timeout {
+                        return false;
+                    }
+                    match is_alive(session) {
+                        Some(false) => false,
+                        _ => true,
+                    }
+                }
+                // Error / Unknown：短超时 + 进程存活检查。
+                SessionPhase::Error | SessionPhase::Unknown => {
                     if now.saturating_sub(session.last_seen_at_ms) > ERROR_TIMEOUT_MS {
                         return false;
                     }
@@ -236,9 +251,11 @@ impl StatusRegistry {
     }
 }
 
-/// Maximum time (ms) an Error/Unknown session can stay without new events
-/// before being cleaned up.
+/// Error/Unknown 无新事件时的短超时（毫秒）；Running 使用可配置的 running_timeout_ms。
 const ERROR_TIMEOUT_MS: i64 = 60 * 1000; // 1 minute
+
+/// 测试与调用方未指定时的 Running 默认超时（60 秒）。
+const DEFAULT_RUNNING_TIMEOUT_MS: i64 = 60 * 1000;
 
 /// Failsafe timeout (ms) for Waiting sessions — normally they are cleared
 /// when the next run starts, but this prevents leaks if no run ever starts.
@@ -409,8 +426,8 @@ mod tests {
             30_000,
         );
 
-        assert!(!registry.cleanup(30_099, |_| Some(false)));
-        assert!(registry.cleanup(30_100, |_| Some(false)));
+        assert!(!registry.cleanup(30_099, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(false)));
+        assert!(registry.cleanup(30_100, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(false)));
         assert!(registry.snapshot(30_100).sessions.is_empty());
     }
 
@@ -419,7 +436,7 @@ mod tests {
         let mut registry = StatusRegistry::new();
         registry.apply_event(event("1", Provider::Claude, "one", "error", 100), 30_000);
 
-        assert!(registry.cleanup(200, |_| Some(false)));
+        assert!(registry.cleanup(200, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(false)));
         assert!(registry.snapshot(200).sessions.is_empty());
     }
 
@@ -434,11 +451,11 @@ mod tests {
         assert_eq!(session.remove_at_ms, Some(30_100));
 
         // retention 未到：仍闪烁，不移除。
-        assert!(!registry.cleanup(30_099, |_| Some(true)));
+        assert!(!registry.cleanup(30_099, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(true)));
         assert!(registry.snapshot(30_099).sessions[0].is_flashing);
 
         // retention 到期：关掉闪烁，落成黄常亮，会话保留。
-        assert!(registry.cleanup(30_100, |_| Some(true)));
+        assert!(registry.cleanup(30_100, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(true)));
         let settled = &registry.snapshot(30_100).sessions[0];
         assert_eq!(settled.phase, SessionPhase::Waiting);
         assert!(!settled.is_flashing);
@@ -653,7 +670,7 @@ mod tests {
             30_000,
         );
         // Even if process is dead, completed sessions are kept until remove_at_ms
-        assert!(!registry.cleanup(200, |_| Some(false)));
+        assert!(!registry.cleanup(200, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(false)));
         assert_eq!(registry.snapshot(200).sessions.len(), 1);
         assert_eq!(
             registry.snapshot(200).sessions[0].phase,
@@ -669,7 +686,7 @@ mod tests {
             event("1", Provider::Claude, "one", "session_end", 100),
             30_000,
         );
-        assert!(!registry.cleanup(200, |_| None));
+        assert!(!registry.cleanup(200, DEFAULT_RUNNING_TIMEOUT_MS, |_| None));
         assert_eq!(registry.snapshot(200).sessions.len(), 1);
     }
 
@@ -678,12 +695,35 @@ mod tests {
         let mut registry = StatusRegistry::new();
         registry.apply_event(event("1", Provider::Claude, "one", "error", 100), 30_000);
         // Error sessions are kept while within the timeout window.
-        assert!(!registry.cleanup(200, |_| None));
+        assert!(!registry.cleanup(200, DEFAULT_RUNNING_TIMEOUT_MS, |_| None));
         assert_eq!(registry.snapshot(200).sessions.len(), 1);
         // After 60s without new events, stale error sessions are removed.
         let stale_time = 100 + super::ERROR_TIMEOUT_MS + 1;
-        assert!(registry.cleanup(stale_time, |_| None));
+        assert!(registry.cleanup(stale_time, DEFAULT_RUNNING_TIMEOUT_MS, |_| None));
         assert!(registry.snapshot(stale_time).sessions.is_empty());
+    }
+
+    #[test]
+    fn running_sessions_use_configurable_timeout_not_error_60s() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "PreToolUse", 100),
+            30_000,
+        );
+        // 把 Running 超时拉到 3 分钟：超过 Error 的 60s 仍保留绿灯。
+        let running_timeout = 3 * 60 * 1000;
+        let after_error_window = 100 + super::ERROR_TIMEOUT_MS + 1;
+        assert!(!registry.cleanup(after_error_window, running_timeout, |_| None));
+        assert_eq!(registry.snapshot(after_error_window).sessions.len(), 1);
+        assert_eq!(
+            registry.snapshot(after_error_window).sessions[0].phase,
+            SessionPhase::Running
+        );
+
+        // 超过配置的 Running 超时：移除。
+        let after_running = 100 + running_timeout + 1;
+        assert!(registry.cleanup(after_running, running_timeout, |_| None));
+        assert!(registry.snapshot(after_running).sessions.is_empty());
     }
 
     #[test]
