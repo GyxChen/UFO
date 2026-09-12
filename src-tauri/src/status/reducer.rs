@@ -50,7 +50,7 @@ impl StatusRegistry {
         let key = session_key(event.provider, &event.session_id);
 
         // Extract previous session data before any mutable borrow.
-        let (previous_error, previous_started_at, previous_pid, previous_error_code) =
+        let (previous_phase, previous_started_at, previous_pid, previous_error_code) =
             match self.sessions.get(&key) {
                 Some(previous) => {
                     if event
@@ -68,29 +68,25 @@ impl StatusRegistry {
                         return false;
                     }
                     (
-                        previous.phase == SessionPhase::Error,
+                        Some(previous.phase),
                         Some(previous.started_at_ms),
                         previous.pid,
                         previous.error_code.clone(),
                     )
                 }
-                None => (false, None, None, None),
+                None => (None, None, None, None),
             };
 
-        let phase_for_update = phase_for_event(&event);
-        // Error 粘性：普通非 Error 事件不能冲掉红灯；
-        // 但 UserPromptSubmit / SessionStart 视为用户重新开跑，允许 Error → Running。
-        let allows_error_recovery = matches!(
-            normalize_event_name(&event.event).as_str(),
-            "user_prompt_submit" | "session_start" | "session_started"
-        );
-        let phase = if previous_error
-            && phase_for_update != SessionPhase::Error
-            && !allows_error_recovery
+        // 红灯不粘：事件映射出的阶段即最终阶段。
+        // 任何能转灯的事件（Stop→黄、SessionEnd→绿闪、工具事件→绿等）都允许把红灯带走；
+        // 唯一例外是 Unknown —— 无法识别的事件不构成转灯信号，保持原红灯。
+        let mapped_phase = phase_for_event(&event);
+        let phase = if previous_phase == Some(SessionPhase::Error)
+            && mapped_phase == SessionPhase::Unknown
         {
             SessionPhase::Error
         } else {
-            phase_for_update
+            mapped_phase
         };
 
         // When a new run starts (Running phase), clear old Waiting sessions
@@ -142,7 +138,13 @@ impl StatusRegistry {
                 remove_at_ms,
                 is_flashing: flash_deadline.is_some(),
                 pid: event.pid.or(previous_pid),
-                error_code: event.error_code.or(previous_error_code),
+                // error_code 只在 Error 阶段保留：转灯后（如 Error → Running）必须清掉，
+                // 避免快照出现「绿灯 + 错误码」这种自相矛盾的状态。
+                error_code: if phase == SessionPhase::Error {
+                    event.error_code.or(previous_error_code)
+                } else {
+                    None
+                },
                 last_sequence: event.sequence,
                 termination_confirmed: phase == SessionPhase::Completed,
             },
@@ -727,12 +729,70 @@ mod tests {
     }
 
     #[test]
-    fn error_state_is_protected_from_non_error_events() {
+    fn non_error_events_clear_error_state() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(event("1", Provider::Claude, "one", "error", 100), 30_000);
-        // 普通执行事件不能冲掉红灯。
+        let mut failure = event("1", Provider::Claude, "one", "StopFailure", 100);
+        failure.error_code = Some("overloaded".to_string());
+        registry.apply_event(failure, 30_000);
+        assert_eq!(
+            registry.snapshot(100).sessions[0].error_code.as_deref(),
+            Some("overloaded")
+        );
+
+        // 红灯不粘：后续执行事件可以把红灯带回绿灯，并清掉残留的错误码。
         registry.apply_event(
             event("2", Provider::Claude, "one", "PreToolUse", 200),
+            30_000,
+        );
+        let session = &registry.snapshot(200).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Running);
+        assert_eq!(session.error_code, None);
+    }
+
+    #[test]
+    fn stop_after_error_turns_light_yellow() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "StopFailure", 100),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(100).sessions[0].phase,
+            SessionPhase::Error
+        );
+
+        // 红灯期间收到 Stop：允许转灯 → Waiting 绿闪，随后落黄。
+        registry.apply_event(event("2", Provider::Claude, "one", "Stop", 200), 30_000);
+        let session = &registry.snapshot(200).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Waiting);
+        assert!(session.is_flashing);
+    }
+
+    #[test]
+    fn session_end_after_error_completes_and_removes() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "StopFailure", 100),
+            30_000,
+        );
+        // 红灯期间会话结束：允许转灯 → Completed 绿闪，retention 后移除。
+        registry.apply_event(
+            event("2", Provider::Claude, "one", "SessionEnd", 200),
+            30_000,
+        );
+        let session = &registry.snapshot(200).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Completed);
+        assert!(session.is_flashing);
+        assert_eq!(session.remove_at_ms, Some(30_200));
+    }
+
+    #[test]
+    fn unknown_event_does_not_clear_error_state() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(event("1", Provider::Claude, "one", "error", 100), 30_000);
+        // 无法识别的事件不构成转灯信号，红灯保持。
+        registry.apply_event(
+            event("2", Provider::Claude, "one", "SomethingWeird", 200),
             30_000,
         );
         assert_eq!(

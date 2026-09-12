@@ -113,10 +113,16 @@ SDK 中 SessionEnd 使用 `reason`（UFO 归一化进 `outcome`），枚举大�
 | 🟢 + 闪烁 → 移除 | `Completed` | 对话已完成（非错误结束） | 任意 `SessionEnd`（不按 reason 分流）；绿闪 `retention_ms` 后移除 |
 | 🔴 红灯 | `Error` | 错误 | `StopFailure`；任何带 `error_code` 的事件；outcome 为 `error`/`failed`/`cancelled`/`denied` 的事件 |
 
-### Error 粘性与恢复
+### Error 转灯（红灯不粘）
 
-- 进入 Error 后，普通非 Error 事件（如 `PreToolUse`）不会冲掉红灯。
-- `UserPromptSubmit` / `SessionStart` 视为用户重新开跑，允许 `Error → Running`。
+红灯不是死状态：只要事件本身能映射出别的阶段，就允许转灯。
+
+- `Stop` → 黄灯（先绿闪再落黄）
+- `SessionEnd` → 绿闪后移除
+- `PreToolUse` / `PostToolUse` 等执行事件 → 绿灯
+- `UserPromptSubmit` / `SessionStart` → 绿灯（用户重新开跑）
+
+唯一例外是 `Unknown`：无法识别的事件不构成转灯信号，红灯保持不变。
 
 ## 清理策略
 

@@ -143,13 +143,16 @@ t=62   hook: SessionEnd(reason=prompt_input_exit)
 t=92   cleanup: now ≥ remove_at → 删除 Completed 会话 → 灯消失
 ```
 
-**错误恢复示例：**
+**错误转灯示例：**
 
 ```text
 t=0    StopFailure              → Error     🔴
-t=1    PreToolUse               → 仍 Error  🔴（粘性保护）
-t=2    UserPromptSubmit         → Running   🟢（允许恢复）
+t=1    PreToolUse               → Running   🟢（红灯不粘，执行事件转绿）
+t=2    Stop                     → Waiting   🟢闪烁 → 落黄
+t=3    SessionEnd               → Completed 🟢闪烁 → 移除
 ```
+
+唯一例外：`Unknown`（无法识别的事件）不构成转灯信号，红灯保持。
 
 **apply_event 内部逐步解析：**
 
@@ -160,7 +163,7 @@ t=2    UserPromptSubmit         → Running   🟢（允许恢复）
     │     任一不通过 → return false，状态不变
     │
     ├─ ② 查询 previous：sessions.get(key)
-    │     提取 previous_error、previous_started_at、previous_pid、previous_error_code
+    │     提取 previous_phase、previous_started_at、previous_pid、previous_error_code
     │
     ├─ ③ phase_for_event 判定：
     │     error_code/失败 outcome → Error（红灯）
@@ -169,11 +172,10 @@ t=2    UserPromptSubmit         → Running   🟢（允许恢复）
     │     SessionEnd 一律 Completed（不看 reason）
     │     fallback 子串匹配 → Unknown
     │
-    ├─ ④ 错误态保护：
-    │     previous_error && 新 phase ≠ Error
-    │       && 事件不是 UserPromptSubmit/SessionStart
-    │       → 保持 Error
-    │     UserPromptSubmit/SessionStart → 允许 Error → Running
+    ├─ ④ 红灯不粘：
+    │     事件映射出的 phase 即最终 phase，任何转灯信号都生效
+    │     例外：previous==Error 且新 phase==Unknown → 保持 Error
+    │       （无法识别的事件不构成转灯信号）
     │
     ├─ ⑤ 清理旧 Waiting：
     │     if phase == Running

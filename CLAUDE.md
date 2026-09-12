@@ -62,5 +62,5 @@ UI设计请使用:ui-ux-pro-max-skill
 - 🟢 + 闪烁 = 两种完成态
   - `Stop`：一轮执行完成 → 先绿闪，retention 后落成黄常亮（对话未结束）
   - `SessionEnd`：对话结束 → 绿闪后移除
-- 🔴 = Error（StopFailure 等；UserPromptSubmit/SessionStart 可恢复）
+- 🔴 = Error（StopFailure 等；红灯不粘，任何能映射出别的阶段的事件都可转灯，`Unknown` 事件除外）
 - 详情见 `reference/doc/agent-status-hooks.md`
