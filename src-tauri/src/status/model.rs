@@ -68,6 +68,54 @@ pub struct AgentEvent {
     /// 旧 inbox 事件可能缺此字段，缺省反序列化为 None。
     #[serde(default)]
     pub notification_type: Option<String>,
+    /// 该会话实际使用的 API endpoint（如 ANTHROPIC_BASE_URL）。
+    /// 由 hook 从自身环境变量读取，旧事件缺此字段时反序列化为 None。
+    /// 注意：只读 endpoint 类变量，不读取 token / api key。
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// 用户最近一次提交的提问内容（UserPromptSubmit 的 `prompt` 字段）。
+    ///
+    /// 字段名已对 CC 2.1.269 实测确认。旧事件缺此字段时反序列化为 None。
+    /// 只认 UserPromptSubmit；UserPromptExpansion 的展开模板不覆盖它。
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// 该会话 transcript（JSONL）的绝对路径，供 monitor 线程增量统计 token。
+    ///
+    /// hook 只透传路径，解析在常驻 monitor 里做 —— hook 每次事件启动一次，必须快速返回。
+    /// 旧事件缺此字段时反序列化为 None。
+    #[serde(default)]
+    pub transcript_path: Option<String>,
+}
+
+/// 一个会话累计消耗的 token。
+///
+/// 由 transcript 增量解析得出，按 `message.id` 去重后累加：
+/// 同一条 API 响应会在 transcript 里写成多条 assistant 记录，每条都带同一份 usage，
+/// 不去重会翻 2–3 倍。
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TokenTotals {
+    /// 新增输入 token（不含缓存部分）
+    pub input_tokens: u64,
+    /// 写入缓存的 token
+    pub cache_creation_input_tokens: u64,
+    /// 命中缓存读取的 token
+    pub cache_read_input_tokens: u64,
+    /// 模型生成的 token（已含 thinking，不重复相加）
+    pub output_tokens: u64,
+}
+
+impl TokenTotals {
+    /// 累计总量：输入 + 缓存写 + 缓存读 + 输出。
+    ///
+    /// 仅供测试断言使用 —— 生产的「总量」由前端 `tokenTotal()` 计算，
+    /// 因此标为 `cfg(test)` 以免在正式构建里变成 dead code。
+    #[cfg(test)]
+    pub fn total(&self) -> u64 {
+        self.input_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+            + self.output_tokens
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -85,6 +133,14 @@ pub struct SessionSnapshot {
     pub is_flashing: bool,
     pub pid: Option<u32>,
     pub error_code: Option<String>,
+    /// 会话使用的 API endpoint；未知时为 None，供悬浮窗展示。
+    pub base_url: Option<String>,
+    /// 用户最近一次提问内容；未知时为 None，供悬浮窗展示。
+    pub prompt: Option<String>,
+    /// 会话累计消耗的 token；尚未统计到时为 None，供悬浮窗展示。
+    /// 由 StatusRegistry 在 snapshot() 时合并进来，不属于事件派生字段。
+    #[serde(default)]
+    pub tokens: Option<TokenTotals>,
     pub last_sequence: Option<u64>,
     pub termination_confirmed: bool,
 }
@@ -171,6 +227,9 @@ mod tests {
             error_code: None,
             outcome: None,
             notification_type: Some("idle_prompt".to_string()),
+            base_url: Some("http://127.0.0.1:15721".to_string()),
+            prompt: Some("修一下这个 bug".to_string()),
+            transcript_path: Some("/tmp/sess-123.jsonl".to_string()),
         };
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: AgentEvent = serde_json::from_str(&json).unwrap();
@@ -182,6 +241,15 @@ mod tests {
         assert_eq!(
             deserialized.notification_type.as_deref(),
             Some("idle_prompt")
+        );
+        assert_eq!(
+            deserialized.base_url.as_deref(),
+            Some("http://127.0.0.1:15721")
+        );
+        assert_eq!(deserialized.prompt.as_deref(), Some("修一下这个 bug"));
+        assert_eq!(
+            deserialized.transcript_path.as_deref(),
+            Some("/tmp/sess-123.jsonl")
         );
     }
 
@@ -203,5 +271,73 @@ mod tests {
         }"#;
         let deserialized: AgentEvent = serde_json::from_str(json).unwrap();
         assert_eq!(deserialized.notification_type, None);
+    }
+
+    #[test]
+    fn agent_event_missing_base_url_deserializes_as_none() {
+        // 旧 hook 二进制写出的事件没有 base_url，必须仍能解析而不是落 quarantine。
+        let json = r#"{
+            "schema_version": 1,
+            "event_id": "legacy",
+            "provider": "claude",
+            "session_id": "s1",
+            "event": "Stop",
+            "sequence": null,
+            "occurred_at_ms": null,
+            "received_at_ms": 1,
+            "pid": null,
+            "error_code": null,
+            "outcome": null,
+            "notification_type": null
+        }"#;
+        let deserialized: AgentEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.base_url, None);
+        assert_eq!(deserialized.prompt, None);
+        // 旧事件同样没有 transcript_path，缺省为 None，token 行不显示。
+        assert_eq!(deserialized.transcript_path, None);
+    }
+
+    #[test]
+    fn token_totals_total_sums_all_four_fields() {
+        let totals = TokenTotals {
+            input_tokens: 100,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 3000,
+            output_tokens: 50,
+        };
+        // 含缓存的总量：缓存读通常占比最大，漏掉它会显著低估消耗。
+        assert_eq!(totals.total(), 3170);
+    }
+
+    #[test]
+    fn token_totals_default_is_zero() {
+        let totals = TokenTotals::default();
+        assert_eq!(totals.total(), 0);
+    }
+
+    #[test]
+    fn session_snapshot_missing_tokens_deserializes_as_none() {
+        // 旧快照没有 tokens 字段，必须兼容为 None 而不是解析失败。
+        let json = r#"{
+            "key": "claude:s1",
+            "provider": "claude",
+            "session_id": "s1",
+            "phase": "running",
+            "source": "hook",
+            "confidence": 100,
+            "started_at_ms": 1,
+            "last_seen_at_ms": 2,
+            "completed_at_ms": null,
+            "remove_at_ms": null,
+            "is_flashing": false,
+            "pid": null,
+            "error_code": null,
+            "base_url": null,
+            "prompt": null,
+            "last_sequence": null,
+            "termination_confirmed": false
+        }"#;
+        let snapshot: SessionSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snapshot.tokens, None);
     }
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
-import type { FloatingLayout, MaxCellsByLayout } from '@/lib/floating-modules'
+import type { FloatingLayout, MaxCellsByLayout, TokenUnit } from '@/lib/floating-modules'
 import { hideMainWindow, startCurrentWindowDrag } from '@/lib/window'
 import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
@@ -34,6 +34,13 @@ async function onCloseMain() {
 const retentionInput = ref(modules.retentionSeconds)
 const runningTimeoutInput = ref(modules.runningTimeoutSeconds)
 const maxCellsInput = reactive<MaxCellsByLayout>({ ...modules.maxCellsByLayout })
+const tokenUnitInput = ref<TokenUnit>(modules.tokenUnit)
+
+/** token 单位选项；`tokens` 显示原始计数，`m_tokens` 显示百万。 */
+const tokenUnitOptions: { value: TokenUnit; label: string }[] = [
+  { value: 'tokens', label: 'Tokens' },
+  { value: 'm_tokens', label: 'M tokens' },
+]
 
 const layoutLabels: { key: FloatingLayout; label: string }[] = [
   { key: 'square', label: '方形上限' },
@@ -64,6 +71,14 @@ watch(
     Object.assign(maxCellsInput, value)
   },
   { immediate: true, deep: true },
+)
+
+watch(
+  () => modules.tokenUnit,
+  (unit) => {
+    tokenUnitInput.value = unit
+  },
+  { immediate: true },
 )
 
 /** 切换 Agent 状态灯模块启用状态；失败时回滚 checkbox。 */
@@ -103,11 +118,21 @@ async function updateMaxCells(layout: FloatingLayout) {
   }
 }
 
+/** 更新 token 展示单位；失败时回滚到 store 中的值。 */
+async function updateTokenUnit() {
+  try {
+    await modules.updateTokenUnit(tokenUnitInput.value)
+  } catch {
+    tokenUnitInput.value = modules.tokenUnit
+  }
+}
+
 /** 将各形态上限与超时设置重置为当前 store 中的值。 */
 function resetMaxCells() {
   Object.assign(maxCellsInput, modules.maxCellsByLayout)
   retentionInput.value = modules.retentionSeconds
   runningTimeoutInput.value = modules.runningTimeoutSeconds
+  tokenUnitInput.value = modules.tokenUnit
 }
 
 /** 保存完成灯保留 + Running 超时。 */
@@ -189,6 +214,29 @@ async function saveTimeouts() {
       </label>
       <p class="module-settings__field-hint">
         绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。
+      </p>
+
+      <div class="module-settings__retention">
+        <span id="token-unit-label">Token 单位</span>
+        <div class="ufo-segmented" role="radiogroup" aria-labelledby="token-unit-label">
+          <label
+            v-for="option in tokenUnitOptions"
+            :key="option.value"
+            class="ufo-segmented__option"
+          >
+            <input
+              v-model="tokenUnitInput"
+              type="radio"
+              name="token-unit"
+              :value="option.value"
+              @change="updateTokenUnit"
+            />
+            {{ option.label }}
+          </label>
+        </div>
+      </div>
+      <p class="module-settings__field-hint">
+        悬浮窗提示行里的 token 总量写法：Tokens 显示原始计数，M tokens 以百万为单位。
       </p>
 
       <div class="module-settings__caps" aria-label="各形态格子上限">

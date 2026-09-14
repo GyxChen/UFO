@@ -84,7 +84,10 @@ html.is-floating-window body,
 html.is-floating-window #app,
 html.is-main-window,
 html.is-main-window body,
-html.is-main-window #app {
+html.is-main-window #app,
+html.is-tooltip-window,
+html.is-tooltip-window body,
+html.is-tooltip-window #app {
   background: transparent;
 }
 
@@ -92,6 +95,14 @@ html.is-main-window #app {
 html.is-main-window,
 html.is-main-window body,
 html.is-main-window #app {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 提示窗：根节点铺满窗口，内容按窗口尺寸自适应。 */
+html.is-tooltip-window,
+html.is-tooltip-window body,
+html.is-tooltip-window #app {
   height: 100%;
   overflow: hidden;
 }
@@ -310,6 +321,96 @@ html.is-main-window #app {
   }
 }
 
+/*
+ * 信息提示窗（hover tooltip）。
+ * 注意：它是独立于悬浮窗的第三个窗口，不参与悬浮窗的方形 / 横条 / 竖条形态适配；
+ * 窗口尺寸由 tauri.conf.json 的 tooltip 定义给出，内容在此尺寸内用 flex + 省略号自适应，
+ * 因此这里不写死像素宽高，只有「与悬浮窗同款毛玻璃」的视觉 token 复用。
+ */
+.tooltip-shell {
+  @apply flex h-full w-full min-h-0 flex-col gap-1.5 overflow-hidden p-2.5;
+  box-sizing: border-box;
+  background-color: var(--ufo-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--ufo-radius);
+  box-shadow: rgba(142, 142, 142, 0.19) 0px 6px 15px 0px;
+  -webkit-box-shadow: rgba(142, 142, 142, 0.19) 0px 6px 15px 0px;
+  color: var(--ufo-text);
+}
+
+.tooltip-row {
+  @apply flex min-w-0 items-center gap-2 text-[12px];
+}
+
+.tooltip-row--head {
+  @apply gap-1.5 pb-1.5;
+  border-bottom: 1px solid var(--ufo-border);
+}
+
+.tooltip-row__label {
+  @apply shrink-0 text-[11px];
+  color: var(--ufo-muted);
+}
+
+/* 值可能很长（session id / base_url）：省略号截断，完整值放在 title 上。 */
+.tooltip-row__value {
+  @apply min-w-0 flex-1 overflow-hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tooltip-row__value--mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ufo-muted);
+}
+
+.tooltip-row__badge {
+  @apply ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase;
+  background: var(--ufo-accent-soft);
+  color: var(--ufo-accent);
+}
+
+.tooltip-provider-icon {
+  @apply block h-3.5 w-3.5 shrink-0 object-contain;
+}
+
+/* 提问区块：标签在上、正文在下，正文最多 4 行后省略。 */
+.tooltip-prompt {
+  @apply mt-auto flex min-h-0 flex-col gap-1;
+  border-top: 1px solid var(--ufo-border);
+  padding-top: 6px;
+}
+
+.tooltip-prompt__text {
+  @apply m-0 min-h-0 text-[11px] leading-snug;
+  color: var(--ufo-text);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.tooltip-dot {
+  @apply block h-2 w-2 shrink-0 rounded-full;
+}
+
+.tooltip-dot--green {
+  background: var(--ufo-status-green);
+}
+
+.tooltip-dot--yellow {
+  background: var(--ufo-status-yellow);
+}
+
+.tooltip-dot--red {
+  background: var(--ufo-status-red);
+}
+
 .ufo-card {
   @apply grid w-full max-w-md gap-3 rounded-[var(--ufo-radius)] p-3.5;
   background: var(--ufo-surface);
@@ -475,6 +576,38 @@ p {
 .ufo-switch input:focus-visible + .ufo-switch__track {
   outline: 2px solid var(--ufo-ring);
   outline-offset: 2px;
+}
+
+/* 分段选择：用于 token 单位这类二选一设置；选中项用强调色实心填充。 */
+.ufo-segmented {
+  @apply flex gap-1 rounded-[10px] border p-0.5;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border-strong);
+}
+
+.ufo-segmented__option {
+  @apply relative flex-1 cursor-pointer rounded-lg py-1.5 text-center text-[12px] font-medium transition-colors duration-150 ease-out;
+  color: var(--ufo-muted);
+}
+
+.ufo-segmented__option input {
+  @apply absolute h-0 w-0 opacity-0;
+}
+
+.ufo-segmented__option:hover {
+  color: var(--ufo-text);
+}
+
+/* 用 :has 让选中态跟随原生 radio，无需额外的 JS 状态。 */
+.ufo-segmented__option:has(input:checked) {
+  background: var(--ufo-accent);
+  color: var(--ufo-accent-on);
+  font-weight: 600;
+}
+
+.ufo-segmented__option:has(input:focus-visible) {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 1px;
 }
 
 /* 通用输入 */

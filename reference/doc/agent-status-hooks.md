@@ -92,6 +92,60 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 | `notification_type` | Notification 类型 | `notificationType` |
 | `tool_name` | 工具名 | — |
 | `tool_input` | 工具输入 | — |
+| `prompt` | 用户提问原文（**仅** `UserPromptSubmit`） | `user_prompt`, `prompt_text` |
+
+### base_url 的来源
+
+`base_url` **不来自 hook payload**，而是 hook 按以下顺序解析：**Claude Code 配置文件优先，环境变量兜底**。
+
+**1. 配置文件（仅 `claude`）** —— 依次读取下列 settings，**后者覆盖前者**：
+
+| 顺序 | 路径 | 说明 |
+|---|---|---|
+| 1 | `~/.claude/settings.json` | 用户级 |
+| 2 | `<cwd>/.claude/settings.json` | 项目级；`cwd` 取自 hook payload |
+| 3 | `<cwd>/.claude/settings.local.json` | 项目本地 |
+
+从 `env` 块中读取 `ANTHROPIC_BASE_URL`：
+
+```json
+{ "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721" } }
+```
+
+**只按名字取这一个 key** —— `env` 块通常同时存放 token，绝不整块读取或上报。文件缺失、JSON 非法、`env` 块缺失都静默跳过，不影响状态上报。
+
+**2. 环境变量兜底** —— 配置文件未命中时，读 hook 自身的环境变量（hook 由 agent 进程派生，继承其环境）：
+
+| provider | 环境变量（按优先级） |
+|---|---|
+| `claude` | `ANTHROPIC_BASE_URL` |
+| `codex` | `OPENAI_BASE_URL`、`OPENAI_API_BASE` |
+
+`codex` 的配置是 `~/.codex/config.toml`（TOML 格式，与 settings.json 不同），当前不解析，只走环境变量。
+
+只读 endpoint 类变量，不读取 token / api key。**按需求不做脱敏**：原样保留（含 userinfo / query），仅去首尾空白；长度上限 4096 字节。
+
+### prompt 的来源
+
+取自 `UserPromptSubmit` payload 的 **`prompt`** 字段（字段名已对 CC 2.1.269 实测确认）：
+
+```json
+{
+  "session_id": "703896bf-…",
+  "transcript_path": "C:\\Users\\…\\<session>.jsonl",
+  "cwd": "C:\\…",
+  "prompt_id": "c91785c8-…",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "用户输入的原文"
+}
+```
+
+- 上限 4000 字符，超出截断并加 `…`（按字符计数，不截断 UTF-8）。
+- **只认 `UserPromptSubmit`**：同轮内后续事件（`PreToolUse` 等）本就不带 `prompt`，由 reducer 继承该值；下一次 `UserPromptSubmit` 才覆盖。即提示窗始终显示**最近一次用户手输**的提问。
+- ⚠️ `UserPromptExpansion` 紧随 `UserPromptSubmit` 触发、**同样携带 `prompt`**，但那是斜杠命令展开后的模板文本，不是用户输入。UFO 不放行它 —— 否则展开内容会立刻把用户真正的提问覆盖掉。
+
+⚠️ `base_url` 与 `prompt` 都会明文写入 `status/inbox/*.json`（约 500ms 内被消费删除）。提问内容可能含密钥或私有代码。
 
 ### SessionEnd.reason
 

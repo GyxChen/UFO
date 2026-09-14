@@ -1,8 +1,12 @@
 mod hook;
 mod model;
 mod reducer;
+#[cfg(test)]
+mod test_support;
+mod tokens;
 
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -16,6 +20,9 @@ use tauri::{AppHandle, Emitter, Runtime, State};
 pub use hook::try_run_status_hook;
 pub use model::{now_ms, AgentEvent, SessionSnapshot, StatusSnapshot};
 pub use reducer::StatusRegistry;
+
+use model::session_key;
+use tokens::TokenTracker;
 
 #[derive(Clone)]
 pub struct StatusState {
@@ -55,9 +62,19 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
     let quarantine = state.status_dir.join("quarantine");
     let _ = fs::create_dir_all(&inbox);
     let mut next_cleanup = now_ms();
+    // token 统计器由 monitor 线程独占，无需加锁。
+    let mut tokens = TokenTracker::new();
 
     loop {
-        let mut changed = consume_inbox(&app, &inbox, &quarantine, &state);
+        let mut changed = consume_inbox(&app, &inbox, &quarantine, &state, &mut tokens);
+
+        // 增量读取各会话的 transcript；只有数值真的变了才推快照。
+        for (key, totals) in tokens.refresh_all() {
+            if let Ok(mut registry) = state.registry.lock() {
+                changed |= registry.set_tokens(&key, totals);
+            }
+        }
+
         let now = now_ms();
         if now >= next_cleanup {
             let running_timeout = state
@@ -72,6 +89,13 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
                 .map(|mut registry| registry.cleanup(now, running_timeout, process_alive))
                 .unwrap_or(false);
             changed |= cleanup_changed;
+            if cleanup_changed {
+                // 会话被移除后同步丢弃其 token 记录，避免统计器无限增长。
+                if let Ok(registry) = state.registry.lock() {
+                    let live: HashSet<String> = registry.live_keys();
+                    tokens.retain(|key| live.contains(key));
+                }
+            }
             next_cleanup = now.saturating_add(10_000);
         }
 
@@ -87,6 +111,7 @@ fn consume_inbox<R: Runtime>(
     inbox: &Path,
     quarantine: &Path,
     state: &StatusState,
+    tokens: &mut TokenTracker,
 ) -> bool {
     let Ok(entries) = fs::read_dir(inbox) else {
         return false;
@@ -104,6 +129,14 @@ fn consume_inbox<R: Runtime>(
         match parsed {
             Some(event) => {
                 let _ = app.emit("status-hook-event", &event);
+                // 只登记路径：真正的解析在 monitor 线程里增量做，
+                // hook 进程每次事件都要快速返回，不能去读 MB 级的 transcript。
+                if let Some(transcript) = event.transcript_path.as_deref() {
+                    tokens.observe(
+                        &session_key(event.provider, &event.session_id),
+                        Path::new(transcript),
+                    );
+                }
                 let _ = fs::remove_file(&path);
                 let retention = state
                     .retention_ms

@@ -26,6 +26,16 @@ export interface MaxCellsByLayout {
   vertical: number
 }
 
+/**
+ * token 展示单位，与 Rust 侧 `TokenUnit` 的序列化值一一对应。
+ * - `tokens`：原始计数，如 `1,261,847`
+ * - `m_tokens`：以百万为单位，如 `1.26M`
+ */
+export type TokenUnit = 'tokens' | 'm_tokens'
+
+/** token 单位默认值：保持原始计数，与加入该设置之前的行为一致。 */
+export const DEFAULT_TOKEN_UNIT: TokenUnit = 'tokens'
+
 export interface FloatingModuleConfig {
   schema_version: number
   revision: number
@@ -34,6 +44,8 @@ export interface FloatingModuleConfig {
   /** Running 无新 hook 时的超时（毫秒）；超时后移除绿灯。 */
   running_timeout_ms: number
   max_cells_by_layout: MaxCellsByLayout
+  /** token 展示单位；主窗口可切换。 */
+  token_unit: TokenUnit
 }
 
 export function defaultMaxCellsByLayout(value: number = 8): MaxCellsByLayout {

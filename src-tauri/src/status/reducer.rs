@@ -2,11 +2,14 @@ use std::collections::{HashMap, HashSet};
 
 use super::model::{
     session_key, AgentEvent, SessionPhase, SessionSnapshot, StatusCounts, StatusSnapshot,
-    StatusSource, SCHEMA_VERSION,
+    StatusSource, TokenTotals, SCHEMA_VERSION,
 };
 
 pub struct StatusRegistry {
     sessions: HashMap<String, SessionSnapshot>,
+    /// 各会话累计的 token；由 monitor 的 TokenTracker 写入。
+    /// 它不是事件派生字段，所以在 snapshot() 时合并进 SessionSnapshot。
+    token_totals: HashMap<String, TokenTotals>,
     seen_events: HashSet<String>,
     revision: u64,
     source_health: String,
@@ -22,6 +25,7 @@ impl StatusRegistry {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            token_totals: HashMap::new(),
             seen_events: HashSet::new(),
             revision: 0,
             source_health: "healthy".to_string(),
@@ -30,6 +34,26 @@ impl StatusRegistry {
 
     pub fn mark_source_degraded(&mut self) {
         self.source_health = "degraded".to_string();
+    }
+
+    /// 写入某会话累计的 token；数值变化时返回 true 并推进 revision（触发前端刷新）。
+    ///
+    /// 会话已被移除时不登记 —— 避免为已消失的灯留下孤儿记录。
+    pub fn set_tokens(&mut self, key: &str, totals: TokenTotals) -> bool {
+        if !self.sessions.contains_key(key) {
+            return false;
+        }
+        if self.token_totals.get(key) == Some(&totals) {
+            return false;
+        }
+        self.token_totals.insert(key.to_string(), totals);
+        self.revision = self.revision.saturating_add(1);
+        true
+    }
+
+    /// 当前存活会话的 key，供外部统计器同步清理。
+    pub fn live_keys(&self) -> HashSet<String> {
+        self.sessions.keys().cloned().collect()
     }
 
     pub fn apply_event(&mut self, event: AgentEvent, retention_ms: u64) -> bool {
@@ -50,32 +74,40 @@ impl StatusRegistry {
         let key = session_key(event.provider, &event.session_id);
 
         // Extract previous session data before any mutable borrow.
-        let (previous_phase, previous_started_at, previous_pid, previous_error_code) =
-            match self.sessions.get(&key) {
-                Some(previous) => {
-                    if event
-                        .sequence
-                        .zip(previous.last_sequence)
-                        .is_some_and(|(incoming, last)| incoming <= last)
-                    {
-                        return false;
-                    }
-                    if previous.phase == SessionPhase::Completed
-                        && previous
-                            .remove_at_ms
-                            .is_some_and(|remove_at| now < remove_at)
-                    {
-                        return false;
-                    }
-                    (
-                        Some(previous.phase),
-                        Some(previous.started_at_ms),
-                        previous.pid,
-                        previous.error_code.clone(),
-                    )
+        let (
+            previous_phase,
+            previous_started_at,
+            previous_pid,
+            previous_error_code,
+            previous_base_url,
+            previous_prompt,
+        ) = match self.sessions.get(&key) {
+            Some(previous) => {
+                if event
+                    .sequence
+                    .zip(previous.last_sequence)
+                    .is_some_and(|(incoming, last)| incoming <= last)
+                {
+                    return false;
                 }
-                None => (None, None, None, None),
-            };
+                if previous.phase == SessionPhase::Completed
+                    && previous
+                        .remove_at_ms
+                        .is_some_and(|remove_at| now < remove_at)
+                {
+                    return false;
+                }
+                (
+                    Some(previous.phase),
+                    Some(previous.started_at_ms),
+                    previous.pid,
+                    previous.error_code.clone(),
+                    previous.base_url.clone(),
+                    previous.prompt.clone(),
+                )
+            }
+            None => (None, None, None, None, None, None),
+        };
 
         // 红灯不粘：事件映射出的阶段即最终阶段。
         // 任何能转灯的事件（Stop→黄、SessionEnd→绿闪、工具事件→绿等）都允许把红灯带走；
@@ -145,6 +177,14 @@ impl StatusRegistry {
                 } else {
                     None
                 },
+                // base_url 是会话属性，与灯色无关：新事件没带就继承旧值，
+                // 避免后续事件把已探明的 endpoint 抹成 null。
+                base_url: event.base_url.or(previous_base_url),
+                // prompt 同理：只有 UserPromptSubmit 携带，同轮内的后续事件继承，
+                // 直到下一次提交才被覆盖。
+                prompt: event.prompt.or(previous_prompt),
+                // token 不是事件派生字段，由 snapshot() 从 token_totals 合并进来。
+                tokens: None,
                 last_sequence: event.sequence,
                 termination_confirmed: phase == SessionPhase::Completed,
             },
@@ -215,6 +255,10 @@ impl StatusRegistry {
             }
         });
 
+        // 会话消失后同步丢弃其 token 记录，避免长期运行下无限增长。
+        let live: HashSet<String> = self.sessions.keys().cloned().collect();
+        self.token_totals.retain(|key, _| live.contains(key));
+
         let changed = flash_settled || before != self.sessions.len();
         if changed {
             self.revision = self.revision.saturating_add(1);
@@ -224,6 +268,10 @@ impl StatusRegistry {
 
     pub fn snapshot(&self, now: i64) -> StatusSnapshot {
         let mut sessions: Vec<_> = self.sessions.values().cloned().collect();
+        // token 由 monitor 的统计器单独维护，这里再合并进快照。
+        for session in &mut sessions {
+            session.tokens = self.token_totals.get(&session.key).copied();
+        }
         sessions.sort_by(|left, right| {
             right
                 .last_seen_at_ms
@@ -256,7 +304,10 @@ impl StatusRegistry {
 /// Error/Unknown 无新事件时的短超时（毫秒）；Running 使用可配置的 running_timeout_ms。
 const ERROR_TIMEOUT_MS: i64 = 60 * 1000; // 1 minute
 
-/// 测试与调用方未指定时的 Running 默认超时（60 秒）。
+/// 测试未指定 Running 超时时使用的默认值（60 秒）。
+///
+/// 生产路径的超时由 `module_config` 提供，因此标为 `cfg(test)`，避免正式构建里 dead code。
+#[cfg(test)]
 const DEFAULT_RUNNING_TIMEOUT_MS: i64 = 60 * 1000;
 
 /// Failsafe timeout (ms) for Waiting sessions — normally they are cleared
@@ -351,7 +402,7 @@ fn is_waiting_notification(notification_type: Option<&str>) -> bool {
         })
 }
 
-fn normalize_event_name(value: &str) -> String {
+pub(super) fn normalize_event_name(value: &str) -> String {
     let mut normalized = String::with_capacity(value.len() + 4);
     let mut prev = '\0';
     for character in value.chars() {
@@ -393,6 +444,9 @@ mod tests {
             error_code: None,
             outcome: None,
             notification_type: None,
+            base_url: None,
+            prompt: None,
+            transcript_path: None,
         }
     }
 
@@ -821,6 +875,75 @@ mod tests {
         assert_eq!(
             registry.snapshot(200).sessions[0].phase,
             SessionPhase::Running
+        );
+    }
+
+    #[test]
+    fn base_url_is_kept_when_later_events_lack_it() {
+        let mut registry = StatusRegistry::new();
+        let mut first = event("1", Provider::Claude, "one", "PreToolUse", 100);
+        first.base_url = Some("http://127.0.0.1:15721".to_string());
+        registry.apply_event(first, 30_000);
+        assert_eq!(
+            registry.snapshot(100).sessions[0].base_url.as_deref(),
+            Some("http://127.0.0.1:15721")
+        );
+
+        // 后续事件没带 base_url：应继承，而不是被抹成 null。
+        registry.apply_event(
+            event("2", Provider::Claude, "one", "PostToolUse", 200),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(200).sessions[0].base_url.as_deref(),
+            Some("http://127.0.0.1:15721")
+        );
+    }
+
+    #[test]
+    fn base_url_is_updated_when_a_new_value_arrives() {
+        let mut registry = StatusRegistry::new();
+        let mut first = event("1", Provider::Claude, "one", "PreToolUse", 100);
+        first.base_url = Some("http://127.0.0.1:15721".to_string());
+        registry.apply_event(first, 30_000);
+
+        let mut second = event("2", Provider::Claude, "one", "PostToolUse", 200);
+        second.base_url = Some("https://api.example.com".to_string());
+        registry.apply_event(second, 30_000);
+        assert_eq!(
+            registry.snapshot(200).sessions[0].base_url.as_deref(),
+            Some("https://api.example.com")
+        );
+    }
+
+    #[test]
+    fn prompt_is_kept_across_the_turn_and_replaced_on_next_submit() {
+        let mut registry = StatusRegistry::new();
+        let mut submit = event("1", Provider::Claude, "one", "UserPromptSubmit", 100);
+        submit.prompt = Some("第一个问题".to_string());
+        registry.apply_event(submit, 30_000);
+        assert_eq!(
+            registry.snapshot(100).sessions[0].prompt.as_deref(),
+            Some("第一个问题")
+        );
+
+        // 同一轮的后续事件不带 prompt：应继承，直到下一次提交。
+        registry.apply_event(
+            event("2", Provider::Claude, "one", "PreToolUse", 200),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(200).sessions[0].prompt.as_deref(),
+            Some("第一个问题")
+        );
+
+        // 下一次提交：覆盖为新提问。
+        let mut next = event("3", Provider::Claude, "one", "UserPromptSubmit", 300);
+        next.prompt = Some("第二个问题".to_string());
+        registry.apply_event(next, 30_000);
+        assert_eq!(
+            registry.snapshot(300).sessions[0].prompt.as_deref(),
+            Some("第二个问题")
         );
     }
 

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   colorForSession,
+  formatTokenCount,
+  formatTokenMillions,
   isStatusSnapshot,
+  tokenTotal,
   type SessionSnapshot,
   type StatusSnapshot,
 } from './agent-status'
@@ -23,6 +26,9 @@ const session = (
   is_flashing: phase === 'completed',
   pid: null,
   error_code: null,
+  base_url: null,
+  prompt: null,
+  tokens: null,
   last_sequence: null,
   termination_confirmed: phase === 'completed',
   ...overrides,
@@ -145,5 +151,80 @@ describe('isStatusSnapshot', () => {
 
   it('rejects missing counts', () => {
     expect(isStatusSnapshot({ ...validSnapshot, counts: undefined })).toBe(false)
+  })
+})
+
+describe('tokenTotal', () => {
+  it('sums all four buckets including cache reads', () => {
+    // 缓存读通常占比最大，漏掉会显著低估；口径必须与 Rust 侧 total() 一致。
+    expect(
+      tokenTotal({
+        input_tokens: 100,
+        cache_creation_input_tokens: 20,
+        cache_read_input_tokens: 3000,
+        output_tokens: 50,
+      }),
+    ).toBe(3170)
+  })
+
+  it('treats missing totals as zero', () => {
+    expect(tokenTotal(null)).toBe(0)
+    expect(tokenTotal(undefined)).toBe(0)
+  })
+
+  it('handles an all-zero session', () => {
+    expect(
+      tokenTotal({
+        input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        output_tokens: 0,
+      }),
+    ).toBe(0)
+  })
+})
+
+describe('formatTokenCount', () => {
+  it('groups thousands with commas', () => {
+    expect(formatTokenCount(0)).toBe('0')
+    expect(formatTokenCount(999)).toBe('999')
+    expect(formatTokenCount(1000)).toBe('1,000')
+    expect(formatTokenCount(1_261_847)).toBe('1,261,847')
+  })
+
+  it('truncates fractions and clamps negatives to zero', () => {
+    expect(formatTokenCount(1234.9)).toBe('1,234')
+    expect(formatTokenCount(-5)).toBe('0')
+  })
+
+  it('falls back to zero for non-finite values', () => {
+    // 快照里的字段理论上来自 Rust 的 u64，但事件来源不可信，不能让它渲染出 NaN。
+    expect(formatTokenCount(Number.NaN)).toBe('0')
+    expect(formatTokenCount(Number.POSITIVE_INFINITY)).toBe('0')
+  })
+})
+
+describe('formatTokenMillions', () => {
+  it('renders millions with up to two decimals', () => {
+    expect(formatTokenMillions(1_261_847)).toBe('1.26M')
+    expect(formatTokenMillions(12_600_000)).toBe('12.6M')
+  })
+
+  it('trims trailing zeros so whole millions stay short', () => {
+    expect(formatTokenMillions(1_000_000)).toBe('1M')
+    expect(formatTokenMillions(2_500_000)).toBe('2.5M')
+    expect(formatTokenMillions(20_000_000)).toBe('20M')
+  })
+
+  it('shows a floor marker below 0.01M instead of a useless 0M', () => {
+    // 小数位不足以表达时，0M 会让人误以为没有消耗。
+    expect(formatTokenMillions(1_234)).toBe('<0.01M')
+    expect(formatTokenMillions(9_999)).toBe('<0.01M')
+    expect(formatTokenMillions(10_000)).toBe('0.01M')
+  })
+
+  it('handles non-finite values', () => {
+    expect(formatTokenMillions(Number.NaN)).toBe('0M')
+    expect(formatTokenMillions(Number.POSITIVE_INFINITY)).toBe('0M')
   })
 })

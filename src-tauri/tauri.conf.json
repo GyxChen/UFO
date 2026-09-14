@@ -38,6 +38,23 @@
         "transparent": true,
         "shadow": false,
         "skipTaskbar": true
+      },
+      {
+        "label": "tooltip",
+        "title": "tauri-app tooltip",
+        "width": 300,
+        "height": 190,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "focusable": false
       }
     ],
     "trayIcon": {

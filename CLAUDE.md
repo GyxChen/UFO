@@ -14,6 +14,15 @@ UI设计请使用:ui-ux-pro-max-skill
 2.接口和type需要描述字段
 3.关键代码写明在干什么
 
+## 文档同步（必须遵守）
+`reference/doc/实现细节/` 下的文档描述的是**代码当前的真实行为**，不是设计意图，必须与实现保持一致。
+
+- **改代码时同步改文档**：任何影响行为的改动（新增字段/事件/窗口/配置项、修改映射规则或清理逻辑、增删测试）都要在同一次改动里更新对应章节，不允许留到"以后再说"。
+- **新增功能要补进文档**：新窗口、新配置项、新数据链路都要在 `悬浮窗Agent状态监测实现细节.md` 里补上对应小节（数据流图、文件结构、字段表、测试清单）。
+- **文档里的数字要真实**：测试数量、默认值、取值范围、上限等必须来自实际代码或实际测试输出，不要凭印象填。
+- **发现文档与代码不符时**：以代码为准修正文档；如果代码本身可疑，先向用户指出，不要默默按文档改代码。
+- 设计层面的内容放 `悬浮窗Agent状态监测与模块化实施方案.md`；实现层面的细节放 `实现细节/`。
+
 ## 全局视觉风格（Matte Panel · 方案 A）
 全 App 以深色哑光控制台为准；主窗口已按此落地，后续页面/组件必须复用同一套 token，禁止再散落硬编码灰色系。
 
@@ -55,6 +64,52 @@ UI设计请使用:ui-ux-pro-max-skill
 
 ## 悬浮窗开发
 悬浮窗将来会引入更多的组件,因此悬浮窗的开发提示,需要在我更改悬浮窗的时候需要写明到claude.md中.
+
+### 窗口构成
+
+应用有三个窗口，均在 `src-tauri/tauri.conf.json` 声明；`src/App.vue` 按 label 分派组件：
+
+| label | 用途 | 关键配置 |
+|---|---|---|
+| `floating` | 悬浮窗（状态灯） | 56×56，transparent，alwaysOnTop |
+| `main` | 设置主窗 | 800×600，`visible:false`，按需显示 |
+| `tooltip` | 悬浮信息提示窗 | 300×190，`visible:false`，`focusable:false`，点击穿透 |
+
+- `tooltip` 采用「声明 + 隐藏 + 按需显示」，不在运行时创建窗口，因此**不需要** `core:webview:allow-create-webview-window`。
+- 点击穿透在 Rust 侧 `setup` 中设置（`set_ignore_cursor_events(true)`），Rust 调用不经过 capability 校验，无需额外权限。
+- 新增窗口必须把 label 加入 `src-tauri/capabilities/default.json` 的 `windows` 数组，否则该窗口**完全没有 IPC 权限**（连事件监听都不行）。
+- 悬浮窗跨窗口控制 tooltip 是允许的：ACL 校验的是**调用方**窗口的权限，目标 label 只是参数。
+
+### 悬浮窗 hover 信息提示
+
+- 指示灯 `pointerenter`/`pointerleave` → `floatingWindowKey` 上下文的 `onSessionHover(key)` → 悬浮窗壳延迟 250ms 后 `emitTo('tooltip', 'tooltip-hover', payload)`。
+- tooltip 自行订阅 `agent-status` 取会话数据，payload 只传「哪个会话 + 悬浮窗外框 + 贴边状态」，避免数据陈旧。
+- 定位是纯函数 `placeTooltip`（`src/lib/tooltip.ts`），优先放在悬浮窗**未贴边**的一侧，越界自动换侧。
+- 拖拽 / 点击 / 贴边重算时必须 `dismissTooltip()`：`startDragging()` 后指针交给系统，`pointerleave` 可能不再触发。
+- tooltip 是独立窗口，**不适用**方形/横条/竖条三形态适配；其尺寸由 `tauri.conf.json` 给出，内容用 flex + 省略号自适应。
+- 展示字段：provider、phase、`base_url`、`prompt`（用户提问）、token 用量。**不展示 session id**。
+- ⚠️ **指示灯不要加 `title` 属性**：`title` 会触发 Windows 原生文字提示，与悬浮窗自己的 tooltip 重复且更简陋。无障碍信息只走 `aria-label`（不产生可见提示）。
+- ⚠️ tooltip 的 token 单位来自模块配置，因此 tooltip 窗口**必须**在 `App.vue` 中 `floatingModules.start()`；否则它永远停留在 `fallbackConfig` 的默认单位，主窗口切换后不生效。
+
+### token 用量展示
+
+- 数据链路：hook 只透传 `transcript_path` → 常驻 monitor 线程用 `TokenTracker` 增量解析 transcript → `StatusRegistry::set_tokens` → `SessionSnapshot.tokens`。**hook 进程不解析 transcript**（每次事件都要启动一次，必须快进快出）。
+- 去重按 `message.id`：同一条 API 响应会写成多条 assistant 记录，每条都带同一份 usage，不去重会翻 2–3 倍。子代理 transcript（`<session-id>/subagents/*.jsonl`）并入同一会话。
+- `SessionSnapshot.tokens` 为 `Option<TokenTotals>` + `#[serde(default)]`（**不得升 `SCHEMA_VERSION`**）；它不是事件派生字段，由 `snapshot()` 时合并。
+- 单位可配（`module_config.rs` 的 `TokenUnit`）：`tokens` = 原始计数（`1,261,847`），`m_tokens` = 百万（`1.26M`，不足 0.01M 显示 `<0.01M`）。**只在主窗口设置**，悬浮窗只读展示。
+- 格式化在 `src/lib/agent-status.ts`：`tokenTotal` / `formatTokenCount` / `formatTokenMillions`。tooltip 里的 token 明细（title）始终用原始计数，不受单位影响。
+
+### 会话展示字段（base_url / prompt）
+
+两个字段都从 hook 侧采集，经 `AgentEvent` → `SessionSnapshot` → 前端 `SessionSnapshot` 传递，均为 `Option<String>` + `#[serde(default)]`（**不得升 `SCHEMA_VERSION`**，否则旧 hook 事件被静默丢弃）。
+
+| 字段 | 来源 | 处理 |
+|---|---|---|
+| `base_url` | **配置文件优先**：`~/.claude/settings.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json` 的 `env.ANTHROPIC_BASE_URL`（后者覆盖前者，`cwd` 取自 hook payload）；**环境变量兜底**：`ANTHROPIC_BASE_URL`。codex 只走环境变量 `OPENAI_BASE_URL` / `OPENAI_API_BASE` | 只按名字取该 key（`env` 块里的 token 绝不读取）；不脱敏，仅 trim；上限 4096 |
+| `prompt` | **仅** `UserPromptSubmit` payload 的 `prompt` 字段（`UserPromptExpansion` 的展开模板文本不认，否则会覆盖用户真正的提问） | trim + 截断；上限 4000 字符；同轮内后续事件继承，下次提交才覆盖 |
+
+- 同轮内后续事件继承这两个值，下次提交/新事件才覆盖（`reducer.rs` 用 `.or(previous_*)`）。
+- ⚠️ 二者**明文写入** `%APPDATA%/<identifier>/status/inbox/*.json`（约 500ms 内消费删除）。提问可能含密钥或私有代码，这是已知代价。
 
 ### Agent 状态指示灯语义
 - 🟢 常亮 = Running（正在执行）

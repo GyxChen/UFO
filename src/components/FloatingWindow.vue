@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, provide, ref } from 'vue'
+import { emitTo } from '@tauri-apps/api/event'
 import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
 import {
   ABS_MAX_CELLS,
@@ -8,7 +9,8 @@ import {
   layoutFromDocked,
 } from '@/lib/agent-status-layout'
 import { floatingWindowKey } from '@/lib/floating-window-context'
-import { snapToWorkArea } from '@/lib/snap'
+import { snapToWorkArea, type DockedEdges } from '@/lib/snap'
+import { TOOLTIP_HOVER_EVENT, TOOLTIP_WINDOW_LABEL, type TooltipHoverPayload } from '@/lib/tooltip'
 import { showMainWindow } from '@/lib/window'
 import FloatingModuleHost from './FloatingModuleHost.vue'
 
@@ -23,6 +25,17 @@ let unlistenScaleChanged: (() => void) | undefined
 let baseSize: { width: number; height: number } = { width: 56, height: 56 }
 // 模块申请的格子数；不低于默认，不超过绝对上限。
 let requestedCells = DEFAULT_WINDOW_CELLS
+// 最近一次吸附结果：提示窗定位直接复用，避免 hover 时重复查询窗口几何。
+let lastRect: { x: number; y: number; width: number; height: number } | null = null
+let lastDocked: DockedEdges = { left: false, top: false, right: false, bottom: false }
+
+// 悬停显示延迟：够长以免鼠标扫过时闪一下。
+const SHOW_DELAY_MS = 250
+// 离开后的隐藏延迟：短一些，但避免灯之间移动时抖动。
+const HIDE_DELAY_MS = 120
+const hoverKey = ref<string | null>(null)
+let showTimer: ReturnType<typeof setTimeout> | undefined
+let hideTimer: ReturnType<typeof setTimeout> | undefined
 
 function setWindowCells(cells: number) {
   const next = Math.min(Math.max(Math.floor(cells), ABS_MIN_CELLS), ABS_MAX_CELLS)
@@ -31,13 +44,66 @@ function setWindowCells(cells: number) {
   scheduleSnap()
 }
 
-provide(floatingWindowKey, { layoutMode, setWindowCells })
+/** 悬停到某个指示灯（key 非 null）或离开（null）。 */
+function onSessionHover(key: string | null) {
+  clearTimeout(showTimer)
+  clearTimeout(hideTimer)
+  showTimer = undefined
+  hideTimer = undefined
+
+  if (key === null) {
+    hoverKey.value = null
+    // 稍作延迟再隐藏，避免在相邻指示灯之间移动时反复开关。
+    hideTimer = setTimeout(() => {
+      hideTimer = undefined
+      void emitHover(false)
+    }, HIDE_DELAY_MS)
+    return
+  }
+
+  hoverKey.value = key
+  showTimer = setTimeout(() => {
+    showTimer = undefined
+    void emitHover(true)
+  }, SHOW_DELAY_MS)
+}
+
+/** 通知提示窗显示 / 隐藏；显示时附带悬浮窗外框与贴边状态供其定位。 */
+async function emitHover(visible: boolean) {
+  const payload: TooltipHoverPayload = {
+    visible,
+    sessionKey: visible ? hoverKey.value : null,
+    anchor: lastRect ?? { x: 0, y: 0, width: 0, height: 0 },
+    docked: lastDocked,
+  }
+  try {
+    await emitTo(TOOLTIP_WINDOW_LABEL, TOOLTIP_HOVER_EVENT, payload)
+  } catch (error) {
+    console.warn('failed to emit tooltip hover state', error)
+  }
+}
+
+/** 立即取消待显示的提示窗并隐藏已显示的（拖拽 / 点击 / 贴边重算时调用）。 */
+function dismissTooltip() {
+  const wasActive = showTimer !== undefined || hideTimer !== undefined || hoverKey.value !== null
+  clearTimeout(showTimer)
+  clearTimeout(hideTimer)
+  showTimer = undefined
+  hideTimer = undefined
+  hoverKey.value = null
+  if (!wasActive) return
+  void emitHover(false)
+}
+
+provide(floatingWindowKey, { layoutMode, setWindowCells, onSessionHover })
 
 function onPointerDown(event: PointerEvent) {
   if (event.button !== 0) {
     return
   }
 
+  // 点击 / 拖拽期间不应有弹窗；startDragging 后指针交给系统，pointerleave 可能不再触发。
+  dismissTooltip()
   pointerStart.value = { x: event.clientX, y: event.clientY }
   dragging.value = false
 }
@@ -54,6 +120,7 @@ async function onPointerMove(event: PointerEvent) {
   }
 
   dragging.value = true
+  dismissTooltip()
   try {
     await window.startDragging()
   } catch (error) {
@@ -118,7 +185,17 @@ async function snapWindow() {
   if (result.size.width !== size.width || result.size.height !== size.height) {
     await window.setSize(new PhysicalSize(result.size.width, result.size.height))
   }
+  // 记录吸附后的几何：提示窗定位复用，避免 hover 时再次查询窗口。
+  lastRect = {
+    x: result.position.x,
+    y: result.position.y,
+    width: result.size.width,
+    height: result.size.height,
+  }
+  lastDocked = result.docked
   layoutMode.value = layoutFromDocked(result.docked)
+  // 贴边形态变化会改变 anchor，已显示的提示窗需要按新位置重算。
+  dismissTooltip()
 }
 
 function onMoved() {
@@ -140,6 +217,10 @@ onBeforeUnmount(() => {
   if (snapTimer) {
     clearTimeout(snapTimer)
   }
+  clearTimeout(showTimer)
+  clearTimeout(hideTimer)
+  showTimer = undefined
+  hideTimer = undefined
   unlistenMoved?.()
   unlistenScaleChanged?.()
 })

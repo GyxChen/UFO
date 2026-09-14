@@ -12,7 +12,10 @@ pub use status::try_run_status_hook;
 use status::{get_status_snapshot, spawn_monitor, StatusState};
 
 const MAIN_WINDOW: &str = "main";
+/// 悬浮窗 label，仅调试构建下打开其 devtools 时使用，因此限定 cfg。
+#[cfg(debug_assertions)]
 const FLOATING_WINDOW: &str = "floating";
+const TOOLTIP_WINDOW: &str = "tooltip";
 const TRAY_ICON: &str = "main";
 const SHOW_MENU_ITEM: &str = "show";
 const HIDE_MENU_ITEM: &str = "hide";
@@ -69,6 +72,31 @@ pub fn run() {
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window(FLOATING_WINDOW) {
                 window.open_devtools();
+            }
+            //提示窗的devtools,如果不用直接注释掉即可
+            #[cfg(debug_assertions)]
+            if let Some(window) = app.get_webview_window(TOOLTIP_WINDOW) {
+                window.open_devtools();
+            }
+
+            // 信息提示窗只做展示：设为点击穿透，避免遮挡或拦截下方窗口的点击。
+            // Rust 侧调用不经过 capability 校验，因此无需授予 set-ignore-cursor-events 权限。
+            //
+            // 调试构建例外 —— 点击穿透（Win32 的 WS_EX_TRANSPARENT）会让页面收不到鼠标移动，
+            // 配合配置里的 focusable:false（WS_EX_NOACTIVATE）窗口也无法激活，
+            // 两者叠加会让 devtools 的元素检查选取器失效（悬停不高亮、点不中）。
+            // 因此 debug 下放开这两个限制、只保留 release 的穿透行为。
+            if let Some(window) = app.get_webview_window(TOOLTIP_WINDOW) {
+                #[cfg(debug_assertions)]
+                {
+                    if let Err(error) = window.set_focusable(true) {
+                        eprintln!("failed to make tooltip window focusable: {error}");
+                    }
+                }
+                #[cfg(not(debug_assertions))]
+                if let Err(error) = window.set_ignore_cursor_events(true) {
+                    eprintln!("failed to make tooltip window click-through: {error}");
+                }
             }
 
             Ok(())

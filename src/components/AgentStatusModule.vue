@@ -74,13 +74,18 @@ function labelFor(session: SessionSnapshot) {
     :style="gridStyle"
     aria-label="Agent 状态"
   >
+    <!--
+      指示灯刻意不设 title：title 会触发系统原生文字提示，与悬浮窗自己的 tooltip 重复且更简陋。
+      无障碍信息只走 aria-label（不产生可见提示），保证读屏仍能朗读 provider / phase。
+    -->
     <span
       v-for="session in partitioned.visible"
       :key="session.key"
       class="agent-status-module__item"
       :class="[`agent-status-module__item--${colorForSession(session)}`, { 'is-flashing': session.is_flashing }]"
-      :title="labelFor(session)"
       :aria-label="labelFor(session)"
+      @pointerenter="floatingWindow?.onSessionHover(session.key)"
+      @pointerleave="floatingWindow?.onSessionHover(null)"
     >
       <span class="agent-status-module__dot" aria-hidden="true" />
       <span class="agent-status-module__identity" aria-hidden="true">
@@ -94,8 +99,9 @@ function labelFor(session: SessionSnapshot) {
     <span
       v-if="partitioned.overflow > 0"
       class="agent-status-module__item agent-status-module__item--overflow"
-      :title="`还有 ${partitioned.overflow} 个会话`"
       :aria-label="`还有 ${partitioned.overflow} 个会话`"
+      @pointerenter="floatingWindow?.onSessionHover(null)"
+      @pointerleave="floatingWindow?.onSessionHover(null)"
     >
       <span class="agent-status-module__overflow">+{{ partitioned.overflow }}</span>
     </span>

@@ -1,0 +1,155 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getCurrentWindow, monitorFromPoint, PhysicalPosition } from '@tauri-apps/api/window'
+import {
+  colorForSession,
+  formatTokenCount,
+  formatTokenMillions,
+  tokenTotal,
+  type SessionSnapshot,
+} from '@/lib/agent-status'
+import { placeTooltip, TOOLTIP_HOVER_EVENT, type TooltipHoverPayload } from '@/lib/tooltip'
+import { useAgentStatusStore } from '@/stores/agentStatus'
+import { useFloatingModulesStore } from '@/stores/floatingModules'
+import claudeIcon from '@/assets/claude.svg'
+import codexIcon from '@/assets/codex.svg'
+
+const window = getCurrentWindow()
+const store = useAgentStatusStore()
+const modules = useFloatingModulesStore()
+const hover = ref<TooltipHoverPayload | null>(null)
+let unlisten: UnlistenFn | undefined
+
+/** 当前悬停的会话；目标已从快照消失（retention 移除）时为 null。 */
+const session = computed<SessionSnapshot | null>(() => {
+  const key = hover.value?.sessionKey
+  if (!key) return null
+  return store.sessions.find((item) => item.key === key) ?? null
+})
+
+/**
+ * 决定显示内容的会话 key：只有悬停中且会话数据已就绪才非 null。
+ * 用 key 而非布尔值做 watch 源，保证从 A 灯移到 B 灯时也会重新定位。
+ */
+const displayKey = computed(() => (hover.value?.visible && session.value ? session.value.key : null))
+
+const providerLabel = computed(() => (session.value?.provider === 'codex' ? 'Codex' : 'Claude'))
+const providerIcon = computed(() => (session.value?.provider === 'codex' ? codexIcon : claudeIcon))
+const statusColor = computed(() => (session.value ? colorForSession(session.value) : 'green'))
+
+/** 该会话累计 token 总量；未统计到（tokens 为 null）时为 0，此时不渲染该行。 */
+const tokenCount = computed(() => tokenTotal(session.value?.tokens))
+
+/** token 明细：四项分列在 title 上，避免挤占提示窗的固定高度。 */
+const tokenTitle = computed(() => {
+  const tokens = session.value?.tokens
+  if (!tokens) return ''
+  return [
+    `输入 ${formatTokenCount(tokens.input_tokens)}`,
+    `缓存写 ${formatTokenCount(tokens.cache_creation_input_tokens)}`,
+    `缓存读 ${formatTokenCount(tokens.cache_read_input_tokens)}`,
+    `输出 ${formatTokenCount(tokens.output_tokens)}`,
+  ].join(' · ')
+})
+
+/**
+ * 按主窗口选定的单位渲染总量：`tokens` 原始计数、`m_tokens` 百万。
+ * 明细（`tokenTitle`）始终用原始计数，保证任何单位下都能看到精确值。
+ */
+const tokenDisplay = computed(() =>
+  modules.tokenUnit === 'm_tokens'
+    ? formatTokenMillions(tokenCount.value)
+    : formatTokenCount(tokenCount.value),
+)
+
+/** 定位并显示提示窗；先 setPosition 再 show，避免在旧位置闪一下。 */
+async function present(payload: TooltipHoverPayload) {
+  const centerX = Math.round(payload.anchor.x + payload.anchor.width / 2)
+  const centerY = Math.round(payload.anchor.y + payload.anchor.height / 2)
+  const [size, monitor] = await Promise.all([
+    window.outerSize(),
+    // 以 anchor 中心取屏：多屏下提示窗自身所在屏未必与悬浮窗同屏。
+    monitorFromPoint(centerX, centerY),
+  ])
+  if (!monitor) return
+
+  const { position } = placeTooltip(
+    payload.anchor,
+    { width: size.width, height: size.height },
+    {
+      position: { x: monitor.workArea.position.x, y: monitor.workArea.position.y },
+      size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
+    },
+    payload.docked,
+  )
+
+  await window.setPosition(new PhysicalPosition(position.x, position.y))
+  await window.show()
+}
+
+async function hide() {
+  try {
+    await window.hide()
+  } catch (error) {
+    console.warn('failed to hide tooltip window', error)
+  }
+}
+
+watch(displayKey, (key) => {
+  if (key && hover.value) {
+    void present(hover.value).catch((error) => {
+      console.warn('failed to present tooltip window', error)
+    })
+    return
+  }
+  void hide()
+})
+
+onMounted(async () => {
+  unlisten = await listen<TooltipHoverPayload>(TOOLTIP_HOVER_EVENT, (event) => {
+    hover.value = event.payload
+  })
+})
+
+onBeforeUnmount(() => {
+  unlisten?.()
+  unlisten = undefined
+})
+</script>
+
+<template>
+  <div class="tooltip-shell">
+    <template v-if="session">
+      <div class="tooltip-row tooltip-row--head">
+        <span class="tooltip-dot" :class="`tooltip-dot--${statusColor}`" aria-hidden="true" />
+        <img :src="providerIcon" :alt="providerLabel" class="tooltip-provider-icon" aria-hidden="true" />
+        <span class="tooltip-row__value">{{ providerLabel }}</span>
+        <span class="tooltip-row__badge">{{ session.phase }}</span>
+      </div>
+
+      <div class="tooltip-row">
+        <span class="tooltip-row__label">Endpoint</span>
+        <span class="tooltip-row__value tooltip-row__value--mono" :title="session.base_url ?? '未上报'">
+          {{ session.base_url ?? '—' }}
+        </span>
+      </div>
+
+      <!-- token 消耗：一行显示「已使用 token: 总量」（单位由主窗口决定），四项明细放在 title；未统计到时不占位。 -->
+      <div v-if="tokenCount > 0" class="tooltip-row">
+        <span class="tooltip-row__label">已使用 token:</span>
+        <span class="tooltip-row__value tooltip-row__value--mono" :title="tokenTitle">
+          {{ tokenDisplay }}
+        </span>
+      </div>
+
+      <!-- 用户提问内容：多行显示，超出由 CSS 截断，完整内容放在 title。 -->
+      <div v-if="session.prompt" class="tooltip-prompt">
+        <span class="tooltip-row__label">提问</span>
+        <p class="tooltip-prompt__text" :title="session.prompt">{{ session.prompt }}</p>
+      </div>
+
+      <!-- 预留：下一轮接入用户自写脚本的结果行（余额等）。 -->
+    </template>
+  </div>
+</template>

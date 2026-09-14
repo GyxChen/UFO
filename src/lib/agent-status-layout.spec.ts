@@ -24,6 +24,9 @@ const session = (phase: SessionSnapshot['phase']): SessionSnapshot => ({
   is_flashing: phase === 'completed',
   pid: null,
   error_code: null,
+  base_url: null,
+  prompt: null,
+  tokens: null,
   last_sequence: null,
   termination_confirmed: phase === 'completed',
 })

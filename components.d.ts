@@ -15,5 +15,6 @@ declare module 'vue' {
     FloatingModuleHost: typeof import('./src/components/FloatingModuleHost.vue')['default']
     FloatingWindow: typeof import('./src/components/FloatingWindow.vue')['default']
     MainWindow: typeof import('./src/components/MainWindow.vue')['default']
+    TooltipWindow: typeof import('./src/components/TooltipWindow.vue')['default']
   }
 }

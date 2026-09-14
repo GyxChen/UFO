@@ -3,11 +3,13 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
 import { ABS_MAX_CELLS, ABS_MIN_CELLS } from '@/lib/agent-status-layout'
 import {
+  DEFAULT_TOKEN_UNIT,
   defaultMaxCellsByLayout,
   isModuleEnabled,
   type FloatingLayout,
   type FloatingModuleConfig,
   type MaxCellsByLayout,
+  type TokenUnit,
 } from '@/lib/floating-modules'
 
 const MODULE_CONFIG_EVENT = 'floating-module-config'
@@ -26,6 +28,7 @@ const fallbackConfig: FloatingModuleConfig = {
   completed_retention_ms: 30_000,
   running_timeout_ms: DEFAULT_RUNNING_TIMEOUT_SECONDS * 1000,
   max_cells_by_layout: defaultMaxCellsByLayout(),
+  token_unit: DEFAULT_TOKEN_UNIT,
 }
 
 function clampLayoutMax(value: number): number {
@@ -49,6 +52,8 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
       ),
     maxCellsByLayout: (state): MaxCellsByLayout =>
       state.config?.max_cells_by_layout ?? defaultMaxCellsByLayout(),
+    /** token 展示单位，默认原始计数。 */
+    tokenUnit: (state): TokenUnit => state.config?.token_unit ?? DEFAULT_TOKEN_UNIT,
   },
 
   actions: {
@@ -138,6 +143,19 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
         }))
       } catch (error) {
         console.warn('failed to update max cells by layout', error)
+        throw error
+      }
+    },
+
+    /** 更新 token 展示单位（tokens / M tokens）。 */
+    async updateTokenUnit(unit: TokenUnit) {
+      const current = this.config ?? fallbackConfig
+      try {
+        this.applyConfig(await invoke<FloatingModuleConfig>('set_floating_module_config', {
+          config: { ...current, token_unit: unit },
+        }))
+      } catch (error) {
+        console.warn('failed to update token unit', error)
         throw error
       }
     },

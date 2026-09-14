@@ -7,6 +7,18 @@ export type Provider = 'claude' | 'codex'
 export type SessionPhase = 'running' | 'waiting' | 'error' | 'unknown' | 'completed'
 export type StatusColor = 'green' | 'yellow' | 'red'
 
+/** 一个会话累计消耗的 token，与 Rust 侧 `TokenTotals` 字段一一对应。 */
+export interface TokenTotals {
+  /** 新增输入 token（不含缓存部分）。 */
+  input_tokens: number
+  /** 写入缓存的 token。 */
+  cache_creation_input_tokens: number
+  /** 命中缓存读取的 token。 */
+  cache_read_input_tokens: number
+  /** 模型生成的 token（Rust 侧已含 thinking，此处不重复计入）。 */
+  output_tokens: number
+}
+
 export interface SessionSnapshot {
   key: string
   provider: Provider
@@ -21,6 +33,12 @@ export interface SessionSnapshot {
   is_flashing: boolean
   pid: number | null
   error_code: string | null
+  /** 该会话使用的 API endpoint；未知时为 null（旧 hook 二进制不上报）。 */
+  base_url: string | null
+  /** 用户最近一次提问内容；未知时为 null。 */
+  prompt: string | null
+  /** 会话累计消耗的 token；尚未统计到时为 null（旧 hook 二进制或未采集到 transcript）。 */
+  tokens: TokenTotals | null
   last_sequence: number | null
   termination_confirmed: boolean
 }
@@ -54,6 +72,46 @@ export function colorForSession(session: SessionSnapshot): StatusColor {
   // Stop 进入 Waiting 时会先绿闪；闪烁期间按绿色渲染。
   if (session.phase === 'waiting' && session.is_flashing) return 'green'
   return 'yellow'
+}
+
+/**
+ * 会话累计 token 总量：输入 + 缓存写 + 缓存读 + 输出。
+ *
+ * 与 Rust 侧 `TokenTotals::total()` 保持同一口径；缓存读通常占比最大，
+ * 漏掉会显著低估实际消耗。未统计到（null）时按 0 处理。
+ */
+export function tokenTotal(tokens: TokenTotals | null | undefined): number {
+  if (!tokens) return 0
+  return (
+    tokens.input_tokens +
+    tokens.cache_creation_input_tokens +
+    tokens.cache_read_input_tokens +
+    tokens.output_tokens
+  )
+}
+
+/**
+ * 千分位格式化整数，便于在小字号下读出位数。
+ *
+ * 不用 `toLocaleString`：其输出依赖运行环境的 ICU 数据，会让测试结果不稳定。
+ * 非法值（NaN / Infinity）一律按 0 处理。
+ */
+export function formatTokenCount(value: number): string {
+  const safe = Number.isFinite(value) ? Math.max(Math.trunc(value), 0) : 0
+  return String(safe).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
+/**
+ * 以百万（M tokens）为单位格式化，便于快速读出量级。
+ *
+ * 保留两位小数再去掉末尾多余的 0（`1.00M` → `1M`，`12.60M` → `12.6M`）；
+ * 不足 0.01M 时显示 `<0.01M` —— 否则小数位不足以表达，会退化成没有信息量的 `0M`。
+ */
+export function formatTokenMillions(value: number): string {
+  const safe = Number.isFinite(value) ? Math.max(value, 0) : 0
+  const millions = safe / 1_000_000
+  if (millions > 0 && millions < 0.01) return '<0.01M'
+  return `${millions.toFixed(2).replace(/\.?0+$/, '')}M`
 }
 
 export function isStatusSnapshot(value: unknown): value is StatusSnapshot {

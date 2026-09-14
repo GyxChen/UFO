@@ -63,6 +63,28 @@ impl Default for MaxCellsByLayout {
     }
 }
 
+/// token 展示单位，决定悬浮窗提示行里 token 数值的写法。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenUnit {
+    /// 原始计数，如 `1,261,847`
+    #[default]
+    Tokens,
+    /// 以百万为单位，如 `1.26M`
+    MTokens,
+}
+
+/// 宽松解析 token 单位：未知取值一律回落默认。
+///
+/// 这里刻意接收字符串而不是直接反序列化枚举 —— 手改配置写错一个值就会让整份
+/// 配置反序列化失败，被 `ModuleState::load` 打回默认，连带丢掉用户其它设置。
+fn parse_token_unit(raw: Option<&str>) -> TokenUnit {
+    match raw {
+        Some("m_tokens") => TokenUnit::MTokens,
+        _ => TokenUnit::Tokens,
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FloatingModuleConfig {
     pub schema_version: u16,
@@ -72,6 +94,8 @@ pub struct FloatingModuleConfig {
     /// Running 阶段无新 hook 事件时的超时（毫秒）；超时后移除绿灯。
     pub running_timeout_ms: u64,
     pub max_cells_by_layout: MaxCellsByLayout,
+    /// token 展示单位；主窗口可切换，悬浮窗提示行按此格式化。
+    pub token_unit: TokenUnit,
 }
 
 /// 加载期过渡形态：仍接受旧的 `max_visible_sessions`，写出时不再保留。
@@ -86,6 +110,9 @@ struct FloatingModuleConfigWire {
     running_timeout_ms: u64,
     #[serde(default)]
     max_cells_by_layout: Option<MaxCellsByLayout>,
+    /// 旧配置缺字段时回落 `tokens`；非法取值也走同一回落（见 `parse_token_unit`）。
+    #[serde(default)]
+    token_unit: Option<String>,
     #[serde(default)]
     max_visible_sessions: Option<u8>,
 }
@@ -107,6 +134,7 @@ impl FloatingModuleConfigWire {
             completed_retention_ms: self.completed_retention_ms,
             running_timeout_ms: self.running_timeout_ms,
             max_cells_by_layout,
+            token_unit: parse_token_unit(self.token_unit.as_deref()),
         }
     }
 }
@@ -124,6 +152,7 @@ impl Default for FloatingModuleConfig {
             completed_retention_ms: DEFAULT_RETENTION_MS,
             running_timeout_ms: DEFAULT_RUNNING_TIMEOUT_MS,
             max_cells_by_layout: MaxCellsByLayout::default(),
+            token_unit: TokenUnit::default(),
         }
     }
 }
@@ -271,6 +300,83 @@ mod tests {
     fn default_max_cells_are_eight() {
         let config = FloatingModuleConfig::default();
         assert_eq!(config.max_cells_by_layout, MaxCellsByLayout::filled(MAX_CELLS));
+    }
+
+    #[test]
+    fn default_token_unit_is_plain_tokens() {
+        let config = FloatingModuleConfig::default();
+        assert_eq!(config.token_unit, TokenUnit::Tokens);
+    }
+
+    #[test]
+    fn token_unit_serializes_as_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&TokenUnit::Tokens).unwrap(),
+            "\"tokens\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TokenUnit::MTokens).unwrap(),
+            "\"m_tokens\""
+        );
+    }
+
+    #[test]
+    fn parse_token_unit_accepts_known_values() {
+        assert_eq!(parse_token_unit(Some("tokens")), TokenUnit::Tokens);
+        assert_eq!(parse_token_unit(Some("m_tokens")), TokenUnit::MTokens);
+    }
+
+    #[test]
+    fn parse_token_unit_falls_back_on_unknown_or_missing() {
+        // 手改配置写错值时不能牵连整份配置，只能回落默认单位。
+        assert_eq!(parse_token_unit(None), TokenUnit::Tokens);
+        assert_eq!(parse_token_unit(Some("")), TokenUnit::Tokens);
+        assert_eq!(parse_token_unit(Some("M_TOKENS")), TokenUnit::Tokens);
+        assert_eq!(parse_token_unit(Some("millions")), TokenUnit::Tokens);
+    }
+
+    #[test]
+    fn unknown_token_unit_does_not_discard_the_rest_of_the_config() {
+        // 关键回归：非法 token_unit 不应让整份配置反序列化失败。
+        let json = r#"{
+            "schema_version": 1,
+            "revision": 7,
+            "modules": [{"id":"agent-status","enabled":true,"order":0}],
+            "completed_retention_ms": 45000,
+            "running_timeout_ms": 120000,
+            "token_unit": "garbage"
+        }"#;
+        let wire: FloatingModuleConfigWire = serde_json::from_str(json).unwrap();
+        let config = wire.into_config().validate().unwrap();
+        assert_eq!(config.token_unit, TokenUnit::Tokens);
+        // 其它设置必须原样保留。
+        assert_eq!(config.completed_retention_ms, 45_000);
+        assert_eq!(config.running_timeout_ms, 120_000);
+        assert_eq!(config.revision, 7);
+    }
+
+    #[test]
+    fn migrates_legacy_config_without_token_unit() {
+        // 旧配置文件没有 token_unit 字段，必须仍能加载并回落默认。
+        let json = r#"{
+            "schema_version": 1,
+            "revision": 2,
+            "modules": [{"id":"agent-status","enabled":true,"order":0}],
+            "completed_retention_ms": 30000
+        }"#;
+        let wire: FloatingModuleConfigWire = serde_json::from_str(json).unwrap();
+        let config = wire.into_config().validate().unwrap();
+        assert_eq!(config.token_unit, TokenUnit::Tokens);
+    }
+
+    #[test]
+    fn token_unit_roundtrips_through_config() {
+        let mut config = FloatingModuleConfig::default();
+        config.token_unit = TokenUnit::MTokens;
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"m_tokens\""));
+        let deserialized: FloatingModuleConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.token_unit, TokenUnit::MTokens);
     }
 
     #[test]
