@@ -273,9 +273,13 @@ impl StatusRegistry {
             session.tokens = self.token_totals.get(&session.key).copied();
         }
         sessions.sort_by(|left, right| {
-            right
-                .last_seen_at_ms
-                .cmp(&left.last_seen_at_ms)
+            // 按「时间」排序，最早的排在最前面：以会话创建时间 started_at_ms 升序为准。
+            // 用创建时间而非 last_seen_at_ms，是为了让指示灯位置稳定 ——
+            // 否则任一会话每次活动都会重排，物理格子里的灯会不停跳动。
+            // 同一毫秒创建（或 started 相同）时按 key 字母序兜底，保证顺序确定。
+            left
+                .started_at_ms
+                .cmp(&right.started_at_ms)
                 .then_with(|| left.key.cmp(&right.key))
         });
 
@@ -470,9 +474,33 @@ mod tests {
 
         let snapshot = registry.snapshot(3);
         assert_eq!(snapshot.sessions.len(), 2);
-        assert_eq!(snapshot.sessions[0].key, "codex:same");
-        assert_eq!(snapshot.sessions[1].key, "claude:same");
+        // 按 started 升序：Claude 先创建，排在最前。
+        assert_eq!(snapshot.sessions[0].key, "claude:same");
+        assert_eq!(snapshot.sessions[1].key, "codex:same");
     }
+
+    #[test]
+    fn sessions_are_ordered_earliest_created_first() {
+        let mut registry = StatusRegistry::new();
+        // s1 最早创建，s3 最晚；但 s3 最近才活动（last_seen 最大）。
+        registry.apply_event(event("1", Provider::Claude, "s1", "start", 100), 30_000);
+        registry.apply_event(event("2", Provider::Claude, "s2", "start", 200), 30_000);
+        registry.apply_event(event("3", Provider::Claude, "s3", "start", 300), 30_000);
+        // s1 收到新事件：last_seen 最新，但仍应排在最前（按 started 而非 last_seen）。
+        registry.apply_event(
+            event("4", Provider::Claude, "s1", "PreToolUse", 999),
+            30_000,
+        );
+
+        let snapshot = registry.snapshot(1000);
+        let ids: Vec<_> = snapshot
+            .sessions
+            .iter()
+            .map(|s| s.session_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["s1", "s2", "s3"]);
+    }
+
 
     #[test]
     fn completed_sessions_flash_until_retention_expires() {

@@ -243,6 +243,12 @@ cleanup(now, running_timeout_ms, is_alive) 每 10 秒执行
            否则 → 保留
 ```
 
+**快照排序：**
+
+`snapshot()` 输出的 `sessions` 按**创建时间 `started_at_ms` 升序**排列，最早的会话排在最前面；同一时间戳（或同毫秒）时用 `key` 字母序兜底，保证顺序确定、可复现。
+
+用创建时间而非 `last_seen_at_ms`：后者会让任一会话每次活动都重排，物理格子里的指示灯会不停跳动。悬浮窗与主窗口的会话列表都直接消费这个顺序。
+
 **前端渲染决策：**
 
 ```text
@@ -274,6 +280,17 @@ snapshot → store.applySnapshot（revision 检查，忽略旧快照）
 状态目录优先级：`--status-dir` 参数 > `UFO_STATUS_DIR` 环境变量 > 默认 app-data 路径。
 
 `outcome` 同时承接 SessionEnd.`reason` 等结果别名；`notification_type` 单独提取，避免与 outcome 混用污染状态判定。
+
+**prompt 元标签剔除（`normalize_prompt` → `strip_excluded_tags`）：**
+
+Claude Code 上报的 `UserPromptSubmit.prompt` 会混入自己注入的元信息标签（`<ide_opened_file>`、`<system-reminder>`、`<env>`、`<permission_mode>` 等），会淹没用户真正的提问。`normalize_prompt` 在 trim / 截断之前先调用 `strip_excluded_tags`，**连同标签包裹的整段内容一起移除**（按需求：不保留标签内文字），只留下用户手输的文本。
+
+- 名单来自仓库根 `.env` 的 `UFO_STRIP_TAGS`（逗号分隔，尖括号会被剥掉，写 `<name>` 或 `name` 均可）。
+- ⚠️ 该值在**构建期**由 `src-tauri/build.rs` 读取并 `cargo:rustc-env` 注入二进制（`option_env!`）。原因：hook 是独立短命进程、cwd 为**被监测 agent 的项目目录**，运行时读不到 UFO 仓库的 `.env`，且 hook 必须快进快出不做文件 IO。**改 `.env` 后必须重新构建才生效**；`build.rs` 已 `rerun-if-changed=../.env`。
+- `.env` 缺失 / 留空时回落到 `hook.rs` 的 `DEFAULT_STRIP_TAGS`（与 `.env` 默认值一致）。
+- 匹配规则：仅命中「`<` + 名单名 + 边界字符（`>` / `/` / 空白）」的开始标签，因此 `<environment>` 不会被名单里的 `env` 误吞；名单外的尖括号内容（代码里的 `<T>`、`<div>` 等）原样保留。
+- 找不到显式 `</name>` 时退化为只吃掉起始标记（覆盖自闭合 `<tag/>`、prompt 被截断丢了闭合标签），不吞后续正文。
+- 全部被剔除后为空 → `normalize_prompt` 返回 `None`，由 reducer 继承上一轮的值。
 
 ### 2.5 mod.rs — 监测器
 
@@ -695,9 +712,9 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 
 ## 4. 测试覆盖
 
-### 4.1 Rust 测试（116 个）
+### 4.1 Rust 测试（127 个）
 
-按模块：`reducer` 38、`hook` 33、`module_config` 23、`tokens` 12、`model` 10。
+按模块：`reducer` 39、`hook` 43、`module_config` 23、`tokens` 12、`model` 10。
 
 **model.rs：**
 
@@ -742,9 +759,11 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 - waiting_sessions_not_cleared_by_other_provider
 - completed_sessions_flash_until_retention_expires
 - prompt_is_kept_across_the_turn_and_replaced_on_next_submit
+- sessions_are_ordered_earliest_created_first — 按 started_at_ms 升序，最近活动的会话不改变排位
+- keeps_multiple_provider_sessions_separate — 跨 provider 也按创建先后，Claude 先建排前
 - 以及既有去重 / sequence / schema / retention / liveness 等测试
 
-**hook.rs（33 个）：**
+**hook.rs（43 个）：**
 
 - argument_value_from_equals_syntax — `--provider=claude`
 - argument_value_from_separate_args — `--provider claude`
@@ -757,6 +776,14 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 - provider_base_url_prefers_settings_over_env / provider_base_url_ignores_claude_settings_for_codex
 - normalize_base_url_* — 原样保留（含 userinfo/query）、trim、空值与超长拒绝
 - normalize_prompt_* — trim、空值拒绝、按**字符**而非字节截断（避免截断 UTF-8）
+- normalize_prompt_drops_meta_tags / normalize_prompt_returns_none_when_only_tags_remain — 端到端剔除元标签
+- strip_removes_tag_and_its_wrapped_content — 标签 + 包裹内容一起删
+- strip_handles_multiple_and_interleaved_tags — 多个标签交错
+- strip_leaves_unlisted_tags_intact — 名单外的 `<T>` / `<div>` 不动
+- strip_requires_boundary_so_prefix_does_not_over_match — `<environment>` 不被 `env` 误命中
+- strip_handles_self_closing_and_unclosed_open_tag — 自闭合 / 缺闭合的兜底
+- strip_is_safe_on_multibyte_content — `<` 后紧跟多字节字符不 panic
+- parse_tag_names_strips_brackets_and_whitespace / parse_tag_names_empty_yields_nothing
 - user_prompt_accepts_only_user_prompt_submit — UserPromptExpansion / PreToolUse / Stop 一律不认
 - user_prompt_accepts_alternate_field_names
 - transcript_path_reads_and_trims / transcript_path_rejects_missing_blank_and_oversized
