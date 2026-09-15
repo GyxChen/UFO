@@ -15,6 +15,7 @@
     "core:window:allow-unminimize",
     "allow-get-status-snapshot",
     "allow-get-proxy-resolvers",
-    "allow-get-floating-module-config"
+    "allow-get-floating-module-config",
+    "allow-get-endpoint-profiles"
   ]
 }

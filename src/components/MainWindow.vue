@@ -1,13 +1,22 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { nextTick, reactive, ref, watch } from 'vue'
 import type { FloatingLayout, MaxCellsByLayout, TokenUnit } from '@/lib/floating-modules'
 import { hideMainWindow, startCurrentWindowDrag } from '@/lib/window'
 import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import EndpointExtensionPanel from './EndpointExtensionPanel.vue'
 import closeIcon from '@/assets/close.svg'
 
 const agentStatus = useAgentStatusStore()
 const modules = useFloatingModulesStore()
+
+/** 主窗口顶部的两个页面；`settings` 沿用原有设置页，`extension` 是按 endpoint 的拓展配置。 */
+type MainTab = 'settings' | 'extension'
+const activeTab = ref<MainTab>('settings')
+const tabs: { key: MainTab; label: string }[] = [
+  { key: 'settings', label: '悬浮窗设置' },
+  { key: 'extension', label: '信息卡拓展' },
+]
 
 /** 自绘标题栏拖拽：左键按下后交给系统移动无边框窗口。 */
 async function onTitlebarPointerDown(event: PointerEvent) {
@@ -20,6 +29,29 @@ async function onTitlebarPointerDown(event: PointerEvent) {
   } catch (error) {
     console.error('failed to start dragging main window', error)
   }
+}
+
+/** tab 按钮元素，用于方向键切换后把焦点移到新选中项（roving tabindex）。 */
+const tabRefs = ref<HTMLElement[]>([])
+function setTabRef(el: unknown, index: number) {
+  if (el) tabRefs.value[index] = el as HTMLElement
+}
+
+/**
+ * tablist 键盘导航：←/→ 在两个页面间循环，Home/End 跳到首尾。
+ * 只有选中项可 Tab 到达，因此方向键是唯一的横向移动方式（WAI-ARIA Tabs 模式）。
+ */
+function onTabKeydown(event: KeyboardEvent, index: number) {
+  const count = tabs.length
+  let next: number | null = null
+  if (event.key === 'ArrowRight') next = (index + 1) % count
+  else if (event.key === 'ArrowLeft') next = (index - 1 + count) % count
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = count - 1
+  if (next === null) return
+  event.preventDefault()
+  activeTab.value = tabs[next].key
+  void nextTick(() => tabRefs.value[next]?.focus())
 }
 
 /** 关闭按钮：隐藏到托盘，不退出进程。 */
@@ -177,7 +209,34 @@ async function saveTimeouts() {
       </button>
     </header>
 
-    <main class="main-window">
+    <nav class="main-tabs" role="tablist" aria-label="主窗口分区">
+      <button
+        v-for="(tab, index) in tabs"
+        :key="tab.key"
+        :ref="(el) => setTabRef(el, index)"
+        type="button"
+        role="tab"
+        class="main-tabs__tab"
+        :class="{ 'main-tabs__tab--active': activeTab === tab.key }"
+        :aria-selected="activeTab === tab.key"
+        :aria-controls="`main-tab-panel-${tab.key}`"
+        :id="`main-tab-${tab.key}`"
+        :tabindex="activeTab === tab.key ? 0 : -1"
+        @click="activeTab = tab.key"
+        @keydown="onTabKeydown($event, index)"
+      >
+        {{ tab.label }}
+      </button>
+    </nav>
+
+    <main
+      v-if="activeTab === 'settings'"
+      class="main-window"
+      role="tabpanel"
+      tabindex="0"
+      id="main-tab-panel-settings"
+      aria-labelledby="main-tab-settings"
+    >
     <header class="main-window__hero">
       <h1 class="main-window__title">悬浮窗设置</h1>
       <div class="main-window__badge">Agent Status</div>
@@ -331,6 +390,17 @@ async function saveTimeouts() {
         </li>
       </ul>
     </section>
+    </main>
+
+    <main
+      v-else
+      class="main-window main-window--wide"
+      role="tabpanel"
+      tabindex="0"
+      id="main-tab-panel-extension"
+      aria-labelledby="main-tab-extension"
+    >
+      <EndpointExtensionPanel />
     </main>
   </div>
 </template>

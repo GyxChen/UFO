@@ -33,7 +33,7 @@ floatingModules store  floatingModules store  floatingModules store
     │                      │                      │
     ▼                      ▼                      ▼
 MainWindow.vue         FloatingModuleHost.vue TooltipWindow.vue
-（会话列表 + 配置）        │                    （悬停会话详情）
+（tabbar：设置 / 信息卡拓展）  │                    （悬停会话详情）
                            ▼
                      AgentStatusModule.vue
                      （状态灯渲染）
@@ -46,6 +46,8 @@ MainWindow.vue         FloatingModuleHost.vue TooltipWindow.vue
 ```
 
 三个 WebView **各自**创建独立的 Vue/Pinia 实例，因此每个窗口都要在 `App.vue` 中启动 `agentStatus` 与 `floatingModules` 两个 store。提示窗曾经只订阅 `agent-status`，导致主窗口切换 token 单位后它不生效 —— 现已统一。
+
+`endpointProfiles` store 不在 `App.vue` 统一启动：只有主窗口的「信息卡拓展」面板用得到，由面板自己 `onMounted` 时启动（见 3.14），免得给两个透明窗口多加一次 IPC。
 
 ## 2. Rust 后端
 
@@ -66,6 +68,7 @@ src-tauri/src/
     mod.rs            ← ProxyResolver trait、ResolverRegistry、ProxyState、build_registry、normalize_host_port
     ccswitch.rs       ← CcSwitchResolver：只读 cc-switch.db 反查上游，带 TTL 缓存
   module_config.rs    ← FloatingModuleConfig、TokenUnit、proxy_resolver、validate、get/set command
+  endpoint_profiles.rs ← EndpointProfile 档案表：按 endpoint 持久化、loopback 过滤、get/add/delete command
 ```
 
 ### 2.2 model.rs — 状态协议
@@ -303,13 +306,16 @@ Claude Code 上报的 `UserPromptSubmit.prompt` 会混入自己注入的元信�
 - `status_dir: PathBuf`
 - `retention_ms: Arc<Mutex<u64>>` — 与 module_config 联动，配置变更时同步更新。
 - `running_timeout_ms: Arc<Mutex<u64>>` — Running 无新 hook 超时，与 Error 的 60s 分离；配置变更时同步。
+- `proxy: ProxyState` — 代理解析器注册表 + 选中项，见 2.8。
+- `profiles: EndpointProfileState` — endpoint 档案登记表，见 2.9。
 
 `monitor_loop` 在独立线程运行：
 
 1. 每 500ms 扫描 inbox 目录。
 2. 对每个 `.json` 文件：解析成功则消费并删除，同时 emit `status-hook-event` 到前端 DevTools 日志；失败则移入 quarantine 目录并标记 source_health 为 degraded。
-3. 每 10 秒执行一次 cleanup。
-4. 任何状态变更后调用 `emit_snapshot` 广播 `agent-status` 事件。
+3. 增量刷新各会话 token；再采集存活会话的有效 endpoint（`upstream_url ?? base_url`）登记进 `EndpointProfileState`，有新增时 emit `endpoint-profiles`（见 2.9）。
+4. 每 10 秒执行一次 cleanup。
+5. 任何状态变更后调用 `emit_snapshot` 广播 `agent-status` 事件。
 
 `process_alive` 实现：
 
@@ -464,26 +470,76 @@ pub trait ProxyResolver: Send + Sync {
 
 只需：① 在 `src/proxy/` 下新建文件实现 `ProxyResolver`；② 在 `build_registry` 里 push 一行。前端无需任何改动——下拉、upstream 填充和持久化全部自动适配。
 
-### 2.9 lib.rs — Tauri 集成
+### 2.9 endpoint_profiles.rs — Endpoint 档案表（信息卡拓展的数据源）
+
+tooltip 的拓展字段要**按 endpoint 配置**，但会话快照里的 `base_url` / `upstream_url` 只在会话存活时存在。本模块维护一份以 endpoint 为主键的持久化登记表，让「哪些 endpoint 可以被配置」独立于会话生命周期。
+
+**数据流：**
+
+```text
+SessionSnapshot（存活会话）
+    │  有效 endpoint = upstream_url ?? base_url（与前端 displayEndpoint 同口径）
+    ▼
+monitor_loop 每 500ms → StatusState::session_endpoints()
+    │  走 snapshot_with_upstream()，因此代理场景拿到的是反查出的上游
+    ▼
+EndpointProfileState::record_all(urls)
+    │  proxy::endpoint_identity 归一成 host:port → is_loopback_endpoint 过滤本地代理地址
+    │  只在出现未见过的 id 时才写盘
+    ▼
+<app-data>/endpoint-profiles.json  +  emit("endpoint-profiles", EndpointProfileList)
+    ▼
+主窗口「信息卡拓展」tab 的左侧列表
+```
+
+**字段表（`EndpointProfile`）：**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | String | 去重键，`proxy::endpoint_identity` 归一出的 `host:port`（host 小写，缺省端口按 scheme 补 https→443 / 其余→80，故裸 `api.example.com` 与带 scheme 的写法归一到同一条） |
+| url | String | 首次登记的原始串，列表直接展示 |
+| first_seen_at_ms | i64 | 首次发现时间，列表按它升序 |
+| extensions | serde_json::Map | 拓展字段容器，本轮恒为 `{}`；用 map 以免每加字段就改协议 |
+
+集合 `EndpointProfileList` 带 `schema_version`（=1）、`revision`（每次写入递增，前端据此丢乱序）、`profiles`。
+
+**关键约束：**
+
+- **loopback 不登记**：`127.0.0.1` / `localhost` / `::1` 是代理监听地址，不是用户要配置的对象，且端口每次可能变。手动添加命令也拒绝这类地址（返回错误文案）。
+- **只在真有新增时写盘**：同一批 endpoint 每 500ms 都会进来，无脑落盘会把配置文件写爆。`record_all` 先比对已知 id，全命中就零 I/O。
+- **顺序稳定**：按 `first_seen_at_ms` 升序、同刻按 id，不用「最近使用」，否则列表会随会话活动跳动。
+- **上限 64 条**（`MAX_PROFILES`），单条原始串上限 4096 字符（与会话侧 base_url 口径一致）。
+- **加载宽松**：文件缺失 / JSON 非法 / schema 不符一律空集合；`sanitize` 再对已加载条目去重（丢弃空 id、重复 id 保留首条）并按上限截断。一个坏文件不会卡住启动。
+- 写盘沿用 module_config 的原子策略：写 `.tmp` → 删旧 → rename（Windows 兼容）。
+
+**命令（3 个，见 2.11）：** `get_endpoint_profiles`（读，三窗口皆可）、`add_endpoint_profile` / `delete_endpoint_profile`（写，仅 main）。两个写命令成功后都会 `emit(ENDPOINT_PROFILES_EVENT)`，让 tooltip / floating 之外的窗口即时同步列表。
+
+**当前状态**：只有「登记 / 列举 / 删除」，`extensions` 尚未被任何消费方读取 —— tooltip 实际渲染拓展字段是下一步。
+
+### 2.10 lib.rs — Tauri 集成
 
 setup 阶段：
 
 1. 获取 app-data 目录。
 2. 加载 `ModuleState`（从 `floating-modules.json`）。
 3. 构建 `ProxyState`，并用 `module_state.proxy_resolver()` 设入初值（重启后不回落 none）。
-4. 用 module_config 的 retention_ms / running_timeout_ms + ProxyState 初始化 `StatusState`。
-5. `app.manage(StatusState)` + `app.manage(ModuleState)`。
-6. `spawn_monitor` 启动唯一监测线程。
-7. 注册托盘菜单和 devtools。
+4. 加载 `EndpointProfileState`（从 `endpoint-profiles.json`），clone 一份交给 `StatusState.profiles`（monitor 采集用），原值 `app.manage`（命令用）。
+5. 用 module_config 的 retention_ms / running_timeout_ms + ProxyState + EndpointProfileState 初始化 `StatusState`。
+6. `app.manage(StatusState)` + `app.manage(ModuleState)`。
+7. `spawn_monitor` 启动唯一监测线程。
+8. 注册托盘菜单和 devtools。
 
 注册的 commands：
 
 - `get_status_snapshot` — 读取当前全量快照（含 upstream_url）。
 - `get_proxy_resolvers` — 列出可用代理解析器（供主窗口下拉）。
+- `get_endpoint_profiles` — 读取 endpoint 档案列表。
+- `add_endpoint_profile` — 手动登记一条 endpoint（仅 main）。
+- `delete_endpoint_profile` — 删除一条档案（仅 main）。
 - `get_floating_module_config` — 读取模块配置。
 - `set_floating_module_config` — 写入模块配置（仅 main 窗口有权限）。
 
-### 2.10 权限
+### 2.11 权限
 
 `src-tauri/permissions/status.toml`：
 
@@ -491,16 +547,18 @@ setup 阶段：
 - `allow-get-proxy-resolvers` → `get_proxy_resolvers`
 - `allow-get-floating-module-config` → `get_floating_module_config`
 - `allow-set-floating-module-config` → `set_floating_module_config`
+- `allow-get-endpoint-profiles` → `get_endpoint_profiles`
+- `allow-manage-endpoint-profiles` → `add_endpoint_profile`、`delete_endpoint_profile`
 
 `src-tauri/capabilities/default.json`（main + floating + tooltip）：
 
 - core:default、core:event:default
 - 窗口操作（hide/show/set-focus/set-position/set-size/start-dragging/unminimize）
-- allow-get-status-snapshot、allow-get-proxy-resolvers、allow-get-floating-module-config
+- allow-get-status-snapshot、allow-get-proxy-resolvers、allow-get-floating-module-config、allow-get-endpoint-profiles
 
 `src-tauri/capabilities/main-module-settings.json`（仅 main）：
 
-- allow-set-floating-module-config
+- allow-set-floating-module-config、allow-manage-endpoint-profiles
 
 ## 3. 前端
 
@@ -515,18 +573,21 @@ src/
     agent-status.ts               ← 类型定义、runtime guard、listen/invoke 封装、颜色与 token 格式化
     agent-status-layout.ts        ← layoutFromDocked、格子数/网格/溢出切分
     floating-modules.ts           ← 模块定义、配置类型（含 TokenUnit）、isModuleEnabled
+    endpoint-profiles.ts          ← EndpointProfile 类型、get/add/delete 封装、payload guard、时间格式化
     tooltip.ts                    ← 提示窗 label/事件名、TooltipHoverPayload、placeTooltip 定位
     snap.ts                       ← 贴边算法（已有）
     window.ts                     ← showMainWindow（已有）
   stores/
     agentStatus.ts                ← Pinia store：snapshot、connection、start/stop
     floatingModules.ts            ← Pinia store：config、agentStatusEnabled、retention、tokenUnit
+    endpointProfiles.ts           ← Pinia store：endpoint 档案列表、revision 去乱序、add/remove
   components/
     FloatingWindow.vue            ← 拖拽、点击、贴边、layoutMode → FloatingModuleHost
     FloatingModuleHost.vue        ← 模块槽位
     AgentStatusModule.vue         ← 状态灯渲染
     TooltipWindow.vue             ← 独立提示窗：悬停会话详情
-    MainWindow.vue                ← 主窗口：模块开关、保留时长、token 单位、会话列表
+    MainWindow.vue                ← 主窗口外壳：标题栏 + tabbar（设置 / 信息卡拓展）
+    EndpointExtensionPanel.vue    ← 信息卡拓展页：左 endpoint 列表 + 右拓展字段占位
 ```
 
 ### 3.2 agent-status.ts — 类型与 API
@@ -678,7 +739,13 @@ onMounted(() => {
 
 ⚠️ **不要给指示灯加 `title`**：`title` 会触发 Windows 原生文字提示，与悬浮窗自己的 tooltip 重复且更简陋；`aria-label` 不产生可见提示，无障碍信息只走它。
 
-### 3.11 MainWindow.vue — 主窗口设置
+### 3.11 MainWindow.vue — 主窗口外壳与设置页
+
+**顶端 tabbar（两个页面）**：`role="tablist"` + 两个 `role="tab"` 按钮 —— `悬浮窗设置(settings)` / `信息卡拓展(extension)`。
+
+- 只有选中项 `tabindex=0`（roving tabindex），←/→ 循环切换、Home/End 跳首尾，切换后把焦点移到新 tab；面板 `role="tabpanel" tabindex="0"` + `aria-labelledby`，`v-if` 只渲染一个。
+- 样式 `.main-tabs`：实色底 + 选中项底部一条 2px 强调色下划线（同时提字重，不靠纯颜色区分），无阴影无渐变；tab 上 `-webkit-app-region: no-drag`，标题栏拖拽不受影响。
+- 两个面板共用 `.main-window` 滚动容器类；拓展页加 `.main-window--wide`（`items-stretch`）以突破 `.ufo-card` 的 `max-w-md` 限宽。
 
 模块开关：checkbox 绑定 `modules.agentStatusEnabled`，change 时调用 `modules.updateAgentStatus`，失败时回滚 UI。
 
@@ -794,11 +861,45 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 
 **尺寸**：由 `tauri.conf.json` 给出且 `resizable: false`，外壳 `h-full` + `overflow-hidden`，内容再多也只能裁切、不会改变窗口高度。它**不适用**方形/横条/竖条三形态适配。
 
+### 3.14 EndpointExtensionPanel.vue + endpoint-profiles.ts — 信息卡拓展页
+
+主窗口第二个 tab，专门按 endpoint 配置 tooltip 的拓展字段。本轮只交付「登记 + 列举 + 删除 + 右侧占位」。
+
+**数据链路：**
+
+```text
+endpoint_profiles.rs（monitor 采集 / 手动添加）
+    │  get_endpoint_profiles 初值 + emit("endpoint-profiles") 增量
+    ▼
+lib/endpoint-profiles.ts        ← 类型 + invoke 封装 + isEndpointProfileList guard + formatProfileTime
+    ▼
+stores/endpointProfiles.ts      ← applyList（revision 防旧覆盖新）、add、remove、loaded、connection
+    ▼
+EndpointExtensionPanel.vue      ← 左侧列表（选中/移除）、手动添加表单、右侧拓展字段占位
+```
+
+**左侧列表：**
+
+- 行是整块 `<button>`（不是可点的 div），`aria-current` 标选中项；副行显示 `formatProfileTime`（`MM-DD HH:mm`，本地时区）。
+- 选中项由 `watch(profiles)` 兜底：被删除或首次采集到时自动落到第一条，右侧不会停在已消失的 id 上。
+- **移除是两步确认**：第一次点变成红色「确认」，再点才删（`pendingRemoval`）。不用 `window.confirm` / `alert` —— 本应用装了 `tauri-plugin-prevent-default`，原生对话框可能被拦掉，所以反馈一律走 `role="status"` 的行内提示。
+- 底部「手动添加」输入框走 `add_endpoint_profile`；后端会拒绝本地代理地址（`127.0.0.1` / `localhost` / `::1`）与非法值，错误文案直接进 `ep-list__feedback`。
+
+**右侧**：占位卡片，显示选中 endpoint 的原始 url 与一句说明。拓展字段编辑表单待下一步接入（数据结构 `EndpointProfile.extensions` 已就位，为 JSON map，加字段不改协议）。
+
+**空状态分三种**：`loaded === false`（"正在读取…"）、`connection === 'degraded'`（IPC 不可用，明确告知需重启，不会永远停在"正在读取"）、真的没有 endpoint（提示会自动登记）。避免首次加载时误报"没有数据"。
+
+**store 启动**：面板 `onMounted` 里 `void profiles.start()`（store 内部幂等）。它**没有**放进 `App.vue` 的统一初始化 —— 悬浮窗和提示窗不需要档案列表，让面板自带订阅可以避免给两个透明窗口多加一次 IPC。
+
+**测试清单（见 4.2）：**
+- `isEndpointProfileList` 的正/负分支（缺失或负 revision、非数组 profiles、条目字段非法）
+- `formatProfileTime` 补零与非法值返回空串
+
 ## 4. 测试覆盖
 
-### 4.1 Rust 测试（143 个）
+### 4.1 Rust 测试（157 个）
 
-按模块：`reducer` 39、`hook` 43、`module_config` 26、`tokens` 12、`model` 10、`proxy` 13（`proxy::tests` 4 + `ccswitch::tests` 9）。
+按模块：`reducer` 39、`hook` 43、`module_config` 26、`endpoint_profiles` 13、`tokens` 12、`model` 10、`proxy` 14（`proxy::tests` 5 + `ccswitch::tests` 9）。
 
 **model.rs：**
 
@@ -890,12 +991,13 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 - validate_rejects_module_id_with_slash / backslash / overlong（65 字符）
 - config_serialization_roundtrip / module_state_loads_default_on_missing_file
 
-**proxy（12 个）：**
+**proxy（14 个）：**
 
-`proxy::tests`（4 个）：
+`proxy::tests`（5 个）：
 
 - normalize_host_port_handles_common_forms — localhost/默认端口/IPv6/userinfo 归一化
 - normalize_host_port_rejects_host_with_nonnumeric_port
+- normalize_host_port_keeps_ipv6_brackets_and_port — 回归：早期实现把 `[::1]:8080` 切成 `[::1:8080`（漏 `]`），会让 loopback 判定失效
 - matches_listen_address_compares_normalized — 端口匹配/不匹配
 - options_list_none_first_then_resolvers — `none` 恒在首位，cc-switch 已注册
 
@@ -911,9 +1013,25 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 - cache_holds_stale_value_within_ttl — 改库后 TTL 内仍返回旧值（缓存的是代理状态，非单地址结果）
 - new_without_db_disables_resolution — 无 cc-switch.db 时 root=None、恒不解析
 
-### 4.2 TypeScript 测试（76 个）
+**endpoint_profiles（13 个）：**
 
-按文件：`agent-status` 35、`snap` 14、`tooltip` 11、`floating-modules` 8、`agent-status-layout` 7、`example` 1。
+- loads_empty_when_file_missing — 文件缺失回落空集合
+- records_non_local_endpoint_and_persists — 归一 id（`api.example.com:443`）、保留原始 url、写盘后重读一致
+- skips_loopback_addresses — `127.0.0.1` / `localhost` / `[::1]` 三种写法都不登记
+- dedupes_by_identity_and_reports_no_change — 同 host 不同 path 归一为一条，第二次调用不写盘
+- ignores_blank_and_unparseable_values — 空串/纯空白/`://` 直接跳过
+- orders_by_first_seen_then_id — 后写入的更早时间排前面（不按 id 字母序、不按写入顺序）
+- caps_profile_count — 64 条上限截断
+- removes_by_id — 删除后 revision 递增
+- manual_add_rejects_loopback_and_blank — 手动添加拒绝本地代理地址与空值；重复添加幂等
+- corrupt_file_falls_back_to_empty — JSON 非法不报错，回落空集合
+- drops_legacy_entries_with_unknown_schema — schema_version 不符整份清空
+- sanitize_dedupes_and_clamps_loaded_list — 手改配置塞重复 id / 空 id / 超量条目，加载时清干净
+- extensions_serialize_as_empty_object_by_default — 拓展容器恒序列化为 `{}`
+
+### 4.2 TypeScript 测试（87 个）
+
+按文件：`agent-status` 35、`snap` 14、`endpoint-profiles` 11、`tooltip` 11、`floating-modules` 8、`agent-status-layout` 7、`example` 1。
 
 **agent-status.spec.ts（35 个）：**
 
@@ -934,12 +1052,18 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 
 - placeTooltip 各贴边方向的首选侧、越界换侧、全部放不下时夹进工作区
 
-**floating-modules.spec.ts（7 个）：**
+**floating-modules.spec.ts（8 个）：**
 
 - isModuleEnabled true / false / missing / null config
 - enabledModuleDefinitions 过滤 / 排序 / null config / 等 order 字母序
 
-**snap.spec.ts（原有，18 个）：**
+**endpoint-profiles.spec.ts（11 个）：**
+
+- isEndpointProfileList：接受合法列表与空数组；拒绝 null / 非对象 / 字符串、缺失或负数或非整数 revision、profiles 非数组、条目 id 为空或缺字段、任一条目非法
+- formatProfileTime：`MM-DD HH:mm` 补零、0 / 负数 / NaN / Infinity 返回空串
+- emptyProfileList：revision 0 + 空数组
+
+**snap.spec.ts（原有，14 个）：**
 
 - 左/右/上/下边吸附
 - 角落吸附
@@ -959,7 +1083,7 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 | 阶段三：Rust 状态核心 | ✅ | model/reducer/hook/tokens + 测试 |
 | 阶段四：Hook bridge | ✅ | main.rs --status-hook、原子写入、quarantine |
 | 阶段五：Tauri 集成 | ✅ | managed state、monitor、commands、permissions |
-| 阶段六：前端状态与主窗口 | ✅ | stores、App.vue 初始化、MainWindow 配置（含 token 单位） |
+| 阶段六：前端状态与主窗口 | ✅ | stores、App.vue 初始化、MainWindow 配置（含 token 单位）+ tabbar（设置 / 信息卡拓展） |
 | 阶段七：浮窗 UI | ✅ | 4 种布局、状态灯、悬停提示窗、闪烁动画 |
 | 阶段八：fallback 和发布验证 | ⬜ | 需手工打包验证 |
 
@@ -974,3 +1098,4 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 7. **token 统计依赖 transcript 格式** — 格式变化时静默跳过（宁可统计不到，也不能让 monitor 线程出错），因此数字可能偏低而不会报错。
 8. **子代理统计存在盲区** — 子代理目录只在首次 refresh 时扫描一次，**该会话首次统计之后新建的子代理文件不会被发现**。
 9. **prompt / base_url 明文落盘** — 见 `CLAUDE.md` 的已知代价说明。
+10. **信息卡拓展只有登记、没有消费方** — `EndpointProfile.extensions` 恒为 `{}`，tooltip 还没读它；右侧编辑表单待下一步接入。档案只增不减地跨会话累积（除非用户手动移除），换过很多上游的机器上列表会长，上限 64 条兜底。

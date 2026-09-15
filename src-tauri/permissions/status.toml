@@ -17,3 +17,13 @@ commands.allow = ["get_floating_module_config"]
 identifier = "allow-set-floating-module-config"
 description = "Allows updating validated floating window module configuration."
 commands.allow = ["set_floating_module_config"]
+
+[[permission]]
+identifier = "allow-get-endpoint-profiles"
+description = "Allows reading the persisted endpoint profile list (信息卡拓展)."
+commands.allow = ["get_endpoint_profiles"]
+
+[[permission]]
+identifier = "allow-manage-endpoint-profiles"
+description = "Allows adding and deleting endpoint profiles from the main window."
+commands.allow = ["add_endpoint_profile", "delete_endpoint_profile"]

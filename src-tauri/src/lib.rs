@@ -4,10 +4,14 @@ use tauri::{
     AppHandle, Manager, Runtime, WindowEvent,
 };
 
+mod endpoint_profiles;
 mod module_config;
 mod proxy;
 mod status;
 
+use endpoint_profiles::{
+    add_endpoint_profile, delete_endpoint_profile, get_endpoint_profiles, EndpointProfileState,
+};
 use module_config::ModuleState;
 pub use status::try_run_status_hook;
 use status::{get_proxy_resolvers, get_status_snapshot, spawn_monitor, StatusState};
@@ -50,13 +54,18 @@ pub fn run() {
             // 代理解析器：注册表 + 初值（从已存配置读出，避免重启后回落 none）。
             let proxy_state = proxy::ProxyState::new(None);
             proxy_state.set_selected(&module_state.proxy_resolver());
+            // endpoint 档案登记表（主窗口「信息卡拓展」的数据源），与 StatusState 共享同一份。
+            let profile_state =
+                EndpointProfileState::load(app_data.join("endpoint-profiles.json"));
             let status_state = StatusState::new(
                 status_dir,
                 module_state.retention_ms(),
                 module_state.running_timeout_ms(),
                 proxy_state,
+                profile_state.clone(),
             );
             app.manage(status_state.clone());
+            app.manage(profile_state);
             app.manage(module_state);
             spawn_monitor(app.handle().clone(), status_state);
 
@@ -149,6 +158,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status_snapshot,
             get_proxy_resolvers,
+            get_endpoint_profiles,
+            add_endpoint_profile,
+            delete_endpoint_profile,
             module_config::get_floating_module_config,
             module_config::set_floating_module_config,
         ])

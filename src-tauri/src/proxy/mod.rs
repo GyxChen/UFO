@@ -197,7 +197,8 @@ fn split_host_port(authority: &str) -> (&str, Option<&str>) {
     if let Some(rest) = authority.strip_prefix('[') {
         // [::1] 或 [::1]:port
         if let Some(close) = rest.find(']') {
-            let host = &authority[..=close];
+            // close 是 rest（已去掉 `[`）里的下标，切原串时要 +1 才把 `]` 包含进来。
+            let host = &authority[..=close + 1];
             return match rest[close + 1..].strip_prefix(':') {
                 Some(port) => (host, Some(port)),
                 None => (host, None),
@@ -225,6 +226,22 @@ fn default_port_for(raw: &str) -> u16 {
     } else {
         80
     }
+}
+
+/// 把一个 endpoint 归一成**稳定去重键**：`host:port`（缺省端口按 scheme 补全，大小写归一）。
+///
+/// 与 [`normalize_host_port`] 同一套规则；`endpoint_profiles` 用它给档案去重 ——
+/// 同一上游写成带不带 path、带不带尾斜杠都不影响，端口也统一带上，`host:port` 即用户理解的 endpoint。
+/// 解析不出 host 时返回 None（调用方跳过该 endpoint）。
+pub fn endpoint_identity(raw: &str) -> Option<String> {
+    normalize_host_port(raw)
+}
+
+/// 该归一键是否指向本机（loopback）。本地代理地址不作为可配置的 endpoint 登记。
+pub fn is_loopback_endpoint(identity: &str) -> bool {
+    // identity 形如 `127.0.0.1:15721` 或 `[::1]:8080`；只看 host 段。
+    let (host, _) = split_host_port(identity);
+    normalize_host(host) == LOOPBACK_CANONICAL
 }
 
 /// 判断某个 base_url 是否等价于给定监听地址（`host:port`），比较前双方都走 [`normalize_host_port`]。
@@ -272,6 +289,21 @@ mod tests {
     fn normalize_host_port_rejects_host_with_nonnumeric_port() {
         assert_eq!(normalize_host_port("http://127.0.0.1:abc"), None);
         assert_eq!(normalize_host_port(""), None);
+    }
+
+    #[test]
+    fn normalize_host_port_keeps_ipv6_brackets_and_port() {
+        // 回归：早期实现把 `[::1]:8080` 切成 `[::1:8080`（漏掉 `]`），
+        // 会让 loopback 判定失效、本地代理地址被当成可配置 endpoint 登记。
+        assert_eq!(
+            normalize_host_port("http://[::1]:8080").as_deref(),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(normalize_host_port("http://[::1]").as_deref(), Some("127.0.0.1:80"));
+        assert!(is_loopback_endpoint("127.0.0.1:8080"));
+        assert!(!is_loopback_endpoint("api.b.ai:443"));
+        // 裸 host（无 scheme、无端口）也按 loopback 认。
+        assert!(is_loopback_endpoint("localhost:80"));
     }
 
     #[test]

@@ -168,6 +168,45 @@ html.is-tooltip-window #app {
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
+/*
+ * 顶部 tabbar（极简）：实色底 + 选中项底部一条强调色下划线，无阴影无渐变。
+ * 位于标题栏之下、滚动区之上，自身不滚动。
+ */
+.main-tabs {
+  @apply flex shrink-0 gap-1 border-b px-2;
+  border-color: var(--ufo-border);
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.main-tabs__tab {
+  @apply relative -mb-px border-0 bg-transparent px-3 py-2.5 text-[13px] font-medium transition-colors duration-150 ease-out;
+  color: var(--ufo-muted);
+  cursor: pointer;
+  /* tabbar 本身可拖窗口，tab 上不允许。 */
+  -webkit-app-region: no-drag;
+}
+
+.main-tabs__tab:hover {
+  color: var(--ufo-text);
+}
+
+/* 选中态：文字转主文本色 + 底部一条 2px 强调色下划线（极简，仅靠颜色+边框区分，非纯颜色：配合字重）。 */
+.main-tabs__tab--active {
+  color: var(--ufo-text);
+  font-weight: 600;
+}
+
+.main-tabs__tab--active::after {
+  content: '';
+  @apply absolute inset-x-2 bottom-0 h-0.5 rounded-full;
+  background: var(--ufo-accent);
+}
+
+.main-tabs__tab:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: -2px;
+}
+
 /* WebKit 滚动条：细轨 + 圆角滑块，贴合 Matte 深色 */
 .main-window::-webkit-scrollbar {
   width: 10px;
@@ -523,6 +562,166 @@ html.is-tooltip-window #app {
 }
 
 .agent-session-list__empty {
+  color: var(--ufo-muted);
+}
+
+/*
+ * 「信息卡拓展」面板：左侧 endpoint 列表 + 右侧配置区的主从布局。
+ * 两列按 minmax 分配；窗口窄于 720px 时塌成单列（列表在上、详情在下）。
+ */
+/* 拓展页容器：让面板撑满窗口宽度（默认 .main-window 居中且卡片限宽 max-w-md）。 */
+.main-window--wide {
+  @apply items-stretch px-5;
+}
+
+/* tabpanel 获得焦点时给一条内嵌细环；不加会完全看不见键盘焦点。 */
+.main-window:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: -2px;
+}
+
+.ep-panel {
+  @apply grid w-full min-h-0 gap-3;
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 1.4fr);
+}
+
+/* 拓展面板要撑满宽列，覆盖 .ufo-card 的 max-w-md。 */
+.ep-panel > .ufo-card {
+  @apply max-w-none;
+}
+
+@media (max-width: 720px) {
+  .ep-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ep-list-card,
+.ep-detail {
+  @apply my-0 min-w-0;
+}
+
+.ep-list {
+  @apply m-0 max-h-[46vh] list-none overflow-y-auto p-0;
+  @apply grid gap-1.5;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.ep-list__item {
+  @apply flex items-stretch gap-1;
+}
+
+/* 行本身即按钮：整行可点选，避免要点一小块文字。 */
+.ep-list__row {
+  @apply flex min-w-0 flex-1 flex-col items-start gap-1 rounded-[10px] border px-3 py-2 text-left transition-colors duration-150 ease-out;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+  color: var(--ufo-text);
+  cursor: pointer;
+}
+
+.ep-list__row:hover {
+  border-color: var(--ufo-border-strong);
+  background: #383838;
+}
+
+.ep-list__row--active {
+  border-color: color-mix(in srgb, var(--ufo-accent) 55%, transparent);
+  background: var(--ufo-accent-soft);
+}
+
+.ep-list__row:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+/* URL 可能很长：按字符断行优先，其次省略号，保证窄列下也能看到关键片段。 */
+.ep-list__url {
+  @apply w-full text-[12.5px] leading-snug;
+  overflow-wrap: anywhere;
+}
+
+.ep-list__time {
+  @apply text-[11px] tabular-nums;
+  color: var(--ufo-muted);
+}
+
+/* 移除按钮：常态是低调的图标，二次确认时变成带文字的红色按钮。 */
+.ep-list__remove {
+  @apply flex w-9 shrink-0 items-center justify-center rounded-[10px] border text-[11px];
+  background: transparent;
+  border-color: transparent;
+  color: var(--ufo-muted);
+  cursor: pointer;
+}
+
+.ep-list__remove img {
+  @apply block h-3 w-3 opacity-45;
+  pointer-events: none;
+}
+
+.ep-list__remove:hover img {
+  opacity: 0.9;
+}
+
+.ep-list__remove:hover {
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.ep-list__remove--armed {
+  width: 3rem;
+  background: rgba(248, 113, 113, 0.2);
+  border-color: color-mix(in srgb, var(--ufo-danger) 55%, transparent);
+  color: var(--ufo-danger);
+  font-weight: 600;
+}
+
+.ep-list__remove-text {
+  @apply whitespace-nowrap;
+}
+
+.ep-list__remove:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+.ep-list__empty {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+.ep-list__feedback {
+  @apply m-0 text-[11px] leading-snug;
+  color: var(--ufo-muted);
+}
+
+/* 手动添加：输入框占满剩余宽度，按钮固定宽度。 */
+.ep-add {
+  @apply flex items-end gap-2 border-t pt-3;
+  border-color: var(--ufo-border);
+}
+
+.ep-add__field {
+  @apply flex min-w-0 flex-1 flex-col gap-1.5;
+}
+
+.ep-add__field > span {
+  @apply text-[12px];
+  color: var(--ufo-muted);
+}
+
+.ep-add__btn {
+  @apply shrink-0;
+}
+
+.ep-detail__endpoint {
+  @apply max-w-[55%] truncate;
+  overflow-wrap: anywhere;
+}
+
+.ep-detail__placeholder {
+  @apply m-0 text-[12px] leading-relaxed;
   color: var(--ufo-muted);
 }
 

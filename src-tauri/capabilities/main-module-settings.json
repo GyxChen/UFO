@@ -4,6 +4,7 @@
   "description": "Write access for floating module settings in the main window.",
   "windows": ["main"],
   "permissions": [
-    "allow-set-floating-module-config"
+    "allow-set-floating-module-config",
+    "allow-manage-endpoint-profiles"
   ]
 }

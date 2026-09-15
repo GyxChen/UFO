@@ -26,6 +26,7 @@ pub use reducer::StatusRegistry;
 use model::session_key;
 use tokens::TokenTracker;
 
+use crate::endpoint_profiles::EndpointProfileState;
 use crate::proxy::ProxyState;
 
 #[derive(Clone)]
@@ -37,6 +38,8 @@ pub struct StatusState {
     pub running_timeout_ms: Arc<Mutex<u64>>,
     /// 代理解析器状态：把会话的本地代理地址反查成上游 endpoint。
     pub proxy: ProxyState,
+    /// endpoint 档案登记表：发现非本地 endpoint 时落盘，供主窗口配置 tooltip 拓展字段。
+    pub profiles: EndpointProfileState,
 }
 
 impl StatusState {
@@ -45,6 +48,7 @@ impl StatusState {
         retention_ms: u64,
         running_timeout_ms: u64,
         proxy: ProxyState,
+        profiles: EndpointProfileState,
     ) -> Self {
         Self {
             registry: Arc::new(Mutex::new(StatusRegistry::new())),
@@ -52,6 +56,7 @@ impl StatusState {
             retention_ms: Arc::new(Mutex::new(retention_ms)),
             running_timeout_ms: Arc::new(Mutex::new(running_timeout_ms)),
             proxy,
+            profiles,
         }
     }
 
@@ -68,6 +73,24 @@ impl StatusState {
                 session.upstream_url = self.proxy.resolve_upstream(session.provider, base);
             }
         }
+    }
+
+    /// 当前存活会话的「有效 endpoint」列表：`upstream_url ?? base_url`（与前端 `displayEndpoint` 同口径）。
+    ///
+    /// 走 `snapshot_with_upstream` 而不是直接读 registry —— registry 里的会话 `upstream_url`
+    /// 恒为 None（它由解析器现算），直接读会漏掉上游、只剩本地代理地址。
+    /// loopback 过滤在登记表侧做，这里只负责取原始串。
+    fn session_endpoints(&self) -> Vec<String> {
+        self.snapshot_with_upstream()
+            .sessions
+            .iter()
+            .filter_map(|session| {
+                session
+                    .upstream_url
+                    .clone()
+                    .or_else(|| session.base_url.clone())
+            })
+            .collect()
     }
 
     /// 取带上游信息的快照（供 command 与 emit 共用）。
@@ -152,7 +175,18 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
             }
         }
 
+        // 采集会话的有效 endpoint（上游优先）登记进「信息卡拓展」档案表。
+        // 内部只在出现未见过的 id 时才写盘，因此每轮调用足够廉价；
+        // 有新增时单独广播事件，让主窗口左侧列表即时刷新（不依赖快照事件）。
         let now = now_ms();
+        let endpoints = state.session_endpoints();
+        if state.profiles.record_all(&endpoints, now) {
+            let _ = app.emit(
+                crate::endpoint_profiles::ENDPOINT_PROFILES_EVENT,
+                state.profiles.snapshot(),
+            );
+        }
+
         if now >= next_cleanup {
             let running_timeout = state
                 .running_timeout_ms

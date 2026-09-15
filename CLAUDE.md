@@ -14,15 +14,6 @@ UI设计请使用:ui-ux-pro-max-skill
 2.接口和type需要描述字段
 3.关键代码写明在干什么
 
-## 文档同步（必须遵守）
-`reference/doc/实现细节/` 下的文档描述的是**代码当前的真实行为**，不是设计意图，必须与实现保持一致。
-
-- **改代码时同步改文档**：任何影响行为的改动（新增字段/事件/窗口/配置项、修改映射规则或清理逻辑、增删测试）都要在同一次改动里更新对应章节，不允许留到"以后再说"。
-- **新增功能要补进文档**：新窗口、新配置项、新数据链路都要在 `悬浮窗Agent状态监测实现细节.md` 里补上对应小节（数据流图、文件结构、字段表、测试清单）。
-- **文档里的数字要真实**：测试数量、默认值、取值范围、上限等必须来自实际代码或实际测试输出，不要凭印象填。
-- **发现文档与代码不符时**：以代码为准修正文档；如果代码本身可疑，先向用户指出，不要默默按文档改代码。
-- 设计层面的内容放 `悬浮窗Agent状态监测与模块化实施方案.md`；实现层面的细节放 `实现细节/`。
-
 ## 全局视觉风格（Matte Panel · 方案 A）
 全 App 以深色哑光控制台为准；主窗口已按此落地，后续页面/组件必须复用同一套 token，禁止再散落硬编码灰色系。
 
@@ -122,6 +113,19 @@ UI设计请使用:ui-ux-pro-max-skill
 - ⚠️ `settings_config` 整块 JSON 会进内存解析，但**只按名字提取 `env.ANTHROPIC_BASE_URL` 一个 key**，同块里的 token / api key 一律不读取、不缓存、不上报。Codex 的 base_url 走内嵌 TOML（`config` 字段）而非 `env.ANTHROPIC_BASE_URL`，因此目前只反查 Claude，Codex 会话回落本地地址。
 - ⚠️ `upstream_url` 是 `Option<String>` + `#[serde(default)]`，**不得升 `SCHEMA_VERSION`**。
 - ⚠️ cc-switch.db 被应用持有：必须 `SQLITE_OPEN_READ_ONLY` + 短 `busy_timeout`，避免争锁。切换 provider 后最多 5s（TTL）反映到悬浮窗。
+
+### 信息卡拓展（按 endpoint 的 tooltip 拓展字段）
+
+tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置），而会话快照里的 base_url/upstream_url 只在会话存活时存在。因此主窗口顶端加了 tabbar（`悬浮窗设置` / `信息卡拓展`），第二页用左右主从布局配置各 endpoint。
+
+- 数据源是 `endpoint_profiles.rs` 的持久化档案表（`<app-data>/endpoint-profiles.json`），**不靠会话存活**；monitor 每轮采集存活会话的 `upstream_url ?? base_url` 落盘，前端 `get_endpoint_profiles` + `endpoint-profiles` 事件读取。
+- ⚠️ **loopback（127.0.0.1 / localhost / ::1）一律不登记** —— 本地代理地址不是可配置对象，端口还会随重启变。有效 endpoint 口径与前端 `displayEndpoint` 一致：命中解析时登记反查出的**上游**，不是代理监听地址。
+- 去重键 `id` = `proxy::endpoint_identity` 归一的 `host:port`；只在出现未见过的 id 时才写盘（同一批 endpoint 每 500ms 都进来）。
+- 档案结构含 `extensions`（JSON map，本轮恒空），**加拓展字段不改协议**。目前只交付登记/列举/删除 + 右侧占位，tooltip 尚未消费 extensions。
+- ⚠️ `normalize_host_port` 早期把 `[::1]:8080` 切成 `[::1:8080`（漏 `]`），会让 loopback 判定失效、本地地址被登记；已由 `normalize_host_port_keeps_ipv6_brackets_and_port` 锁定。
+- 主窗 tabbar 走 WAI-ARIA Tabs：roving tabindex + ←/→/Home/End；面板容器加 `.main-window--wide` 以突破 `.ufo-card` 的 `max-w-md` 限宽。
+- 读写分离：读命令 `get_endpoint_profiles` 给三窗口；`add/delete_endpoint_profile` 只在 `main-module-settings.json` 授权（仅 main 窗口）。
+- ⚠️ 拓展面板的反馈**不能用 `window.alert` / `confirm`**：装了 `tauri-plugin-prevent-default`，原生对话框会被拦；一律走 `role="status"` 行内提示，移除用两步确认。
 
 ### Agent 状态指示灯语义
 - 🟢 常亮 = Running（正在执行）
