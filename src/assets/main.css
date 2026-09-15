@@ -725,6 +725,159 @@ html.is-tooltip-window #app {
   color: var(--ufo-muted);
 }
 
+/*
+ * 「会话记录」面板：左侧 SQLite 存档列表 + 右侧详情。
+ * 复用信息卡拓展（ep-*）的行 / 移除按钮样式，这里只补本面板特有的部分。
+ */
+.sr-panel {
+  @apply grid w-full min-h-0 gap-3;
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 1.4fr);
+}
+
+/* 面板要撑满宽列，覆盖 .ufo-card 的 max-w-md。 */
+.sr-panel > .ufo-card {
+  @apply max-w-none;
+}
+
+@media (max-width: 720px) {
+  .sr-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sr-list-card,
+.sr-detail {
+  @apply my-0 min-w-0;
+}
+
+/* 列表可滚动：行数上限 200，不封顶会把右侧详情挤下去。 */
+.sr-list {
+  @apply m-0 max-h-[46vh] list-none overflow-y-auto p-0;
+  @apply grid gap-1.5;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.sr-list__item {
+  @apply flex items-stretch gap-1;
+}
+
+/* 整行可点选（与信息卡拓展一致），两行内容：标识行 + 提问摘要。 */
+.sr-list__row {
+  @apply flex min-w-0 flex-1 flex-col items-start gap-1 rounded-[10px] border px-3 py-2 text-left transition-colors duration-150 ease-out;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+  color: var(--ufo-text);
+  cursor: pointer;
+}
+
+.sr-list__row:hover {
+  border-color: var(--ufo-border-strong);
+  background: #383838;
+}
+
+.sr-list__row--active {
+  border-color: color-mix(in srgb, var(--ufo-accent) 55%, transparent);
+  background: var(--ufo-accent-soft);
+}
+
+.sr-list__row:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+.sr-list__line {
+  @apply flex w-full min-w-0 items-center gap-1.5;
+}
+
+.sr-list__icon {
+  @apply h-3.5 w-3.5 shrink-0;
+}
+
+/* 存活标记：与指示灯同色的实心小圆点，不写文字以免挤掉 session id。 */
+.sr-list__live {
+  @apply h-2 w-2 shrink-0 rounded-full;
+  background: var(--ufo-status-green);
+}
+
+.sr-list__id {
+  @apply shrink-0 font-mono text-[12.5px];
+}
+
+.sr-list__time {
+  @apply ml-auto shrink-0 text-[11px] tabular-nums;
+  color: var(--ufo-muted);
+}
+
+/* 提问摘要只给一行：省略号收尾，完整内容在右侧详情看。 */
+.sr-list__prompt {
+  @apply w-full truncate text-[11px];
+  color: var(--ufo-muted);
+}
+
+.sr-list__empty {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+.sr-list__feedback {
+  @apply m-0 text-[11px] leading-snug;
+  color: var(--ufo-muted);
+}
+
+.sr-actions {
+  @apply flex items-center justify-end border-t pt-3;
+  border-color: var(--ufo-border);
+}
+
+/* 详情：紧凑的 label / value 两列，长值按字符断行。 */
+.sr-detail__fields {
+  @apply m-0 grid gap-1.5;
+}
+
+.sr-detail__fields > div {
+  @apply flex items-baseline gap-2;
+}
+
+.sr-detail__fields dt {
+  @apply w-16 shrink-0 text-[11px];
+  color: var(--ufo-muted);
+}
+
+.sr-detail__fields dd {
+  @apply m-0 min-w-0 flex-1 text-[12.5px];
+  overflow-wrap: anywhere;
+}
+
+.sr-detail__prompt {
+  @apply grid gap-1 rounded-[10px] border p-2.5;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border);
+}
+
+.sr-detail__prompt-label {
+  @apply text-[11px];
+  color: var(--ufo-muted);
+}
+
+.sr-detail__prompt-text {
+  @apply m-0 max-h-[22vh] overflow-y-auto whitespace-pre-wrap text-[12.5px] leading-relaxed;
+  color: var(--ufo-text);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+/* 存活会话的提醒：说清「清除后该行还会回来」，避免被当成 bug。 */
+.sr-detail__note {
+  @apply m-0 text-[11px] leading-relaxed;
+  color: var(--ufo-status-yellow);
+}
+
+.sr-detail__placeholder {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
 a,
 button {
   @apply cursor-pointer select-none;
@@ -870,10 +1023,34 @@ input.ufo-input {
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* 危险操作按钮：描边幽灵 + 危险色，armed（二次确认）时填充。与行内删除按钮同一语义色。 */
+.ufo-btn--danger {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--ufo-danger) 45%, transparent);
+  color: var(--ufo-danger);
+}
+
+.ufo-btn--danger:hover {
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.ufo-btn--danger.ufo-btn--armed {
+  background: rgba(248, 113, 113, 0.2);
+  border-color: color-mix(in srgb, var(--ufo-danger) 55%, transparent);
+  font-weight: 600;
+}
+
 .ufo-btn:focus-visible,
 .btn:focus-visible {
   outline: 2px solid var(--ufo-ring);
   outline-offset: 2px;
+}
+
+/* 禁用态统一压暗去手型；深色底上浏览器原生的 disabled 观感不一致。 */
+.ufo-btn:disabled,
+.btn:disabled {
+  @apply cursor-default;
+  opacity: 0.45;
 }
 
 input,

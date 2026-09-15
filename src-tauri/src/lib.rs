@@ -8,6 +8,7 @@ mod endpoint_profiles;
 mod module_config;
 mod mouse;
 mod proxy;
+mod session_store;
 mod status;
 
 use endpoint_profiles::{
@@ -15,8 +16,11 @@ use endpoint_profiles::{
 };
 use module_config::ModuleState;
 use mouse::is_left_mouse_pressed;
+use session_store::{
+    clear_session_records, delete_session_record, get_session_records, SessionStoreState,
+};
 pub use status::try_run_status_hook;
-use status::{get_proxy_resolvers, get_status_snapshot, spawn_monitor, StatusState};
+use status::{get_proxy_resolvers, get_status_snapshot, now_ms, spawn_monitor, StatusState};
 
 const MAIN_WINDOW: &str = "main";
 /// 悬浮窗 label，仅调试构建下打开其 devtools 时使用，因此限定 cfg。
@@ -59,15 +63,21 @@ pub fn run() {
             // endpoint 档案登记表（主窗口「信息卡拓展」的数据源），与 StatusState 共享同一份。
             let profile_state =
                 EndpointProfileState::load(app_data.join("endpoint-profiles.json"));
+            // 会话存档（SQLite）：跨重启续档。load 打开库、回填缓存并做一次过期清理。
+            // 与 profiles 同样处理：clone 进 StatusState（monitor 线程写），再 manage 一份（命令读）。
+            let session_store =
+                SessionStoreState::load(app_data.join("session-records.db"), now_ms());
             let status_state = StatusState::new(
                 status_dir,
                 module_state.retention_ms(),
                 module_state.running_timeout_ms(),
                 proxy_state,
                 profile_state.clone(),
+                session_store.clone(),
             );
             app.manage(status_state.clone());
             app.manage(profile_state);
+            app.manage(session_store);
             app.manage(module_state);
             spawn_monitor(app.handle().clone(), status_state);
 
@@ -163,6 +173,9 @@ pub fn run() {
             get_endpoint_profiles,
             add_endpoint_profile,
             delete_endpoint_profile,
+            get_session_records,
+            delete_session_record,
+            clear_session_records,
             is_left_mouse_pressed,
             module_config::get_floating_module_config,
             module_config::set_floating_module_config,

@@ -5,17 +5,19 @@ import { hideMainWindow, startCurrentWindowDrag } from '@/lib/window'
 import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import EndpointExtensionPanel from './EndpointExtensionPanel.vue'
+import SessionRecordsPanel from './SessionRecordsPanel.vue'
 import closeIcon from '@/assets/close.svg'
 
 const agentStatus = useAgentStatusStore()
 const modules = useFloatingModulesStore()
 
-/** 主窗口顶部的两个页面；`settings` 沿用原有设置页，`extension` 是按 endpoint 的拓展配置。 */
-type MainTab = 'settings' | 'extension'
+/** 主窗口顶部的三个页面；`settings` 沿用原有设置页，`extension` 按 endpoint 配拓展，`session` 管理持久化会话记录。 */
+type MainTab = 'settings' | 'extension' | 'session'
 const activeTab = ref<MainTab>('settings')
 const tabs: { key: MainTab; label: string }[] = [
   { key: 'settings', label: '悬浮窗设置' },
   { key: 'extension', label: '信息卡拓展' },
+  { key: 'session', label: '会话记录' },
 ]
 
 /** 自绘标题栏拖拽：左键按下后交给系统移动无边框窗口。 */
@@ -38,8 +40,9 @@ function setTabRef(el: unknown, index: number) {
 }
 
 /**
- * tablist 键盘导航：←/→ 在两个页面间循环，Home/End 跳到首尾。
+ * tablist 键盘导航：←/→ 在各页面间循环，Home/End 跳到首尾。
  * 只有选中项可 Tab 到达，因此方向键是唯一的横向移动方式（WAI-ARIA Tabs 模式）。
+ * 按 tabs.length 计算，新增页面无需改这里。
  */
 function onTabKeydown(event: KeyboardEvent, index: number) {
   const count = tabs.length
@@ -393,7 +396,7 @@ async function saveTimeouts() {
     </main>
 
     <main
-      v-else
+      v-else-if="activeTab === 'extension'"
       class="main-window main-window--wide"
       role="tabpanel"
       tabindex="0"
@@ -401,6 +404,17 @@ async function saveTimeouts() {
       aria-labelledby="main-tab-extension"
     >
       <EndpointExtensionPanel />
+    </main>
+
+    <main
+      v-else
+      class="main-window main-window--wide"
+      role="tabpanel"
+      tabindex="0"
+      id="main-tab-panel-session"
+      aria-labelledby="main-tab-session"
+    >
+      <SessionRecordsPanel />
     </main>
   </div>
 </template>

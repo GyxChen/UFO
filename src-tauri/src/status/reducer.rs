@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::model::{
     session_key, AgentEvent, SessionPhase, SessionSnapshot, StatusCounts, StatusSnapshot,
-    StatusSource, TokenTotals, SCHEMA_VERSION,
+    StatusSource, StoredSeed, TokenTotals, SCHEMA_VERSION,
 };
 
 pub struct StatusRegistry {
@@ -39,14 +39,24 @@ impl StatusRegistry {
     /// 写入某会话累计的 token；数值变化时返回 true 并推进 revision（触发前端刷新）。
     ///
     /// 会话已被移除时不登记 —— 避免为已消失的灯留下孤儿记录。
+    ///
+    /// **逐字段取 max**：跨重启回填进来的历史值要当地板用。`TokenTracker` 对新会话从
+    /// offset 0 重扫 transcript，transcript 被截断 / 删除时重扫值会**小于**历史值 ——
+    /// 若直接覆盖，用户已经看到的数字会凭空缩小甚至归零。取 max 后：地板保住，正常续写时
+    /// 新值更大、仍准确增长。
     pub fn set_tokens(&mut self, key: &str, totals: TokenTotals) -> bool {
         if !self.sessions.contains_key(key) {
             return false;
         }
-        if self.token_totals.get(key) == Some(&totals) {
+        let merged = match self.token_totals.get(key) {
+            Some(previous) => merge_token_floor(*previous, totals),
+            None => totals,
+        };
+        // 与**合并后**的值比较：否则 transcript 变短时每个 500ms 都会白 bump 一次 revision。
+        if self.token_totals.get(key) == Some(&merged) {
             return false;
         }
-        self.token_totals.insert(key.to_string(), totals);
+        self.token_totals.insert(key.to_string(), merged);
         self.revision = self.revision.saturating_add(1);
         true
     }
@@ -56,7 +66,26 @@ impl StatusRegistry {
         self.sessions.keys().cloned().collect()
     }
 
+    /// 应用一条 hook 事件（无存档回填）。
+    ///
+    /// 生产路径走 `apply_event_with_seed`（monitor 总会先查一次回填缓存），
+    /// 这个无 seed 便捷入口仅供测试构造事件用，因此标 `cfg(test)` 以免在正式构建里成 dead code。
+    #[cfg(test)]
     pub fn apply_event(&mut self, event: AgentEvent, retention_ms: u64) -> bool {
+        self.apply_event_with_seed(event, retention_ms, None)
+    }
+
+    /// 带存档回填的事件应用。
+    ///
+    /// `seed` 是同一 `provider:session_id` 的跨重启历史摘要（`claude --resume` 继续旧对话等场景）：
+    /// **只在内存里没有该会话时生效** —— 存活中的会话一律以内存值为准，回填不得覆盖新鲜数据。
+    /// 回填只改字段取值，不改「事件是否造成变化」的判定，因此 `revision` 语义保持不变。
+    pub fn apply_event_with_seed(
+        &mut self,
+        event: AgentEvent,
+        retention_ms: u64,
+        seed: Option<&StoredSeed>,
+    ) -> bool {
         let event_key = format!(
             "{}:{}",
             session_key(event.provider, &event.session_id),
@@ -133,7 +162,15 @@ impl StatusRegistry {
             });
         }
 
-        let started_at_ms = previous_started_at.unwrap_or(now);
+        // 回填只在「内存里没有该会话」时启用（previous_started_at 为该分支恒 None 的判据，
+        // 上面 match 已经查过一次 self.sessions.get(&key)，不再多查一次哈希）。
+        let seed = seed.filter(|_| previous_started_at.is_none());
+
+        let started_at_ms = previous_started_at
+            // 本次运行没见过这个会话 → 用存档里的创建时刻：--resume 的会话因此保住原灯位
+            // （snapshot() 按 started_at_ms 升序排指示灯）。
+            .or_else(|| seed.map(|seed| seed.started_at_ms))
+            .unwrap_or(now);
         let event_name = normalize_event_name(&event.event);
         // Stop：一轮执行完成 → Waiting，但先绿闪，retention 后落成黄常亮。
         // SessionEnd：Completed，绿闪后移除。
@@ -154,6 +191,20 @@ impl StatusRegistry {
         };
         // Completed：remove_at = 移除时间；Waiting+Stop：remove_at = 绿闪结束时间（不移除）。
         let remove_at_ms = flash_deadline;
+
+        // 回填：把存档 token 当作**地板**立刻登记，避免 transcript 重扫完成前灯上显示 0。
+        // 只在非零时插入 —— snapshot() 用 token_totals.get(key) 覆盖 SessionSnapshot.tokens，
+        // 插入一个全零值会把「未统计到」的会话从 None 变成 Some(0)、改变 tooltip 占位表现。
+        // 已有残留值时逐字段取 max：会话被 apply_event 内的 retain 移除后，其 token 记录要到
+        // 下次 cleanup 才被裁剪，直接覆盖可能把用户见过的更大数字改小。
+        // 在 self.sessions.insert 之前取 key（insert 会把 key move 进快照）。
+        if let Some(seed) = seed.filter(|seed| seed.tokens != TokenTotals::default()) {
+            let floored = match self.token_totals.get(&key) {
+                Some(previous) => merge_token_floor(*previous, seed.tokens),
+                None => seed.tokens,
+            };
+            self.token_totals.insert(key.clone(), floored);
+        }
 
         self.sessions.insert(
             key.clone(),
@@ -179,13 +230,20 @@ impl StatusRegistry {
                 },
                 // base_url 是会话属性，与灯色无关：新事件没带就继承旧值，
                 // 避免后续事件把已探明的 endpoint 抹成 null。
-                base_url: event.base_url.or(previous_base_url),
+                // 继承阶梯：事件 > 内存前驱 > 存档回填。
+                base_url: event
+                    .base_url
+                    .or(previous_base_url)
+                    .or_else(|| seed.and_then(|seed| seed.base_url.clone())),
                 // upstream_url 不是事件派生字段，由 status 侧生成快照时按选中的
                 // 解析器现算，这里恒置 None（见 StatusState::attach_upstreams）。
                 upstream_url: None,
                 // prompt 同理：只有 UserPromptSubmit 携带，同轮内的后续事件继承，
-                // 直到下一次提交才被覆盖。
-                prompt: event.prompt.or(previous_prompt),
+                // 直到下一次提交才被覆盖。第三档回填让 resume 的会话立刻有「最近提问」。
+                prompt: event
+                    .prompt
+                    .or(previous_prompt)
+                    .or_else(|| seed.and_then(|seed| seed.prompt.clone())),
                 // token 不是事件派生字段，由 snapshot() 从 token_totals 合并进来。
                 tokens: None,
                 last_sequence: event.sequence,
@@ -305,6 +363,24 @@ impl StatusRegistry {
             counts,
             source_health: self.source_health.clone(),
         }
+    }
+}
+
+/// 把「地板值」与「新值」逐字段取 max 合并（token 不回退的守卫）。
+///
+/// `floor` 是已存/已回填的累计，`incoming` 是本轮重扫 transcript 得到的值。
+/// transcript 被截断 / 删除时 incoming 会小于 floor，逐字段取 max 保证数字只增不减；
+/// 正常续写时 incoming 更大，仍准确增长。
+fn merge_token_floor(floor: TokenTotals, incoming: TokenTotals) -> TokenTotals {
+    TokenTotals {
+        input_tokens: floor.input_tokens.max(incoming.input_tokens),
+        cache_creation_input_tokens: floor
+            .cache_creation_input_tokens
+            .max(incoming.cache_creation_input_tokens),
+        cache_read_input_tokens: floor
+            .cache_read_input_tokens
+            .max(incoming.cache_read_input_tokens),
+        output_tokens: floor.output_tokens.max(incoming.output_tokens),
     }
 }
 
@@ -1071,6 +1147,190 @@ mod tests {
             30_000,
         );
         assert_eq!(registry.snapshot(200).sessions.len(), 2);
+    }
+
+    /// 构造一条回填摘要（模拟从存档读出的历史值）。
+    fn seed(started_at_ms: i64, prompt: Option<&str>, base_url: Option<&str>) -> StoredSeed {
+        StoredSeed {
+            started_at_ms,
+            prompt: prompt.map(str::to_string),
+            base_url: base_url.map(str::to_string),
+            tokens: TokenTotals::default(),
+        }
+    }
+
+    #[test]
+    fn seed_restores_started_prompt_and_base_url_on_new_session() {
+        let mut registry = StatusRegistry::new();
+        // 本次运行第一次见到该会话（如 --resume）：PreToolUse 不带 prompt/base_url。
+        let applied = registry.apply_event_with_seed(
+            event("1", Provider::Claude, "one", "PreToolUse", 500),
+            30_000,
+            Some(&seed(100, Some("旧提问"), Some("http://127.0.0.1:15721"))),
+        );
+        assert!(applied);
+        let session = &registry.snapshot(500).sessions[0];
+        // started_at 回到存档值（灯位不跳），prompt/base_url 从回填续上。
+        assert_eq!(session.started_at_ms, 100);
+        assert_eq!(session.prompt.as_deref(), Some("旧提问"));
+        assert_eq!(
+            session.base_url.as_deref(),
+            Some("http://127.0.0.1:15721")
+        );
+    }
+
+    #[test]
+    fn seed_does_not_override_a_live_session() {
+        let mut registry = StatusRegistry::new();
+        // 会话已在内存中（存活），回填不得覆盖新鲜值。
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "UserPromptSubmit", 500),
+            30_000,
+        );
+        registry.apply_event_with_seed(
+            {
+                let mut e = event("2", Provider::Claude, "one", "PreToolUse", 600);
+                e.prompt = None;
+                e
+            },
+            30_000,
+            Some(&seed(100, Some("陈旧提问"), Some("http://stale"))),
+        );
+        let session = &registry.snapshot(600).sessions[0];
+        // started_at 仍是内存里的 500，不是存档的 100；prompt 也不被陈旧值污染。
+        assert_eq!(session.started_at_ms, 500);
+        assert_eq!(session.prompt, None);
+        assert_eq!(session.base_url, None);
+    }
+
+    #[test]
+    fn user_prompt_submit_overrides_restored_prompt() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event_with_seed(
+            event("1", Provider::Claude, "one", "PreToolUse", 500),
+            30_000,
+            Some(&seed(100, Some("旧提问"), None)),
+        );
+        // 新一次提交：覆盖回填来的旧提问（阶梯「事件 > 前驱 > 回填」）。
+        let mut submit = event("2", Provider::Claude, "one", "UserPromptSubmit", 600);
+        submit.prompt = Some("新提问".to_string());
+        registry.apply_event_with_seed(submit, 30_000, None);
+        assert_eq!(
+            registry.snapshot(600).sessions[0].prompt.as_deref(),
+            Some("新提问")
+        );
+    }
+
+    #[test]
+    fn seed_token_floor_is_seeded_into_totals() {
+        let mut registry = StatusRegistry::new();
+        let mut historic = seed(100, None, None);
+        historic.tokens = TokenTotals {
+            input_tokens: 1000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 500,
+            output_tokens: 200,
+        };
+        registry.apply_event_with_seed(
+            event("1", Provider::Claude, "one", "PreToolUse", 500),
+            30_000,
+            Some(&historic),
+        );
+        // 重扫完成前，快照就已带上历史 token（地板）。
+        let session = &registry.snapshot(500).sessions[0];
+        let totals = session.tokens.expect("seeded floor present");
+        assert_eq!(totals.input_tokens, 1000);
+        assert_eq!(totals.cache_read_input_tokens, 500);
+    }
+
+    #[test]
+    fn zero_token_seed_does_not_create_a_zero_entry() {
+        let mut registry = StatusRegistry::new();
+        // 全零的历史 token 不应被灌进 totals —— 否则会把「未统计到」的 None 变成 Some(0)。
+        registry.apply_event_with_seed(
+            event("1", Provider::Claude, "one", "PreToolUse", 500),
+            30_000,
+            Some(&seed(100, None, None)),
+        );
+        assert_eq!(registry.snapshot(500).sessions[0].tokens, None);
+    }
+
+    #[test]
+    fn set_tokens_creates_entry_when_absent() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "PreToolUse", 100),
+            30_000,
+        );
+        let totals = TokenTotals {
+            input_tokens: 10,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 5,
+        };
+        assert!(registry.set_tokens("claude:one", totals));
+        // 同值再写一次：无变化，返回 false 且不推进 revision。
+        let revision = registry.snapshot(100).revision;
+        assert!(!registry.set_tokens("claude:one", totals));
+        assert_eq!(registry.snapshot(100).revision, revision);
+    }
+
+    #[test]
+    fn set_tokens_never_regresses_below_the_floor() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "PreToolUse", 100),
+            30_000,
+        );
+        registry.set_tokens(
+            "claude:one",
+            TokenTotals {
+                input_tokens: 1000,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+                output_tokens: 0,
+            },
+        );
+        // transcript 被截断后重扫：input 变小（200<1000）但 output 变大（50>0）。
+        // 逐字段 max → input 保住地板 1000、output 增长到 50；确有变化所以返回 true。
+        assert!(registry.set_tokens(
+            "claude:one",
+            TokenTotals {
+                input_tokens: 200,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+                output_tokens: 50,
+            }
+        ));
+        let totals = registry.snapshot(100).sessions[0].tokens.expect("present");
+        assert_eq!(totals.input_tokens, 1000, "地板不得回退");
+        assert_eq!(totals.output_tokens, 50, "更大的字段仍应增长");
+
+        // 再刷同一批（已被 max 吸收成 1000/0/0/50）：合并后与现值相等 → 无变化、不白 bump revision。
+        let revision = registry.snapshot(100).revision;
+        assert!(!registry.set_tokens(
+            "claude:one",
+            TokenTotals {
+                input_tokens: 200,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+                output_tokens: 50,
+            }
+        ));
+        assert_eq!(registry.snapshot(100).revision, revision);
+    }
+
+    #[test]
+    fn set_tokens_ignores_sessions_that_are_gone() {
+        let mut registry = StatusRegistry::new();
+        // 内存里没有该会话 → 不留孤儿 token 记录。
+        assert!(!registry.set_tokens(
+            "claude:ghost",
+            TokenTotals {
+                input_tokens: 1,
+                ..Default::default()
+            }
+        ));
     }
 
     #[test]

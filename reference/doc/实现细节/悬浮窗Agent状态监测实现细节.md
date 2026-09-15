@@ -16,10 +16,12 @@ hook.rs: 归一化为 AgentEvent → 写入 inbox/<id>.json（原子 rename）
     ▼
 mod.rs: monitor_loop 每 500ms 扫描 inbox，消费事件，每 10s 执行 cleanup
     │
-    ├─► tokens.rs: TokenTracker 增量解析 transcript → set_tokens
+    ├─► session_store.rs: consume_inbox 先查 seed_for(key) → 回填 started/prompt/base_url/token 地板
+    ├─► tokens.rs: TokenTracker 增量解析 transcript → set_tokens（逐字段取 max，历史值当地板）
     ▼
 reducer.rs: StatusRegistry 维护 HashMap<key, SessionSnapshot>
     │
+    ├─► session_store.rs: record_flush(存活快照) → UPSERT 脏行 → <app-data>/session-records.db
     ▼
 mod.rs: emit_snapshot → app.emit("agent-status", StatusSnapshot)
     │
@@ -32,22 +34,22 @@ agentStatus store      agentStatus store      agentStatus store
 floatingModules store  floatingModules store  floatingModules store
     │                      │                      │
     ▼                      ▼                      ▼
-MainWindow.vue         FloatingModuleHost.vue TooltipWindow.vue
-（tabbar：设置 / 信息卡拓展）  │                    （悬停会话详情）
-                           ▼
-                     AgentStatusModule.vue
-                     （状态灯渲染）
-                           │ pointerenter → onSessionHover(key)
-                           ▼
-                     FloatingWindow.vue
-                     （延迟 250ms → emitTo('tooltip', 'tooltip-hover')）
-                           │
-                           └──────────────► tooltip WebView 定位并 show
+MainWindow.vue         FloatingModuleHost.vue  TooltipWindow.vue
+（tabbar：              │                     （悬停会话详情）
+ 设置 / 信息卡拓展 /     ▼
+ 会话记录）            AgentStatusModule.vue
+                       （状态灯渲染）
+                             │ pointerenter → onSessionHover(key)
+                             ▼
+                       FloatingWindow.vue
+                       （延迟 250ms → emitTo('tooltip', 'tooltip-hover')）
+                             │
+                             └──────────────► tooltip WebView 定位并 show
 ```
 
 三个 WebView **各自**创建独立的 Vue/Pinia 实例，因此每个窗口都要在 `App.vue` 中启动 `agentStatus` 与 `floatingModules` 两个 store。提示窗曾经只订阅 `agent-status`，导致主窗口切换 token 单位后它不生效 —— 现已统一。
 
-`endpointProfiles` store 不在 `App.vue` 统一启动：只有主窗口的「信息卡拓展」面板用得到，由面板自己 `onMounted` 时启动（见 3.14），免得给两个透明窗口多加一次 IPC。
+`endpointProfiles` 与 `sessionRecords` 两个 store 不在 `App.vue` 统一启动：只有主窗口的「信息卡拓展」/「会话记录」面板用得到，由各自面板 `onMounted` 时启动（见 3.14 / 3.15），免得给两个透明窗口多加一次 IPC。
 
 ## 2. Rust 后端
 
@@ -59,8 +61,8 @@ src-tauri/src/
   main.rs             ← 入口，识别 --status-hook 后短路退出
   status/
     mod.rs            ← StatusState、monitor_loop、consume_inbox、emit_snapshot、attach_upstreams、get_proxy_resolvers
-    model.rs          ← Provider、SessionPhase、AgentEvent、SessionSnapshot、StatusSnapshot
-    reducer.rs        ← StatusRegistry、apply_event、cleanup、phase_for_event
+    model.rs          ← Provider、SessionPhase、AgentEvent、SessionSnapshot、StatusSnapshot、StoredSeed
+    reducer.rs        ← StatusRegistry、apply_event_with_seed、set_tokens、cleanup、phase_for_event
     hook.rs           ← try_run_status_hook、stdin 读取、归一化、原子写入 inbox
     tokens.rs         ← TokenTracker：增量解析 transcript 统计 token 消耗
     test_support.rs   ← 测试用临时目录 TempDir（仅测试构建编译，proxy 测试亦复用）
@@ -69,6 +71,7 @@ src-tauri/src/
     ccswitch.rs       ← CcSwitchResolver：只读 cc-switch.db 反查上游，带 TTL 缓存
   module_config.rs    ← FloatingModuleConfig、TokenUnit、proxy_resolver、validate、get/set command
   endpoint_profiles.rs ← EndpointProfile 档案表：按 endpoint 持久化、loopback 过滤、get/add/delete command
+  session_store.rs    ← 会话存档（SQLite）：跨重启续档、回填摘要、上限淘汰、get/delete/clear command
 ```
 
 ### 2.2 model.rs — 状态协议
@@ -81,6 +84,7 @@ src-tauri/src/
 | `SessionSnapshot` | 注册表中的会话状态，含 phase、source、confidence、completed_at_ms、remove_at_ms、is_flashing、base_url、upstream_url、prompt、tokens、termination_confirmed |
 | `TokenTotals` | 会话累计 token：input_tokens / cache_creation_input_tokens / cache_read_input_tokens / output_tokens |
 | `StatusSnapshot` | 广播给前端的全量快照，含 revision、sessions[]、counts、source_health |
+| `StoredSeed` | 回填摘要：started_at_ms / prompt / base_url / tokens。`--resume` 或跨重启时 reducer 用它把历史值续上；是持久化行（`SessionRecord`）到领域类型的边界转换，reducer 不依赖存储层 |
 
 `AgentEvent` 的 `base_url` / `prompt` / `transcript_path` 和 `SessionSnapshot` 的 `tokens`、`upstream_url` 均为 `Option` + `#[serde(default)]`，只增字段、**不升 `SCHEMA_VERSION`**，否则旧 hook 二进制写出的事件会被静默丢弃。`upstream_url` 不是事件派生字段，由 status 侧生成快照时按选中的代理解析器现算（见 2.8）。
 
@@ -308,14 +312,16 @@ Claude Code 上报的 `UserPromptSubmit.prompt` 会混入自己注入的元信�
 - `running_timeout_ms: Arc<Mutex<u64>>` — Running 无新 hook 超时，与 Error 的 60s 分离；配置变更时同步。
 - `proxy: ProxyState` — 代理解析器注册表 + 选中项，见 2.8。
 - `profiles: EndpointProfileState` — endpoint 档案登记表，见 2.9。
+- `store: SessionStoreState` — 会话存档（SQLite），见 2.10。
 
 `monitor_loop` 在独立线程运行：
 
 1. 每 500ms 扫描 inbox 目录。
-2. 对每个 `.json` 文件：解析成功则消费并删除，同时 emit `status-hook-event` 到前端 DevTools 日志；失败则移入 quarantine 目录并标记 source_health 为 degraded。
-3. 增量刷新各会话 token；再采集存活会话的有效 endpoint（`upstream_url ?? base_url`）登记进 `EndpointProfileState`，有新增时 emit `endpoint-profiles`（见 2.9）。
-4. 每 10 秒执行一次 cleanup。
-5. 任何状态变更后调用 `emit_snapshot` 广播 `agent-status` 事件。
+2. 对每个 `.json` 文件：解析成功则消费并删除，同时 emit `status-hook-event` 到前端 DevTools 日志；失败则移入 quarantine 目录并标记 source_health 为 degraded。消费时先在 **registry 锁外** 查 `store.seed_for(key)`，把回填摘要作为参数传进 `apply_event_with_seed`（见 2.10）。
+3. 增量刷新各会话 token。
+4. 每轮构建一次带上游的快照，**三处共用**：采集存活会话的有效 endpoint（`upstream_url ?? base_url`）登记进 `EndpointProfileState`（有新增时 emit `endpoint-profiles`，见 2.9）；再 `store.record_flush(sessions)` 刷会话存档（有新行时 emit `session-records`，见 2.10）。
+5. 每 10 秒执行一次 cleanup（在存档刷盘之后 —— 会话被清理前必须留档一次）。
+6. 任何状态变更后调用 `emit_snapshot` 广播 `agent-status` 事件。
 
 `process_alive` 实现：
 
@@ -512,11 +518,78 @@ EndpointProfileState::record_all(urls)
 - **加载宽松**：文件缺失 / JSON 非法 / schema 不符一律空集合；`sanitize` 再对已加载条目去重（丢弃空 id、重复 id 保留首条）并按上限截断。一个坏文件不会卡住启动。
 - 写盘沿用 module_config 的原子策略：写 `.tmp` → 删旧 → rename（Windows 兼容）。
 
-**命令（3 个，见 2.11）：** `get_endpoint_profiles`（读，三窗口皆可）、`add_endpoint_profile` / `delete_endpoint_profile`（写，仅 main）。两个写命令成功后都会 `emit(ENDPOINT_PROFILES_EVENT)`，让 tooltip / floating 之外的窗口即时同步列表。
+**命令（3 个，见 2.12）：** `get_endpoint_profiles`（读，三窗口皆可）、`add_endpoint_profile` / `delete_endpoint_profile`（写，仅 main）。两个写命令成功后都会 `emit(ENDPOINT_PROFILES_EVENT)`，让 tooltip / floating 之外的窗口即时同步列表。
 
 **当前状态**：只有「登记 / 列举 / 删除」，`extensions` 尚未被任何消费方读取 —— tooltip 实际渲染拓展字段是下一步。
 
-### 2.10 lib.rs — Tauri 集成
+### 2.10 session_store.rs — 会话存档（SQLite）
+
+会话状态原本完全活在 `StatusRegistry` 的 HashMap 里：进程重启即丢失，`Completed` 会话还会按 retention 被清掉。后果是同一个 `session_id`（如 `claude --resume` 继续旧对话）被当成全新会话 —— 累计 token 归零、`started_at_ms` 变成「现在」（灯跳位）、`prompt` / `base_url` 要等下一次事件才有值。本模块把「跨重启仍有意义」的字段落 SQLite，事件命中存档时回填这些字段，让灯位与统计连续。
+
+**数据流（两条方向相反的链路）：**
+
+```text
+① 采集（写）  monitor_loop 每 500ms
+   snapshot_with_upstream()（返回 owned 数据，registry 锁已释放）
+       ▼
+   SessionStoreState::record_flush(&sessions)
+       │  折成 SessionRecord → 与缓存旧值比对，只 UPSERT 脏行（空闲时零 I/O）
+       │  提交后 evict_overflow：> MAX_RECORDS 时按 last_seen 升序淘汰，本批存活 key 豁免
+       ▼  有新行才 emit("session-records", SessionRecordList)
+   <app-data>/session-records.db
+
+② 回填（读）  consume_inbox 收到事件
+   key = provider:session_id
+       ▼  registry 锁外
+   store.seed_for(key) → Option<StoredSeed>   （纯内存 HashMap 查询，零 I/O）
+       ▼
+   registry.apply_event_with_seed(event, retention, seed)
+```
+
+**字段表（`SessionRecord`，前端可见）：**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| key | String | 主键 = `session_key(provider, session_id)`，即 `claude:<uuid>` |
+| provider | Provider | 存 `"claude"` / `"codex"` 文本（`Provider::as_str()`）；读回解析失败即丢弃该行 |
+| session_id | String | 原始会话标识（不含 provider 前缀） |
+| prompt | Option<String> | 最近一次用户提问。⚠️ **明文长期驻留磁盘**（原先只在 inbox 里约 500ms） |
+| base_url | Option<String> | 存 base_url，**不存**反查出的 `upstream_url`（后者由当前解析器现算，跨重启可能失效） |
+| started_at_ms | i64 | 回填它让指示灯排序不跳（`snapshot()` 按它升序排） |
+| last_seen_at_ms | i64 | 列表按它降序；淘汰与 30 天过期都按它算 |
+| tokens | Option<TokenTotals> | 四项全 0 时读写 `null`，与快照「未统计到」的表现一致 |
+
+**刻意不存**：`phase` / `is_flashing` / `remove_at_ms` / `completed_at_ms` / `pid` / `error_code` / `last_sequence` / `source` / `confidence` —— 都是存活态字段，灯色必须由本次事件决定；旧 `pid` 回填进来会让存活检查立刻判死。`seen_events` 也不持久化：去重窗口只有 retention 级别，跨重启重放同 `event_id` 现实中不发生，持久化它反而每轮都要多写一行状态。
+
+**reducer 侧的三处衔接：**
+
+1. **继承阶梯加一档**：`started_at_ms` / `prompt` / `base_url` 都变成「事件 > 内存前驱 > 存档回填」。判据是 `previous_started_at.is_none()` —— **只在内存里没有该会话时**才用 seed，存活中的会话一律以内存值为准，回填不得覆盖新鲜数据。`UserPromptSubmit` 仍能覆盖回填来的旧提问。
+2. **token 地板**：seed 非零时立刻 `token_totals.insert(key, seed.tokens)`，让 `--resume` 的瞬间不必等 transcript 重扫就显示历史值（只在非零时插，否则会把 `snapshot()` 里的 `None` 变成 `Some(0)`、改变 tooltip 占位表现）。
+3. **`set_tokens` 逐字段取 max**（`merge_token_floor`）：`TokenTracker` 对新会话从 offset 0 重扫，transcript 被截断 / 删除时重扫值会**小于**历史值，直接覆盖会让用户已看到的数字凭空缩小。取 max 后地板保住、正常续写仍准确增长；比较必须针对**合并后**的值，否则 transcript 变短时每个 500ms 都会白 bump 一次 revision。副作用是**数字只增不减** —— 与 `tokens.rs` 既有的「宁可少算也不要把用户已看到的数字抹掉」同一取舍。
+
+`apply_event` 保留为无 seed 的便捷入口（仅测试构建编译，生产路径恒走 `apply_event_with_seed`），既有 reducer 测试不必改签名。
+
+**存储与并发：**
+
+- `rusqlite::Connection` 是 `Send` 而**非 `Sync`** → `Arc<Mutex<StoreInner>>`，`StoreInner` 同时装连接与 `revision`（同锁完成「写 + 读回 + 递增」，天然避免 revision 升了 payload 还旧）。
+- 加锁顺序恒为 **inner → seeds**（DB I/O 在 `inner` 里做，出锁再同步缓存），不会出现反向嵌套。
+- `seeds: HashMap<String, Arc<SessionRecord>>` 是「库里现有什么」的内存镜像，存在的理由不是性能而是功能：一个会话本次运行中途消失、稍后又带同一 `session_id` 回来时，若缓存已随会话清理而丢失就取不到 started/prompt。因此刷盘必回写此表、remove/clear 必同步清它。
+- **写盘节流**：脏行判定用 `SessionRecord` 的 `PartialEq` 整体比对，同一批存活会话每 500ms 都进来时基本零 I/O（一次最多写「存活会话数」行，悬浮窗每形态上限 4–8）。
+- 一轮刷盘包一个 `unchecked_transaction()`；journal 用默认（DELETE）而非 WAL —— 全程单连接，WAL 并发收益为零，还多出 `-wal` / `-shm` 旁文件让文件级排障变复杂。
+- 打开：`READ_WRITE | CREATE` + `busy_timeout(2s)`（只防住「两个实例同时开着」这种意外）。
+- **只有 GUI 进程碰这个库**：hook 二进制（2.4）必须继续快进快出，绝不打开 AppData 的 SQLite。
+
+**两套版本，别混：** `SessionRecordList::schema_version` 是**线协议**版本，按项目硬规则**永不递增**（加字段一律 `Option` + `#[serde(default)]`）；`PRAGMA user_version` 是**库内布局**版本，将来加列时递增它并配一次 `ALTER TABLE`，不动线协议。`migrate` 时若 `user_version` 比本程序还新 → 整表重建（读不懂的库不猜，存档是缓存不是账本）。
+
+**加载容错（对齐 `EndpointProfileState::load`，绝不让坏文件卡住启动）：** 先原地试开 → 失败则把主文件与各旁文件改名 `<path>.broken-<ms>` 后重建 → 再失败则降级为「读空、写 Err」（`inner: None`）。全程不 panic。
+
+**保留策略（本轮为常量，不可配）：** `MAX_RECORDS = 200`（超出按 `last_seen` 最旧优先淘汰，当前存活会话豁免）、`MAX_RECORD_AGE_MS = 30 天`（启动期一次性删除更旧的行，测试注入 `now_ms` 不依赖时钟）。
+
+**⚠️ 「清除全部」只删归档、不强清内存**（需求决策）：仍在运行的会话会在下一次 `record_flush` 时把行重新写回来 —— 这是设计行为，不是 bug，面板文案与详情提示都按此口径写明。
+
+**命令（3 个，见 2.12）：** `get_session_records`（读，三窗口皆可）、`delete_session_record` / `clear_session_records`（写，仅 main）。两个写命令成功后 `emit(SESSION_RECORDS_EVENT)`。
+
+### 2.11 lib.rs — Tauri 集成
 
 setup 阶段：
 
@@ -524,10 +597,11 @@ setup 阶段：
 2. 加载 `ModuleState`（从 `floating-modules.json`）。
 3. 构建 `ProxyState`，并用 `module_state.proxy_resolver()` 设入初值（重启后不回落 none）。
 4. 加载 `EndpointProfileState`（从 `endpoint-profiles.json`），clone 一份交给 `StatusState.profiles`（monitor 采集用），原值 `app.manage`（命令用）。
-5. 用 module_config 的 retention_ms / running_timeout_ms + ProxyState + EndpointProfileState 初始化 `StatusState`。
-6. `app.manage(StatusState)` + `app.manage(ModuleState)`。
-7. `spawn_monitor` 启动唯一监测线程。
-8. 注册托盘菜单和 devtools。
+5. 加载 `SessionStoreState`（从 `session-records.db`，见 2.10），clone 一份交给 `StatusState.store`（monitor 刷盘用），原值 `app.manage`（命令用）。
+6. 用 module_config 的 retention_ms / running_timeout_ms + ProxyState + EndpointProfileState + SessionStoreState 初始化 `StatusState`。
+7. `app.manage(StatusState)` + `app.manage(EndpointProfileState)` + `app.manage(SessionStoreState)` + `app.manage(ModuleState)`。
+8. `spawn_monitor` 启动唯一监测线程。
+9. 注册托盘菜单和 devtools。
 
 注册的 commands：
 
@@ -536,10 +610,13 @@ setup 阶段：
 - `get_endpoint_profiles` — 读取 endpoint 档案列表。
 - `add_endpoint_profile` — 手动登记一条 endpoint（仅 main）。
 - `delete_endpoint_profile` — 删除一条档案（仅 main）。
+- `get_session_records` — 读取会话存档列表。
+- `delete_session_record` — 删除一条存档（仅 main）。
+- `clear_session_records` — 清空全部存档（仅 main）。
 - `get_floating_module_config` — 读取模块配置。
 - `set_floating_module_config` — 写入模块配置（仅 main 窗口有权限）。
 
-### 2.11 权限
+### 2.12 权限
 
 `src-tauri/permissions/status.toml`：
 
@@ -549,16 +626,18 @@ setup 阶段：
 - `allow-set-floating-module-config` → `set_floating_module_config`
 - `allow-get-endpoint-profiles` → `get_endpoint_profiles`
 - `allow-manage-endpoint-profiles` → `add_endpoint_profile`、`delete_endpoint_profile`
+- `allow-get-session-records` → `get_session_records`
+- `allow-manage-session-records` → `delete_session_record`、`clear_session_records`
 
 `src-tauri/capabilities/default.json`（main + floating + tooltip）：
 
 - core:default、core:event:default
 - 窗口操作（hide/show/set-focus/set-position/set-size/start-dragging/unminimize）
-- allow-get-status-snapshot、allow-get-proxy-resolvers、allow-get-floating-module-config、allow-get-endpoint-profiles
+- allow-get-status-snapshot、allow-get-proxy-resolvers、allow-get-floating-module-config、allow-get-endpoint-profiles、allow-get-session-records
 
 `src-tauri/capabilities/main-module-settings.json`（仅 main）：
 
-- allow-set-floating-module-config、allow-manage-endpoint-profiles
+- allow-set-floating-module-config、allow-manage-endpoint-profiles、allow-manage-session-records
 
 ## 3. 前端
 
@@ -574,6 +653,7 @@ src/
     agent-status-layout.ts        ← layoutFromDocked、格子数/网格/溢出切分
     floating-modules.ts           ← 模块定义、配置类型（含 TokenUnit）、isModuleEnabled
     endpoint-profiles.ts          ← EndpointProfile 类型、get/add/delete 封装、payload guard、时间格式化
+    session-records.ts            ← SessionRecord 类型、get/delete/clear 封装、payload guard、时间格式化
     tooltip.ts                    ← 提示窗 label/事件名、TooltipHoverPayload、placeTooltip 定位
     snap.ts                       ← 贴边算法（已有）
     window.ts                     ← showMainWindow（已有）
@@ -581,13 +661,15 @@ src/
     agentStatus.ts                ← Pinia store：snapshot、connection、start/stop
     floatingModules.ts            ← Pinia store：config、agentStatusEnabled、retention、tokenUnit
     endpointProfiles.ts           ← Pinia store：endpoint 档案列表、revision 去乱序、add/remove
+    sessionRecords.ts             ← Pinia store：会话存档列表、revision 去乱序、remove/clear
   components/
     FloatingWindow.vue            ← 拖拽、点击、贴边、layoutMode → FloatingModuleHost
     FloatingModuleHost.vue        ← 模块槽位
     AgentStatusModule.vue         ← 状态灯渲染
     TooltipWindow.vue             ← 独立提示窗：悬停会话详情
-    MainWindow.vue                ← 主窗口外壳：标题栏 + tabbar（设置 / 信息卡拓展）
+    MainWindow.vue                ← 主窗口外壳：标题栏 + tabbar（设置 / 信息卡拓展 / 会话记录）
     EndpointExtensionPanel.vue    ← 信息卡拓展页：左 endpoint 列表 + 右拓展字段占位
+    SessionRecordsPanel.vue       ← 会话记录页：左存档列表（含存活标记）+ 右详情、单条移除与两步确认清除全部
 ```
 
 ### 3.2 agent-status.ts — 类型与 API
@@ -741,11 +823,12 @@ onMounted(() => {
 
 ### 3.11 MainWindow.vue — 主窗口外壳与设置页
 
-**顶端 tabbar（两个页面）**：`role="tablist"` + 两个 `role="tab"` 按钮 —— `悬浮窗设置(settings)` / `信息卡拓展(extension)`。
+**顶端 tabbar（三个页面）**：`role="tablist"` + 三个 `role="tab"` 按钮 —— `悬浮窗设置(settings)` / `信息卡拓展(extension)` / `会话记录(session)`。
 
 - 只有选中项 `tabindex=0`（roving tabindex），←/→ 循环切换、Home/End 跳首尾，切换后把焦点移到新 tab；面板 `role="tabpanel" tabindex="0"` + `aria-labelledby`，`v-if` 只渲染一个。
+- 键盘导航按 `tabs.length` 计算，**新增页面无需改这段逻辑**；但面板分支必须用 `v-else-if="activeTab === 'extension'"` 而不是裸 `v-else` —— 否则第三个 tab 会被拓展面板吞掉。
 - 样式 `.main-tabs`：实色底 + 选中项底部一条 2px 强调色下划线（同时提字重，不靠纯颜色区分），无阴影无渐变；tab 上 `-webkit-app-region: no-drag`，标题栏拖拽不受影响。
-- 两个面板共用 `.main-window` 滚动容器类；拓展页加 `.main-window--wide`（`items-stretch`）以突破 `.ufo-card` 的 `max-w-md` 限宽。
+- 设置页用 `.main-window`；拓展页与会话记录页都加 `.main-window--wide`（`items-stretch`）以突破 `.ufo-card` 的 `max-w-md` 限宽。
 
 模块开关：checkbox 绑定 `modules.agentStatusEnabled`，change 时调用 `modules.updateAgentStatus`，失败时回滚 UI。
 
@@ -895,11 +978,47 @@ EndpointExtensionPanel.vue      ← 左侧列表（选中/移除）、手动添�
 - `isEndpointProfileList` 的正/负分支（缺失或负 revision、非数组 profiles、条目字段非法）
 - `formatProfileTime` 补零与非法值返回空串
 
+### 3.15 SessionRecordsPanel.vue + session-records.ts — 会话记录页
+
+主窗口第三个 tab，管理跨重启持久化的会话存档（后端见 2.10）。行来自 SQLite，不是内存快照。
+
+**数据链路：**
+
+```text
+session_store.rs（monitor 每轮 record_flush / 用户删除清空）
+    │  get_session_records 初值 + emit("session-records") 增量
+    ▼
+lib/session-records.ts        ← 类型 + invoke 封装 + isSessionRecordList guard + formatRecordTime
+    ▼
+stores/sessionRecords.ts      ← applyList（revision 防旧覆盖新）、remove、clear、loaded、connection
+    ▼
+SessionRecordsPanel.vue       ← 左侧存档列表（存活标记 / 移除）、清除全部、右侧详情
+```
+
+**存活标记在前端 join，不给存档加字段**：`liveKeys = new Set(agentStatus.sessions.map(s => s.key))`，行内画一个绿灯同色的小圆点、详情里写「存活（灯亮着）」。存活态属于快照，不该为了显示一盏灯而落进存档。`agentStatus` 已由 `App.vue` 对三窗口统一启动，面板 `onMounted` 里只需 `void records.start()`。
+
+**列表行**：整块 `<button>`（`aria-current` 标选中），第一行是 provider 图标 + 存活点 + session id 前 8 位 + 紧凑时间，第二行是提问摘要（`truncate` 一行，完整内容在右侧详情）。选中项由 `watch(records)` 兜底：被删除或首次读到时自动落到第一条，同时清掉 `pendingRemoval` / `pendingClearAll` —— 否则「确认」按钮可能指着一个已经不存在的行，等同一 key 将来被重新刷回时变成一次点击就删。
+
+**删除都是两步确认 + 行内提示**（`role="status"`，不用 `alert`/`confirm`，原因见 3.14）：
+
+- 单条移除：沿用拓展页的 `ep-list__remove` / `--armed` 样式（图标 → 红色「确认」）。
+- 清除全部：`.ufo-btn--danger`，armed 时加 `.ufo-btn--armed` 填充；列表为空时按钮 `disabled`（新增的 `.ufo-btn:disabled` 统一压暗去手型）。
+
+⚠️ **清除只删归档，不动活会话**（需求决策）：仍在运行的会话会在下一个 hook 事件后被重新记录。这一句话必须写在确认提示与详情说明里（`.sr-detail__note`），否则用户会当成 bug。
+
+**右侧详情**：`<dl>` 紧凑两列（状态 / Endpoint / Token 累计 / 最后活动 / 创建时间）+ 完整提问原文（`whitespace-pre-wrap` + 限高可滚）。token 单位跟随主窗口设置（`modules.tokenUnit`），复用 `tokenTotal` / `formatTokenCount` / `formatTokenMillions`，明细口径与 tooltip 一致。
+
+**空状态分三种**（同 3.14）：`!loaded`（正在读取）、`connection === 'degraded'`（IPC 或库不可用，明确告知需重启）、真的没有记录（说明会自动存档）。
+
+**CSS**：`.sr-panel` 左右主从（`minmax(240px,1fr) / minmax(0,1.4fr)`，窄于 720px 塌成单列），`.sr-list` 限高 `46vh` 可滚 —— 存档上限 200 条，不封顶会把详情挤下去。全部样式进 `main.css`（本项目无 scoped 样式）。
+
+**测试清单（见 4.2）：** `isSessionRecordList` 正/负分支（含 null prompt/base_url/tokens 必须放行）、`emptyRecordList`、`formatRecordTime`。
+
 ## 4. 测试覆盖
 
-### 4.1 Rust 测试（157 个）
+### 4.1 Rust 测试（179 个）
 
-按模块：`reducer` 39、`hook` 43、`module_config` 26、`endpoint_profiles` 13、`tokens` 12、`model` 10、`proxy` 14（`proxy::tests` 5 + `ccswitch::tests` 9）。
+按模块：`reducer` 47、`hook` 43、`module_config` 26、`session_store` 14、`endpoint_profiles` 13、`tokens` 12、`model` 10、`proxy` 14（`proxy::tests` 5 + `ccswitch::tests` 9）。
 
 **model.rs：**
 
@@ -946,7 +1065,28 @@ EndpointExtensionPanel.vue      ← 左侧列表（选中/移除）、手动添�
 - prompt_is_kept_across_the_turn_and_replaced_on_next_submit
 - sessions_are_ordered_earliest_created_first — 按 started_at_ms 升序，最近活动的会话不改变排位
 - keeps_multiple_provider_sessions_separate — 跨 provider 也按创建先后，Claude 先建排前
+- seed_restores_started_prompt_and_base_url_on_new_session — resume 时灯位与提问续上
+- seed_does_not_override_a_live_session — 回填只作用于内存里没有的会话
+- user_prompt_submit_overrides_restored_prompt — 阶梯「事件 > 前驱 > 回填」
+- seed_token_floor_is_seeded_into_totals / zero_token_seed_does_not_create_a_zero_entry — 地板灌入且 None/Some(0) 表现不被污染
+- set_tokens_creates_entry_when_absent / set_tokens_never_regresses_below_the_floor / set_tokens_ignores_sessions_that_are_gone — token 逐字段 max 与 revision 不白推进
 - 以及既有去重 / sequence / schema / retention / liveness 等测试
+
+**session_store.rs（14 个）** —— 用 `TempDir` 建**真实临时 db 文件**（不用 `:memory:`，否则「写进去 → 重开 → 读得回来」这条往返无从验证，与 `ccswitch.rs` 的 `seed_db` 同一理由）：
+
+- loads_empty_when_no_records_yet
+- flush_then_reopen_roundtrips_records — 含 token 四项与 prompt/base_url
+- second_flush_of_identical_batch_writes_nothing — 脏行节流（每 500ms 都进来的同一批只写一次）
+- flush_skips_rows_that_were_removed_from_the_store — 缓存随 remove 同步，重新出现按新行计
+- eviction_drops_oldest_and_spares_live_sessions — 超 200 淘汰最旧不存活行，存活会话豁免
+- startup_prune_removes_records_older_than_the_window — 注入 `now_ms`，30 天过期 + 缓存同步清
+- remove_rejects_unknown_key_and_returns_the_rest
+- clear_empties_store_and_seeds_but_live_rows_return — ⚠️ 把「清除后活会话会复现」这一决策锁成测试
+- revision_advances_only_on_content_changes
+- seed_lookup_exposes_only_backfill_fields
+- started_at_never_moves_later_across_flushes — UPSERT 的 MIN(started) 防御
+- junk_file_is_moved_aside_and_rebuilt / occupied_path_is_moved_aside_and_recovers — 坏文件挪成 `.broken-` 重建
+- disabled_store_degrades_without_panicking — 降级态读空、写 Err
 
 **hook.rs（43 个）：**
 
@@ -1029,9 +1169,9 @@ EndpointExtensionPanel.vue      ← 左侧列表（选中/移除）、手动添�
 - sanitize_dedupes_and_clamps_loaded_list — 手改配置塞重复 id / 空 id / 超量条目，加载时清干净
 - extensions_serialize_as_empty_object_by_default — 拓展容器恒序列化为 `{}`
 
-### 4.2 TypeScript 测试（87 个）
+### 4.2 TypeScript 测试（99 个）
 
-按文件：`agent-status` 35、`snap` 14、`endpoint-profiles` 11、`tooltip` 11、`floating-modules` 8、`agent-status-layout` 7、`example` 1。
+按文件：`agent-status` 35、`snap` 14、`session-records` 12、`endpoint-profiles` 11、`tooltip` 11、`floating-modules` 8、`agent-status-layout` 7、`example` 1。
 
 **agent-status.spec.ts（35 个）：**
 
@@ -1063,6 +1203,12 @@ EndpointExtensionPanel.vue      ← 左侧列表（选中/移除）、手动添�
 - formatProfileTime：`MM-DD HH:mm` 补零、0 / 负数 / NaN / Infinity 返回空串
 - emptyProfileList：revision 0 + 空数组
 
+**session-records.spec.ts（12 个）：**
+
+- isSessionRecordList：接受合法列表与空数组；**放行 prompt / base_url / tokens 为 null**（Rust 侧都是 Option）；拒绝 null / 非对象 / 字符串、缺失或负数或非整数 revision、records 非数组、条目 key 为空、未知 provider、缺数值字段、任一条目非法
+- emptyRecordList：revision 0 + 空数组且能通过守卫
+- formatRecordTime：`MM-DD HH:mm` 补零、0 / 负数 / NaN 返回空串
+
 **snap.spec.ts（原有，14 个）：**
 
 - 左/右/上/下边吸附
@@ -1083,7 +1229,7 @@ EndpointExtensionPanel.vue      ← 左侧列表（选中/移除）、手动添�
 | 阶段三：Rust 状态核心 | ✅ | model/reducer/hook/tokens + 测试 |
 | 阶段四：Hook bridge | ✅ | main.rs --status-hook、原子写入、quarantine |
 | 阶段五：Tauri 集成 | ✅ | managed state、monitor、commands、permissions |
-| 阶段六：前端状态与主窗口 | ✅ | stores、App.vue 初始化、MainWindow 配置（含 token 单位）+ tabbar（设置 / 信息卡拓展） |
+| 阶段六：前端状态与主窗口 | ✅ | stores、App.vue 初始化、MainWindow 配置（含 token 单位）+ tabbar（设置 / 信息卡拓展 / 会话记录） |
 | 阶段七：浮窗 UI | ✅ | 4 种布局、状态灯、悬停提示窗、闪烁动画 |
 | 阶段八：fallback 和发布验证 | ⬜ | 需手工打包验证 |
 
@@ -1097,5 +1243,6 @@ EndpointExtensionPanel.vue      ← 左侧列表（选中/移除）、手动添�
 6. **Waiting 超时为 30 分钟** — 正常情况下 Waiting 在下次运行时清理；若 hook 未触发（如 Claude Code 异常退出），需等待30 分钟超时。
 7. **token 统计依赖 transcript 格式** — 格式变化时静默跳过（宁可统计不到，也不能让 monitor 线程出错），因此数字可能偏低而不会报错。
 8. **子代理统计存在盲区** — 子代理目录只在首次 refresh 时扫描一次，**该会话首次统计之后新建的子代理文件不会被发现**。
-9. **prompt / base_url 明文落盘** — 见 `CLAUDE.md` 的已知代价说明。
+9. **prompt / base_url 明文落盘** — 见 `CLAUDE.md` 的已知代价说明。会话存档把这一代价从「inbox 里约 500ms」延长到「`session-records.db` 里长期驻留」（上限 200 条 / 30 天），且提问明文也在主窗口「会话记录」页长期可见。
 10. **信息卡拓展只有登记、没有消费方** — `EndpointProfile.extensions` 恒为 `{}`，tooltip 还没读它；右侧编辑表单待下一步接入。档案只增不减地跨会话累积（除非用户手动移除），换过很多上游的机器上列表会长，上限 64 条兜底。
+11. **清除存档不强清内存** — 「清除全部」只 `DELETE` 归档表，仍在运行的会话下一轮 `record_flush` 会把行重新写回（需求决策，见 2.10 / 3.15）。面板文案已写明，但不熟悉的人第一眼仍可能误判为「没清干净」。

@@ -17,6 +17,7 @@
     "allow-get-proxy-resolvers",
     "allow-get-floating-module-config",
     "allow-get-endpoint-profiles",
+    "allow-get-session-records",
     "allow-is-left-mouse-pressed"
   ]
 }

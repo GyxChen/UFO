@@ -20,14 +20,22 @@ use tauri::{AppHandle, Emitter, Runtime, State};
 pub use hook::try_run_status_hook;
 // 供 proxy 子模块复用主目录探测（定位 ~/.cc-switch）。
 pub(crate) use hook::home_dir;
-pub use model::{now_ms, AgentEvent, Provider, SessionSnapshot, StatusSnapshot};
+// model 子模块本身私有，但这些类型是跨模块协议（session_store 存档回填、前端快照），
+// 统一从这里 re-export，避免 session_store 直连 `status::model`。
+pub use model::{
+    now_ms, session_key, AgentEvent, Provider, SessionSnapshot, StatusSnapshot, StoredSeed,
+    TokenTotals,
+};
+// 仅 session_store 的测试构造 SessionSnapshot 时需要，生产路径不引用 → 只在测试构建下导出。
+#[cfg(test)]
+pub(crate) use model::{SessionPhase, StatusSource};
 pub use reducer::StatusRegistry;
 
-use model::session_key;
 use tokens::TokenTracker;
 
 use crate::endpoint_profiles::EndpointProfileState;
 use crate::proxy::ProxyState;
+use crate::session_store::SessionStoreState;
 
 #[derive(Clone)]
 pub struct StatusState {
@@ -40,6 +48,8 @@ pub struct StatusState {
     pub proxy: ProxyState,
     /// endpoint 档案登记表：发现非本地 endpoint 时落盘，供主窗口配置 tooltip 拓展字段。
     pub profiles: EndpointProfileState,
+    /// 会话存档（SQLite）：跨重启续档的读写句柄，与命令侧共享同一份。
+    pub store: SessionStoreState,
 }
 
 impl StatusState {
@@ -49,6 +59,7 @@ impl StatusState {
         running_timeout_ms: u64,
         proxy: ProxyState,
         profiles: EndpointProfileState,
+        store: SessionStoreState,
     ) -> Self {
         Self {
             registry: Arc::new(Mutex::new(StatusRegistry::new())),
@@ -57,6 +68,7 @@ impl StatusState {
             running_timeout_ms: Arc::new(Mutex::new(running_timeout_ms)),
             proxy,
             profiles,
+            store,
         }
     }
 
@@ -75,13 +87,13 @@ impl StatusState {
         }
     }
 
-    /// 当前存活会话的「有效 endpoint」列表：`upstream_url ?? base_url`（与前端 `displayEndpoint` 同口径）。
+    /// 从一份快照取出「有效 endpoint」列表：`upstream_url ?? base_url`（与前端 `displayEndpoint` 同口径）。
     ///
-    /// 走 `snapshot_with_upstream` 而不是直接读 registry —— registry 里的会话 `upstream_url`
-    /// 恒为 None（它由解析器现算），直接读会漏掉上游、只剩本地代理地址。
+    /// 入参必须是 `snapshot_with_upstream()` 的结果而不是直接读 registry —— registry 里的会话
+    /// `upstream_url` 恒为 None（它由解析器现算），直接读会漏掉上游、只剩本地代理地址。
     /// loopback 过滤在登记表侧做，这里只负责取原始串。
-    fn session_endpoints(&self) -> Vec<String> {
-        self.snapshot_with_upstream()
+    fn endpoints_from(snapshot: &StatusSnapshot) -> Vec<String> {
+        snapshot
             .sessions
             .iter()
             .filter_map(|session| {
@@ -175,15 +187,31 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
             }
         }
 
+        // 本轮只构建一次带上游信息的快照，endpoint 采集与会话存档刷盘共用同一份数据。
+        // ⚠️ snapshot_with_upstream 返回 owned 数据、返回时 registry 锁已释放，
+        // 因此随后 record_flush 做 SQLite I/O 不会把 apply_event 卡在锁上。
+        let now = now_ms();
+        let snapshot = state.snapshot_with_upstream();
+
         // 采集会话的有效 endpoint（上游优先）登记进「信息卡拓展」档案表。
         // 内部只在出现未见过的 id 时才写盘，因此每轮调用足够廉价；
         // 有新增时单独广播事件，让主窗口左侧列表即时刷新（不依赖快照事件）。
-        let now = now_ms();
-        let endpoints = state.session_endpoints();
+        let endpoints = StatusState::endpoints_from(&snapshot);
         if state.profiles.record_all(&endpoints, now) {
             let _ = app.emit(
                 crate::endpoint_profiles::ENDPOINT_PROFILES_EVENT,
                 state.profiles.snapshot(),
+            );
+        }
+
+        // 会话存档（SQLite）：内部只写「内容真的变了」的行，空闲时零 I/O，所以每轮都调得起。
+        // 顺序要紧 —— 刷盘必须在下面的 cleanup 之前：会话被清理前必须留档一次。
+        // 有新行时单独广播，让开着「会话记录」页的窗口即时长出来。
+        let flush = state.store.record_flush(&snapshot.sessions);
+        if flush.should_broadcast() {
+            let _ = app.emit(
+                crate::session_store::SESSION_RECORDS_EVENT,
+                state.store.list(),
             );
         }
 
@@ -250,15 +278,16 @@ fn consume_inbox<R: Runtime>(
         match parsed {
             Some(event) => {
                 let _ = app.emit("status-hook-event", &event);
+                // 先记下 key：`event` 随后会被 `apply_event_with_seed` 移走。
+                let key = session_key(event.provider, &event.session_id);
                 // 只登记路径：真正的解析在 monitor 线程里增量做，
                 // hook 进程每次事件都要快速返回，不能去读 MB 级的 transcript。
                 if let Some(transcript) = event.transcript_path.as_deref() {
-                    tokens.observe(
-                        &session_key(event.provider, &event.session_id),
-                        Path::new(transcript),
-                    );
+                    tokens.observe(&key, Path::new(transcript));
                 }
                 let _ = fs::remove_file(&path);
+                // 回填摘要在 **registry 锁之外**取：内部只查一张内存 HashMap，不做 I/O。
+                let seed = state.store.seed_for(&key);
                 let retention = state
                     .retention_ms
                     .lock()
@@ -267,7 +296,9 @@ fn consume_inbox<R: Runtime>(
                 changed |= state
                     .registry
                     .lock()
-                    .map(|mut registry| registry.apply_event(event, retention))
+                    .map(|mut registry| {
+                        registry.apply_event_with_seed(event, retention, seed.as_ref())
+                    })
                     .unwrap_or(false);
             }
             None => {

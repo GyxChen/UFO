@@ -17,6 +17,16 @@ impl Provider {
             _ => None,
         }
     }
+
+    /// provider 的稳定字符串写法（`"claude"` / `"codex"`）。
+    ///
+    /// 会话 key、存档表里的 `provider` 列都用它，避免各处各写一份 match。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Provider::Claude => "claude",
+            Provider::Codex => "codex",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -161,6 +171,24 @@ pub struct StatusCounts {
     pub completed: usize,
 }
 
+/// 会话存档的**回填摘要**：`session_id` 重新出现（跨重启 / 跨清理，如 `claude --resume`）时，
+/// reducer 用它把「跨重启仍有意义」的字段续上。
+///
+/// 只含回填需要的四项，是持久化行（`session_store::SessionRecord`）到领域类型的边界转换 ——
+/// reducer 因此不依赖存储层。灯色 / pid / sequence 等存活态字段刻意不在这里：
+/// 它们必须由本次事件决定。
+#[derive(Debug, Clone)]
+pub struct StoredSeed {
+    /// 会话最早创建时刻：回填它让指示灯排序位置不跳。
+    pub started_at_ms: i64,
+    /// 最近一次用户提问（同轮内后续事件继续继承它）。
+    pub prompt: Option<String>,
+    /// 会话的 API endpoint（同样参与继承阶梯）。
+    pub base_url: Option<String>,
+    /// 已消耗的 token 累计，作为**地板**灌进统计器（重扫值只会更大不会回退）。
+    pub tokens: TokenTotals,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StatusSnapshot {
     pub schema_version: u16,
@@ -172,11 +200,7 @@ pub struct StatusSnapshot {
 }
 
 pub fn session_key(provider: Provider, session_id: &str) -> String {
-    let provider = match provider {
-        Provider::Claude => "claude",
-        Provider::Codex => "codex",
-    };
-    format!("{provider}:{session_id}")
+    format!("{}:{session_id}", provider.as_str())
 }
 
 pub fn now_ms() -> i64 {

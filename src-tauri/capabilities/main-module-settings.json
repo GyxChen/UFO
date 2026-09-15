@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "allow-set-floating-module-config",
-    "allow-manage-endpoint-profiles"
+    "allow-manage-endpoint-profiles",
+    "allow-manage-session-records"
   ]
 }

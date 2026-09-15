@@ -29,6 +29,16 @@ description = "Allows adding and deleting endpoint profiles from the main window
 commands.allow = ["add_endpoint_profile", "delete_endpoint_profile"]
 
 [[permission]]
+identifier = "allow-get-session-records"
+description = "Allows reading the persisted agent session record list (会话记录)."
+commands.allow = ["get_session_records"]
+
+[[permission]]
+identifier = "allow-manage-session-records"
+description = "Allows deleting or clearing persisted session records from the main window."
+commands.allow = ["delete_session_record", "clear_session_records"]
+
+[[permission]]
 identifier = "allow-is-left-mouse-pressed"
 description = "Allows querying the physical left mouse button state for floating-window snap-after-drag on Windows."
 commands.allow = ["is_left_mouse_pressed"]
