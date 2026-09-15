@@ -27,6 +27,10 @@ tauri-plugin-prevent-default = "5.0"
 # 代理解析：只读打开 cc-switch 的 SQLite 库。bundled 自带 SQLite，免依赖系统库。
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# 悬浮窗贴边：轮询物理鼠标左键状态（GetAsyncKeyState），绕开 Windows 原生拖拽吞 pointerup 的问题。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
 

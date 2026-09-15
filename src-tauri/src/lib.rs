@@ -6,6 +6,7 @@ use tauri::{
 
 mod endpoint_profiles;
 mod module_config;
+mod mouse;
 mod proxy;
 mod status;
 
@@ -13,6 +14,7 @@ use endpoint_profiles::{
     add_endpoint_profile, delete_endpoint_profile, get_endpoint_profiles, EndpointProfileState,
 };
 use module_config::ModuleState;
+use mouse::is_left_mouse_pressed;
 pub use status::try_run_status_hook;
 use status::{get_proxy_resolvers, get_status_snapshot, spawn_monitor, StatusState};
 
@@ -161,6 +163,7 @@ pub fn run() {
             get_endpoint_profiles,
             add_endpoint_profile,
             delete_endpoint_profile,
+            is_left_mouse_pressed,
             module_config::get_floating_module_config,
             module_config::set_floating_module_config,
         ])

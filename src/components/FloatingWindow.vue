@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, provide, ref } from 'vue'
 import { emitTo } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
 import {
   ABS_MAX_CELLS,
@@ -123,6 +124,8 @@ async function onPointerMove(event: PointerEvent) {
   dismissTooltip()
   try {
     await window.startDragging()
+    // 原生拖拽循环会吞掉松手的 pointerup，改由轮询物理按键状态补做贴边。
+    startDragReleasePolling()
   } catch (error) {
     dragging.value = false
     console.error('failed to start dragging floating window', error)
@@ -137,6 +140,8 @@ function onPointerUp() {
   const wasDragging = dragging.value
   pointerStart.value = null
   dragging.value = false
+  // 有些平台 / 时机下 pointerup 仍会正常到达；停止轮询避免重复贴边判定。
+  stopDragReleasePolling()
 
   if (!wasDragging) {
     void showMainWindow().catch((error) => {
@@ -148,6 +153,74 @@ function onPointerUp() {
   scheduleSnap()
 }
 
+/**
+ * 拖拽释放轮询。
+ *
+ * Windows 上 startDragging() 进入原生模态拖拽循环：松手时 tao 只向根窗口 post
+ * 合成的 WM_LBUTTONUP，WebView2 子窗口收不到，DOM 层永远等不到 pointerup；
+ * 而循环期间的 invoke 响应也会被主线程模态循环滞留到松手后才送达。
+ * 因此拖拽开始后以固定间隔查询系统级物理左键状态（GetAsyncKeyState，与捕获/
+ * 焦点无关），一旦确认松开就补做「松手贴边」。按住不动时绝不吸附，
+ * 修复「拖到位后停手未松键就提前贴边」的原问题。
+ */
+const DRAG_POLL_INTERVAL_MS = 80
+let dragPollTimer: ReturnType<typeof setInterval> | undefined
+// 是否有一次按键状态查询在途：模态循环滞留响应时防止 IPC 请求排队堆积。
+let dragPollInFlight = false
+
+function startDragReleasePolling() {
+  stopDragReleasePolling()
+  dragPollTimer = setInterval(() => {
+    // dragging 已被 pointerup 路径清掉（其他平台 / 未来 tao 版本会送达）则停止轮询。
+    if (!dragging.value) {
+      stopDragReleasePolling()
+      return
+    }
+    if (dragPollInFlight) {
+      return
+    }
+    dragPollInFlight = true
+    // 命令可用时返回 boolean；平台不支持时返回 null（invoke 得到 null/undefined）。
+    void invoke('is_left_mouse_pressed')
+      .then((pressed) => {
+        dragPollInFlight = false
+        // 响应可能滞后送达：处理前先确认仍处于「未收到 pointerup 的拖拽」状态。
+        if (!dragging.value) {
+          stopDragReleasePolling()
+          return
+        }
+        if (pressed === null || pressed === undefined) {
+          // 该平台无此命令：退回 pointerup / onMoved 路径，停用轮询。
+          stopDragReleasePolling()
+          return
+        }
+        if (pressed) {
+          return
+        }
+        // 物理左键已松开而 DOM pointerup 没到达：就地补做松手处理（等效 onPointerUp 的拖拽分支）。
+        stopDragReleasePolling()
+        pointerStart.value = null
+        dragging.value = false
+        scheduleSnap()
+      })
+      .catch((error) => {
+        dragPollInFlight = false
+        // 命令不可用时退回原行为：由 pointerup / onMoved 防抖负责贴边，
+        // 宁可偶发提前贴边，也不能永远不贴边。
+        console.warn('failed to poll mouse button state', error)
+        stopDragReleasePolling()
+      })
+  }, DRAG_POLL_INTERVAL_MS)
+}
+
+function stopDragReleasePolling() {
+  dragPollInFlight = false
+  if (dragPollTimer !== undefined) {
+    clearInterval(dragPollTimer)
+    dragPollTimer = undefined
+  }
+}
+
 function scheduleSnap() {
   if (snapTimer) {
     clearTimeout(snapTimer)
@@ -155,6 +228,11 @@ function scheduleSnap() {
   // 原生窗口移动事件会连续触发；等待事件稳定后再读取最终位置并吸附。
   snapTimer = setTimeout(() => {
     snapTimer = undefined
+    // 触发时再次判定：拖拽进行中（鼠标仍按住）不吸附，避免用户「停手不移动但未松手」
+    // 时因防抖到点而提前贴边。此时可能已有一次由移动过程 armed 的定时器，故守卫放在这里。
+    if (dragging.value) {
+      return
+    }
     void snapWindow().catch((error) => {
       console.error('failed to snap floating window', error)
     })
@@ -199,6 +277,12 @@ async function snapWindow() {
 }
 
 function onMoved() {
+  // 拖拽进行中不吸附：startDragging 后窗口跟随光标会持续触发 onMoved，
+  // 若此时保持 scheduleSnap 的 140ms 防抖，用户「按住不动」也会让计时器到点、
+  // 悬浮窗在鼠标未松开时提前贴边。真正的吸附改由 onPointerUp 在松手时触发。
+  if (dragging.value) {
+    return
+  }
   scheduleSnap()
 }
 
@@ -217,6 +301,7 @@ onBeforeUnmount(() => {
   if (snapTimer) {
     clearTimeout(snapTimer)
   }
+  stopDragReleasePolling()
   clearTimeout(showTimer)
   clearTimeout(hideTimer)
   showTimer = undefined
