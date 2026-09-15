@@ -1,4 +1,5 @@
 import type { Component } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 
 export type FloatingLayout = 'square' | 'corner' | 'horizontal' | 'vertical'
 export type FloatingModuleId = 'agent-status' | (string & {})
@@ -36,6 +37,15 @@ export type TokenUnit = 'tokens' | 'm_tokens'
 /** token 单位默认值：保持原始计数，与加入该设置之前的行为一致。 */
 export const DEFAULT_TOKEN_UNIT: TokenUnit = 'tokens'
 
+/** 代理解析器下拉项：id 存进配置并作 value，label 供 UI 展示。与 Rust `ProxyResolverInfo` 对应。 */
+export interface ProxyResolverInfo {
+  id: string
+  label: string
+}
+
+/** 不解析（直连）的固定 id，与 Rust `NONE_RESOLVER` 一致。 */
+export const NONE_PROXY_RESOLVER = 'none'
+
 export interface FloatingModuleConfig {
   schema_version: number
   revision: number
@@ -46,6 +56,8 @@ export interface FloatingModuleConfig {
   max_cells_by_layout: MaxCellsByLayout
   /** token 展示单位；主窗口可切换。 */
   token_unit: TokenUnit
+  /** 选中的代理解析器 id；`none` = 不解析。 */
+  proxy_resolver: string
 }
 
 export function defaultMaxCellsByLayout(value: number = 8): MaxCellsByLayout {
@@ -74,6 +86,11 @@ export function createFloatingModuleDefinitions(agentStatusComponent: Component)
 
 export function isModuleEnabled(config: FloatingModuleConfig | null, id: string): boolean {
   return config?.modules.find((module) => module.id === id)?.enabled ?? false
+}
+
+/** 向后端拉取可用的代理解析器列表（含 `none`）。 */
+export function fetchProxyResolvers(): Promise<ProxyResolverInfo[]> {
+  return invoke<ProxyResolverInfo[]>('get_proxy_resolvers')
 }
 
 export function enabledModuleDefinitions(

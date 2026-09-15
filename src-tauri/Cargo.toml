@@ -24,6 +24,8 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-prevent-default = "5.0"
+# 代理解析：只读打开 cc-switch 的 SQLite 库。bundled 自带 SQLite，免依赖系统库。
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.

@@ -87,7 +87,7 @@ UI设计请使用:ui-ux-pro-max-skill
 - 定位是纯函数 `placeTooltip`（`src/lib/tooltip.ts`），优先放在悬浮窗**未贴边**的一侧，越界自动换侧。
 - 拖拽 / 点击 / 贴边重算时必须 `dismissTooltip()`：`startDragging()` 后指针交给系统，`pointerleave` 可能不再触发。
 - tooltip 是独立窗口，**不适用**方形/横条/竖条三形态适配；其尺寸由 `tauri.conf.json` 给出，内容用 flex + 省略号自适应。
-- 展示字段：provider、phase、`base_url`、`prompt`（用户提问）、token 用量。**不展示 session id**。
+- 展示字段：provider、phase、Endpoint（见「代理解析器」）、`prompt`（用户提问）、token 用量。**不展示 session id**。
 - ⚠️ **指示灯不要加 `title` 属性**：`title` 会触发 Windows 原生文字提示，与悬浮窗自己的 tooltip 重复且更简陋。无障碍信息只走 `aria-label`（不产生可见提示）。
 - ⚠️ tooltip 的 token 单位来自模块配置，因此 tooltip 窗口**必须**在 `App.vue` 中 `floatingModules.start()`；否则它永远停留在 `fallbackConfig` 的默认单位，主窗口切换后不生效。
 
@@ -110,6 +110,18 @@ UI设计请使用:ui-ux-pro-max-skill
 
 - 同轮内后续事件继承这两个值，下次提交/新事件才覆盖（`reducer.rs` 用 `.or(previous_*)`）。
 - ⚠️ 二者**明文写入** `%APPDATA%/<identifier>/status/inbox/*.json`（约 500ms 内消费删除）。提问可能含密钥或私有代码，这是已知代价。
+
+### 代理解析器（Endpoint 反查上游）
+
+用 cc-switch 这类本地代理时，`base_url` 只是 `127.0.0.1:<port>`，真实上游写在代理自己的配置里。UFO 通过「代理解析器」把本地地址反查成上游 endpoint 显示在 tooltip 的 Endpoint 行。
+
+- 下拉选的是**解析器工具**（`不解析(none)` / `cc-switch` / 将来更多），不是代理内部的 provider。存 `module_config.rs` 的 `proxy_resolver` 字段，旧配置缺字段回落 `none`。
+- 命中解析时 `SessionSnapshot.upstream_url` 被填充；tooltip 用 `displayEndpoint`（`src/lib/agent-status.ts`）= `upstream_url ?? base_url`，**上游优先、回落本地**，两者都无才显示 `—`。
+- 接口：`ProxyResolver` trait（`proxy/mod.rs`），`build_registry` 里注册一行即接入新工具，下拉与填充逻辑零改动。
+- `CcSwitchResolver`：只读打开 `~/.cc-switch/cc-switch.db`，按 `proxy_config` + `providers` 反查。命中要求该 app 行**两列同时为 1**：`proxy_enabled`（全局代理服务器开关，三行镜像同值）且 `enabled`（该 app 是否被接管）——语义来自 cc-switch 源码，只看其一会在「服务器开着但该 app 未接管」时误命中。⚠️ `listen_port` 是 `INTEGER`（非 TEXT），必须按整数读，否则 rusqlite 读整行 `InvalidType` 失败、功能空转。上游取 `is_current=1` provider 的 `env.ANTHROPIC_BASE_URL`；带 5s TTL 缓存。
+- ⚠️ `settings_config` 整块 JSON 会进内存解析，但**只按名字提取 `env.ANTHROPIC_BASE_URL` 一个 key**，同块里的 token / api key 一律不读取、不缓存、不上报。Codex 的 base_url 走内嵌 TOML（`config` 字段）而非 `env.ANTHROPIC_BASE_URL`，因此目前只反查 Claude，Codex 会话回落本地地址。
+- ⚠️ `upstream_url` 是 `Option<String>` + `#[serde(default)]`，**不得升 `SCHEMA_VERSION`**。
+- ⚠️ cc-switch.db 被应用持有：必须 `SQLITE_OPEN_READ_ONLY` + 短 `busy_timeout`，避免争锁。切换 provider 后最多 5s（TTL）反映到悬浮窗。
 
 ### Agent 状态指示灯语义
 - 🟢 常亮 = Running（正在执行）

@@ -2,7 +2,7 @@ mod hook;
 mod model;
 mod reducer;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 mod tokens;
 
 use std::{
@@ -18,11 +18,15 @@ use std::{
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 pub use hook::try_run_status_hook;
-pub use model::{now_ms, AgentEvent, SessionSnapshot, StatusSnapshot};
+// 供 proxy 子模块复用主目录探测（定位 ~/.cc-switch）。
+pub(crate) use hook::home_dir;
+pub use model::{now_ms, AgentEvent, Provider, SessionSnapshot, StatusSnapshot};
 pub use reducer::StatusRegistry;
 
 use model::session_key;
 use tokens::TokenTracker;
+
+use crate::proxy::ProxyState;
 
 #[derive(Clone)]
 pub struct StatusState {
@@ -31,26 +35,96 @@ pub struct StatusState {
     pub retention_ms: Arc<Mutex<u64>>,
     /// Running 无新 hook 时的超时（毫秒），与 Error 的 60s 分离，可配置。
     pub running_timeout_ms: Arc<Mutex<u64>>,
+    /// 代理解析器状态：把会话的本地代理地址反查成上游 endpoint。
+    pub proxy: ProxyState,
 }
 
 impl StatusState {
-    pub fn new(status_dir: PathBuf, retention_ms: u64, running_timeout_ms: u64) -> Self {
+    pub fn new(
+        status_dir: PathBuf,
+        retention_ms: u64,
+        running_timeout_ms: u64,
+        proxy: ProxyState,
+    ) -> Self {
         Self {
             registry: Arc::new(Mutex::new(StatusRegistry::new())),
             status_dir,
             retention_ms: Arc::new(Mutex::new(retention_ms)),
             running_timeout_ms: Arc::new(Mutex::new(running_timeout_ms)),
+            proxy,
         }
+    }
+
+    /// 为快照里每个会话填充 `upstream_url`（按当前选中的解析器反查）。
+    ///
+    /// 生成快照的热路径上调用；解析器内部有 TTL 缓存，未启用解析时直接返回、零开销。
+    /// 只填 `base_url` 存在、且解析命中上游、且上游与原值不同的会话。
+    fn attach_upstreams(&self, snapshot: &mut StatusSnapshot) {
+        if self.proxy.selected() == crate::proxy::NONE_RESOLVER {
+            return;
+        }
+        for session in &mut snapshot.sessions {
+            if let Some(base) = session.base_url.as_deref() {
+                session.upstream_url = self.proxy.resolve_upstream(session.provider, base);
+            }
+        }
+    }
+
+    /// 取带上游信息的快照（供 command 与 emit 共用）。
+    fn snapshot_with_upstream(&self) -> StatusSnapshot {
+        let mut snapshot = self
+            .registry
+            .lock()
+            .expect("status registry lock poisoned")
+            .snapshot(now_ms());
+        self.attach_upstreams(&mut snapshot);
+        snapshot
+    }
+
+    /// 当前所有会话「key → 解析出的 upstream」的稳定签名，供 monitor 监测上游变化。
+    ///
+    /// 只在启用解析器时调用；解析器有 TTL 缓存，重复调用不会频繁读库。
+    /// 注意：先在锁内拷出解析所需的 `(key, provider, base_url)` 随即释放 registry 锁，
+    /// 再到锁外调 `resolve_upstream`（可能触发读 SQLite）—— 否则会把 `apply_event`
+    /// 阻塞在最坏 200ms 的库读上。
+    fn upstream_signature(&self) -> Vec<(String, Option<String>)> {
+        // 锁内：只取三元组快照，不做任何 I/O。
+        let inputs: Vec<(String, Provider, String)> = {
+            let registry = self.registry.lock().expect("status registry lock poisoned");
+            registry
+                .snapshot(now_ms())
+                .sessions
+                .into_iter()
+                .filter_map(|session| {
+                    let base = session.base_url?;
+                    Some((session.key, session.provider, base))
+                })
+                .collect()
+        };
+        // 锁外：逐会话反查上游（解析器自带 TTL 缓存）。
+        let mut sig: Vec<_> = inputs
+            .into_iter()
+            .map(|(key, provider, base)| {
+                let upstream = self.proxy.resolve_upstream(provider, &base);
+                (key, upstream)
+            })
+            .collect();
+        sig.sort();
+        sig
     }
 }
 
 #[tauri::command]
 pub fn get_status_snapshot(state: State<'_, StatusState>) -> StatusSnapshot {
-    state
-        .registry
-        .lock()
-        .expect("status registry lock poisoned")
-        .snapshot(now_ms())
+    state.snapshot_with_upstream()
+}
+
+/// 供主窗口「代理解析器」下拉列出的选项（含 `none`）。
+///
+/// 选项来自注册表，接入新代理工具后前端无需改动即会自动出现。
+#[tauri::command]
+pub fn get_proxy_resolvers(state: State<'_, StatusState>) -> Vec<crate::proxy::ProxyResolverInfo> {
+    state.proxy.options()
 }
 
 pub fn spawn_monitor<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
@@ -64,6 +138,9 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
     let mut next_cleanup = now_ms();
     // token 统计器由 monitor 线程独占，无需加锁。
     let mut tokens = TokenTracker::new();
+    // 上一轮快照的「上游签名」：会话 key → 解析出的 upstream_url。
+    // 用于在 cc-switch 里手动切了 provider（无新 hook 事件）时，也能把新上游推到前端。
+    let mut last_upstream_sig: Vec<(String, Option<String>)> = Vec::new();
 
     loop {
         let mut changed = consume_inbox(&app, &inbox, &quarantine, &state, &mut tokens);
@@ -97,6 +174,16 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
                 }
             }
             next_cleanup = now.saturating_add(10_000);
+        }
+
+        // 启用了解析器时，额外监测上游是否变化（TTL 到期后会重新读 cc-switch）。
+        // 未启用解析时 upstream_signature 恒空，不产生任何额外开销。
+        if state.proxy.selected() != crate::proxy::NONE_RESOLVER {
+            let sig = state.upstream_signature();
+            if sig != last_upstream_sig {
+                last_upstream_sig = sig;
+                changed = true;
+            }
         }
 
         if changed {
@@ -167,13 +254,8 @@ fn consume_inbox<R: Runtime>(
 }
 
 fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, state: &StatusState) {
-    let snapshot = state
-        .registry
-        .lock()
-        .map(|registry| registry.snapshot(now_ms()));
-    if let Ok(snapshot) = snapshot {
-        let _ = app.emit("agent-status", snapshot);
-    }
+    // 走带上游信息的快照，与 get_status_snapshot 同一口径。
+    let _ = app.emit("agent-status", state.snapshot_with_upstream());
 }
 
 fn process_alive(session: &SessionSnapshot) -> Option<bool> {

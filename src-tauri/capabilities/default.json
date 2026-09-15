@@ -14,6 +14,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-unminimize",
     "allow-get-status-snapshot",
+    "allow-get-proxy-resolvers",
     "allow-get-floating-module-config"
   ]
 }

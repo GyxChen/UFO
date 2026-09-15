@@ -25,6 +25,7 @@ const session = (phase: SessionSnapshot['phase']): SessionSnapshot => ({
   pid: null,
   error_code: null,
   base_url: null,
+  upstream_url: null,
   prompt: null,
   tokens: null,
   last_sequence: null,

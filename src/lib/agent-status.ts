@@ -35,6 +35,11 @@ export interface SessionSnapshot {
   error_code: string | null
   /** 该会话使用的 API endpoint；未知时为 null（旧 hook 二进制不上报）。 */
   base_url: string | null
+  /**
+   * base_url 经所选代理解析器反查出的上游 endpoint（如 cc-switch 后的 https://api.b.ai）。
+   * 未启用解析 / 未命中时为 null，此时 Endpoint 回落到 base_url。
+   */
+  upstream_url: string | null
   /** 用户最近一次提问内容；未知时为 null。 */
   prompt: string | null
   /** 会话累计消耗的 token；尚未统计到时为 null（旧 hook 二进制或未采集到 transcript）。 */
@@ -72,6 +77,15 @@ export function colorForSession(session: SessionSnapshot): StatusColor {
   // Stop 进入 Waiting 时会先绿闪；闪烁期间按绿色渲染。
   if (session.phase === 'waiting' && session.is_flashing) return 'green'
   return 'yellow'
+}
+
+/**
+ * 会话 Endpoint 的展示值：命中代理解析出的上游时优先显示上游，否则回落到 base_url。
+ *
+ * 两者都缺时返回 null（前端显示占位符）。
+ */
+export function displayEndpoint(session: SessionSnapshot): string | null {
+  return session.upstream_url ?? session.base_url
 }
 
 /**

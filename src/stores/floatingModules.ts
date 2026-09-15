@@ -4,11 +4,14 @@ import { defineStore } from 'pinia'
 import { ABS_MAX_CELLS, ABS_MIN_CELLS } from '@/lib/agent-status-layout'
 import {
   DEFAULT_TOKEN_UNIT,
+  NONE_PROXY_RESOLVER,
   defaultMaxCellsByLayout,
+  fetchProxyResolvers,
   isModuleEnabled,
   type FloatingLayout,
   type FloatingModuleConfig,
   type MaxCellsByLayout,
+  type ProxyResolverInfo,
   type TokenUnit,
 } from '@/lib/floating-modules'
 
@@ -29,6 +32,7 @@ const fallbackConfig: FloatingModuleConfig = {
   running_timeout_ms: DEFAULT_RUNNING_TIMEOUT_SECONDS * 1000,
   max_cells_by_layout: defaultMaxCellsByLayout(),
   token_unit: DEFAULT_TOKEN_UNIT,
+  proxy_resolver: NONE_PROXY_RESOLVER,
 }
 
 function clampLayoutMax(value: number): number {
@@ -40,11 +44,15 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
     config: fallbackConfig as FloatingModuleConfig | null,
     connection: 'starting' as 'starting' | 'connected' | 'degraded',
     started: false,
+    /** 后端注册的代理解析器选项（含 `none`）；主窗口下拉据此渲染。 */
+    resolvers: [] as ProxyResolverInfo[],
   }),
 
   getters: {
     agentStatusEnabled: (state) => isModuleEnabled(state.config, 'agent-status'),
     retentionSeconds: (state) => Math.round((state.config?.completed_retention_ms ?? 30_000) / 1000),
+    /** 当前选中的代理解析器 id，默认 `none`（不解析）。 */
+    proxyResolver: (state): string => state.config?.proxy_resolver ?? NONE_PROXY_RESOLVER,
     /** Running 无新 hook 超时（秒），默认 60。 */
     runningTimeoutSeconds: (state) =>
       Math.round(
@@ -75,6 +83,7 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
           this.applyConfig(event.payload)
         })
         this.applyConfig(await invoke<FloatingModuleConfig>('get_floating_module_config'))
+        this.resolvers = await fetchProxyResolvers()
       } catch (error) {
         this.config = fallbackConfig
         this.connection = 'degraded'
@@ -156,6 +165,19 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
         }))
       } catch (error) {
         console.warn('failed to update token unit', error)
+        throw error
+      }
+    },
+
+    /** 更新选中的代理解析器（下拉的 value=id）；后端会即时同步给状态监测。 */
+    async updateProxyResolver(id: string) {
+      const current = this.config ?? fallbackConfig
+      try {
+        this.applyConfig(await invoke<FloatingModuleConfig>('set_floating_module_config', {
+          config: { ...current, proxy_resolver: id },
+        }))
+      } catch (error) {
+        console.warn('failed to update proxy resolver', error)
         throw error
       }
     },

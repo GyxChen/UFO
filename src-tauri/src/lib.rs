@@ -5,11 +5,12 @@ use tauri::{
 };
 
 mod module_config;
+mod proxy;
 mod status;
 
 use module_config::ModuleState;
 pub use status::try_run_status_hook;
-use status::{get_status_snapshot, spawn_monitor, StatusState};
+use status::{get_proxy_resolvers, get_status_snapshot, spawn_monitor, StatusState};
 
 const MAIN_WINDOW: &str = "main";
 /// 悬浮窗 label，仅调试构建下打开其 devtools 时使用，因此限定 cfg。
@@ -46,10 +47,14 @@ pub fn run() {
             let status_dir = app_data.join("status");
             let module_config_path = app_data.join("floating-modules.json");
             let module_state = ModuleState::load(module_config_path);
+            // 代理解析器：注册表 + 初值（从已存配置读出，避免重启后回落 none）。
+            let proxy_state = proxy::ProxyState::new(None);
+            proxy_state.set_selected(&module_state.proxy_resolver());
             let status_state = StatusState::new(
                 status_dir,
                 module_state.retention_ms(),
                 module_state.running_timeout_ms(),
+                proxy_state,
             );
             app.manage(status_state.clone());
             app.manage(module_state);
@@ -143,6 +148,7 @@ pub fn run() {
         .plugin(tauri_plugin_prevent_default::init())
         .invoke_handler(tauri::generate_handler![
             get_status_snapshot,
+            get_proxy_resolvers,
             module_config::get_floating_module_config,
             module_config::set_floating_module_config,
         ])

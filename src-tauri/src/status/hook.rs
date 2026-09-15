@@ -261,7 +261,8 @@ fn read_settings_base_url(paths: &[PathBuf], key: &str) -> Option<String> {
 /// 解析用户主目录，用于定位用户级 Claude 配置。
 ///
 /// 与 default_status_dir 一样直接读环境变量，不引入 dirs 依赖。
-fn home_dir() -> Option<PathBuf> {
+/// 也对代理解析器复用（定位 `~/.cc-switch`），因此标为 `pub(crate)`。
+pub(crate) fn home_dir() -> Option<PathBuf> {
     if cfg!(target_os = "windows") {
         env::var_os("USERPROFILE").map(PathBuf::from).or_else(|| {
             // 少数环境下只有 HOMEDRIVE + HOMEPATH（如 C: + \Users\me）。

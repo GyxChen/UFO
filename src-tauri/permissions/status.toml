@@ -4,6 +4,11 @@ description = "Allows reading the normalized agent status snapshot."
 commands.allow = ["get_status_snapshot"]
 
 [[permission]]
+identifier = "allow-get-proxy-resolvers"
+description = "Allows listing available proxy resolvers for the settings dropdown."
+commands.allow = ["get_proxy_resolvers"]
+
+[[permission]]
 identifier = "allow-get-floating-module-config"
 description = "Allows reading floating window module configuration."
 commands.allow = ["get_floating_module_config"]

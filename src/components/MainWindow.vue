@@ -35,6 +35,7 @@ const retentionInput = ref(modules.retentionSeconds)
 const runningTimeoutInput = ref(modules.runningTimeoutSeconds)
 const maxCellsInput = reactive<MaxCellsByLayout>({ ...modules.maxCellsByLayout })
 const tokenUnitInput = ref<TokenUnit>(modules.tokenUnit)
+const proxyResolverInput = ref(modules.proxyResolver)
 
 /** token 单位选项；`tokens` 显示原始计数，`m_tokens` 显示百万。 */
 const tokenUnitOptions: { value: TokenUnit; label: string }[] = [
@@ -77,6 +78,14 @@ watch(
   () => modules.tokenUnit,
   (unit) => {
     tokenUnitInput.value = unit
+  },
+  { immediate: true },
+)
+
+watch(
+  () => modules.proxyResolver,
+  (id) => {
+    proxyResolverInput.value = id
   },
   { immediate: true },
 )
@@ -127,12 +136,22 @@ async function updateTokenUnit() {
   }
 }
 
+/** 更新选中的代理解析器；失败时回滚到 store 中的值。 */
+async function updateProxyResolver() {
+  try {
+    await modules.updateProxyResolver(proxyResolverInput.value)
+  } catch {
+    proxyResolverInput.value = modules.proxyResolver
+  }
+}
+
 /** 将各形态上限与超时设置重置为当前 store 中的值。 */
 function resetMaxCells() {
   Object.assign(maxCellsInput, modules.maxCellsByLayout)
   retentionInput.value = modules.retentionSeconds
   runningTimeoutInput.value = modules.runningTimeoutSeconds
   tokenUnitInput.value = modules.tokenUnit
+  proxyResolverInput.value = modules.proxyResolver
 }
 
 /** 保存完成灯保留 + Running 超时。 */
@@ -237,6 +256,24 @@ async function saveTimeouts() {
       </div>
       <p class="module-settings__field-hint">
         悬浮窗提示行里的 token 总量写法：Tokens 显示原始计数，M tokens 以百万为单位。
+      </p>
+
+      <div class="module-settings__retention">
+        <span id="proxy-resolver-label">代理解析器</span>
+        <select
+          v-model="proxyResolverInput"
+          class="ufo-input ufo-select"
+          aria-labelledby="proxy-resolver-label"
+          @change="updateProxyResolver"
+        >
+          <option v-for="option in modules.resolvers" :key="option.id" :value="option.id">
+            {{ option.label }}
+          </option>
+        </select>
+      </div>
+      <p class="module-settings__field-hint">
+        选了代理工具后，会把它监听的本地地址（如 127.0.0.1）反查成真正的上游 endpoint 显示在提示窗；
+        不解析时按原样显示。
       </p>
 
       <div class="module-settings__caps" aria-label="各形态格子上限">

@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, monitorFromPoint, PhysicalPosition } from '@tauri-apps/api/window'
 import {
   colorForSession,
+  displayEndpoint,
   formatTokenCount,
   formatTokenMillions,
   tokenTotal,
@@ -37,6 +38,20 @@ const displayKey = computed(() => (hover.value?.visible && session.value ? sessi
 const providerLabel = computed(() => (session.value?.provider === 'codex' ? 'Codex' : 'Claude'))
 const providerIcon = computed(() => (session.value?.provider === 'codex' ? codexIcon : claudeIcon))
 const statusColor = computed(() => (session.value ? colorForSession(session.value) : 'green'))
+
+/**
+ * Endpoint 展示值：命中代理解析的上游时优先显示上游，否则回落 base_url。
+ */
+const endpointDisplay = computed(() =>
+  session.value ? displayEndpoint(session.value) : null,
+)
+
+/** 解析出上游且与原地址不同时，把原本地地址作为副标注展示（如 127.0.0.1:15721）。 */
+const endpointLocalNote = computed(() => {
+  const s = session.value
+  if (!s?.upstream_url || !s.base_url || s.upstream_url === s.base_url) return null
+  return s.base_url
+})
 
 /** 该会话累计 token 总量；未统计到（tokens 为 null）时为 0，此时不渲染该行。 */
 const tokenCount = computed(() => tokenTotal(session.value?.tokens))
@@ -130,8 +145,8 @@ onBeforeUnmount(() => {
 
       <div class="tooltip-row">
         <span class="tooltip-row__label">Endpoint</span>
-        <span class="tooltip-row__value tooltip-row__value--mono" :title="session.base_url ?? '未上报'">
-          {{ session.base_url ?? '—' }}
+        <span class="tooltip-row__value tooltip-row__value--mono" :title="endpointLocalNote ? `经本地代理 ${endpointLocalNote}` : (session.base_url ?? '未上报')">
+          {{ endpointDisplay ?? '—' }}
         </span>
       </div>
 

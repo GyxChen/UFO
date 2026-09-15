@@ -96,6 +96,9 @@ pub struct FloatingModuleConfig {
     pub max_cells_by_layout: MaxCellsByLayout,
     /// token 展示单位；主窗口可切换，悬浮窗提示行按此格式化。
     pub token_unit: TokenUnit,
+    /// 代理解析器 id：`none` = 不解析，其余为已注册解析器（如 `cc-switch`）。
+    /// 选中后悬浮窗 Endpoint 会显示反查出的上游地址（命中时）。
+    pub proxy_resolver: String,
 }
 
 /// 加载期过渡形态：仍接受旧的 `max_visible_sessions`，写出时不再保留。
@@ -113,12 +116,20 @@ struct FloatingModuleConfigWire {
     /// 旧配置缺字段时回落 `tokens`；非法取值也走同一回落（见 `parse_token_unit`）。
     #[serde(default)]
     token_unit: Option<String>,
+    /// 旧配置缺 `proxy_resolver` 时回落 `none`（不解析），与加入该设置前行为一致。
+    #[serde(default)]
+    proxy_resolver: Option<String>,
     #[serde(default)]
     max_visible_sessions: Option<u8>,
 }
 
 fn default_running_timeout_ms() -> u64 {
     DEFAULT_RUNNING_TIMEOUT_MS
+}
+
+/// 配置里缺 `proxy_resolver` 或值为空时使用的默认解析器（不解析）。
+fn default_proxy_resolver() -> String {
+    crate::proxy::NONE_RESOLVER.to_string()
 }
 
 impl FloatingModuleConfigWire {
@@ -135,6 +146,11 @@ impl FloatingModuleConfigWire {
             running_timeout_ms: self.running_timeout_ms,
             max_cells_by_layout,
             token_unit: parse_token_unit(self.token_unit.as_deref()),
+            proxy_resolver: self
+                .proxy_resolver
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(default_proxy_resolver),
         }
     }
 }
@@ -153,6 +169,7 @@ impl Default for FloatingModuleConfig {
             running_timeout_ms: DEFAULT_RUNNING_TIMEOUT_MS,
             max_cells_by_layout: MaxCellsByLayout::default(),
             token_unit: TokenUnit::default(),
+            proxy_resolver: default_proxy_resolver(),
         }
     }
 }
@@ -217,6 +234,14 @@ impl ModuleState {
             .map(|config| config.running_timeout_ms)
             .unwrap_or(DEFAULT_RUNNING_TIMEOUT_MS)
     }
+
+    /// 读取当前选中的代理解析器 id，供启动时初始化 StatusState.proxy。
+    pub fn proxy_resolver(&self) -> String {
+        self.config
+            .lock()
+            .map(|config| config.proxy_resolver.clone())
+            .unwrap_or_else(|_| default_proxy_resolver())
+    }
 }
 
 #[tauri::command]
@@ -265,6 +290,8 @@ pub fn set_floating_module_config(
         if let Ok(mut running_timeout_ms) = status_state.running_timeout_ms.lock() {
             *running_timeout_ms = config.running_timeout_ms;
         }
+        // 代理解析器选择也即时同步，切换后无需重启即可生效。
+        status_state.proxy.set_selected(&config.proxy_resolver);
     }
     let _ = app.emit("floating-module-config", &config);
     Ok(config)
@@ -306,6 +333,47 @@ mod tests {
     fn default_token_unit_is_plain_tokens() {
         let config = FloatingModuleConfig::default();
         assert_eq!(config.token_unit, TokenUnit::Tokens);
+    }
+
+    #[test]
+    fn default_proxy_resolver_is_none() {
+        // 默认不解析，与加入该设置前行为一致。
+        assert_eq!(
+            FloatingModuleConfig::default().proxy_resolver,
+            crate::proxy::NONE_RESOLVER
+        );
+    }
+
+    #[test]
+    fn migrates_legacy_config_without_proxy_resolver() {
+        // 旧配置没有 proxy_resolver 字段：必须回落 none 而非解析失败。
+        let json = r#"{
+            "schema_version": 1,
+            "revision": 2,
+            "modules": [{"id":"agent-status","enabled":true,"order":0}],
+            "completed_retention_ms": 30000
+        }"#;
+        let wire: FloatingModuleConfigWire = serde_json::from_str(json).unwrap();
+        let config = wire.into_config().validate().unwrap();
+        assert_eq!(config.proxy_resolver, crate::proxy::NONE_RESOLVER);
+    }
+
+    #[test]
+    fn proxy_resolver_roundtrips_and_empty_falls_back() {
+        let mut config = FloatingModuleConfig::default();
+        config.proxy_resolver = "cc-switch".to_string();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: FloatingModuleConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.proxy_resolver, "cc-switch");
+        // 手改成空串 → 回落 none（见 into_config 的 filter）。
+        let wire: FloatingModuleConfigWire = serde_json::from_str(
+            r#"{"schema_version":1,"revision":1,"modules":[],"completed_retention_ms":30000,"proxy_resolver":"  "}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            wire.into_config().proxy_resolver,
+            crate::proxy::NONE_RESOLVER
+        );
     }
 
     #[test]

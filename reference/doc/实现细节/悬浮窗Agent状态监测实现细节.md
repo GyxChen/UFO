@@ -56,13 +56,16 @@ src-tauri/src/
   lib.rs              ← setup、managed state、monitor 启动、command 注册
   main.rs             ← 入口，识别 --status-hook 后短路退出
   status/
-    mod.rs            ← StatusState、monitor_loop、consume_inbox、emit_snapshot
+    mod.rs            ← StatusState、monitor_loop、consume_inbox、emit_snapshot、attach_upstreams、get_proxy_resolvers
     model.rs          ← Provider、SessionPhase、AgentEvent、SessionSnapshot、StatusSnapshot
     reducer.rs        ← StatusRegistry、apply_event、cleanup、phase_for_event
     hook.rs           ← try_run_status_hook、stdin 读取、归一化、原子写入 inbox
     tokens.rs         ← TokenTracker：增量解析 transcript 统计 token 消耗
-    test_support.rs   ← 测试用临时目录 TempDir（仅测试构建编译）
-  module_config.rs    ← FloatingModuleConfig、TokenUnit、validate、get/set command
+    test_support.rs   ← 测试用临时目录 TempDir（仅测试构建编译，proxy 测试亦复用）
+  proxy/
+    mod.rs            ← ProxyResolver trait、ResolverRegistry、ProxyState、build_registry、normalize_host_port
+    ccswitch.rs       ← CcSwitchResolver：只读 cc-switch.db 反查上游，带 TTL 缓存
+  module_config.rs    ← FloatingModuleConfig、TokenUnit、proxy_resolver、validate、get/set command
 ```
 
 ### 2.2 model.rs — 状态协议
@@ -72,11 +75,11 @@ src-tauri/src/
 | `Provider` | `Claude` / `Codex`，支持 `"claude-code"` / `"codex-cli"` 别名解析 |
 | `SessionPhase` | `Running` / `Waiting` / `Error` / `Unknown` / `Completed` |
 | `AgentEvent` | hook 写入的原始事件，含 schema_version、event_id、provider、session_id、event、sequence、pid、error_code、outcome、notification_type、base_url、prompt、transcript_path |
-| `SessionSnapshot` | 注册表中的会话状态，含 phase、source、confidence、completed_at_ms、remove_at_ms、is_flashing、base_url、prompt、tokens、termination_confirmed |
+| `SessionSnapshot` | 注册表中的会话状态，含 phase、source、confidence、completed_at_ms、remove_at_ms、is_flashing、base_url、upstream_url、prompt、tokens、termination_confirmed |
 | `TokenTotals` | 会话累计 token：input_tokens / cache_creation_input_tokens / cache_read_input_tokens / output_tokens |
 | `StatusSnapshot` | 广播给前端的全量快照，含 revision、sessions[]、counts、source_health |
 
-`AgentEvent` 的 `base_url` / `prompt` / `transcript_path` 和 `SessionSnapshot` 的 `tokens` 均为 `Option` + `#[serde(default)]`，只增字段、**不升 `SCHEMA_VERSION`**，否则旧 hook 二进制写出的事件会被静默丢弃。
+`AgentEvent` 的 `base_url` / `prompt` / `transcript_path` 和 `SessionSnapshot` 的 `tokens`、`upstream_url` 均为 `Option` + `#[serde(default)]`，只增字段、**不升 `SCHEMA_VERSION`**，否则旧 hook 二进制写出的事件会被静默丢弃。`upstream_url` 不是事件派生字段，由 status 侧生成快照时按选中的代理解析器现算（见 2.8）。
 
 关键函数：
 
@@ -370,6 +373,7 @@ Claude Code 上报的 `UserPromptSubmit.prompt` 会混入自己注入的元信�
 | running_timeout_ms | 60000 | Running 无新 hook 超时，clamp 60000~3600000；旧配置缺字段回落默认 |
 | max_cells_by_layout | 各形态 8 | 方形/四角/横条/竖条格子上限，各 clamp 4~8；旧 `max_visible_sessions` 加载时迁移后废弃 |
 | token_unit | `tokens` | token 展示单位：`tokens` 原始计数、`m_tokens` 百万；无取值范围约束 |
+| proxy_resolver | `none` | 选中的代理解析器 id（如 `cc-switch`）；`none` 不解析。旧配置缺字段或空串回落 `none`；写入时同步更新 `StatusState.proxy`，切换即时生效 |
 
 `token_unit` 的解析是**宽松**的：序列化用 `#[serde(rename_all = "snake_case")]` 得到 `"tokens"` / `"m_tokens"`，但加载时经 `parse_token_unit` 只认这两个字符串，未知取值回落 `tokens`。
 
@@ -385,38 +389,114 @@ Claude Code 上报的 `UserPromptSubmit.prompt` 会混入自己注入的元信�
 
 写入策略：先写 `.tmp`，删除旧文件，rename 新文件（Windows 兼容）。
 
-配置变更时同步更新 `StatusState.retention_ms` 与 `StatusState.running_timeout_ms`，使运行中的监测器立即采用新值。
+配置变更时同步更新 `StatusState.retention_ms`、`StatusState.running_timeout_ms` 与 `StatusState.proxy`（解析器选择），使运行中的监测器立即采用新值。
 
-### 2.8 lib.rs — Tauri 集成
+### 2.8 proxy/ — 代理解析器
+
+某些代理工具（如 cc-switch）会先启一个本地代理（`127.0.0.1:15721`），Claude 配置的 `ANTHROPIC_BASE_URL` 指向本地代理，真实上游（`https://api.b.ai`）写在代理自己的数据库里。状态指示灯若只显示 `127.0.0.1:15721` 没有信息量，需要反查出上游。
+
+**数据链路：**
+
+```
+~/.claude/settings.json  →  base_url = http://127.0.0.1:15721
+                                  ↓（cc-switch proxy_config 匹配监听地址）
+                         ~/.cc-switch/cc-switch.db（SQLite，只读打开）
+                                  ↓（providers WHERE app_type='claude' AND is_current=1）
+                         settings_config JSON → env.ANTHROPIC_BASE_URL = https://api.b.ai
+                                  ↓
+SessionSnapshot.upstream_url = https://api.b.ai（前端 Endpoint 行优先显示此值）
+```
+
+**ProxyResolver trait：**
+
+每种代理工具实现一次 trait，在 `build_registry` 里注册一行即可接入：
+
+```rust
+pub trait ProxyResolver: Send + Sync {
+    fn id(&self) -> &'static str;           // 存进配置、下拉 value
+    fn label(&self) -> &'static str;        // 下拉显示文本
+    fn resolve_upstream(&self, app: AgentApp, local_base_url: &str) -> Option<String>;
+}
+```
+
+`AgentApp`（Claude/Codex）独立于 `Provider`，将来代理工具支持更多 agent app 时不改状态协议。实现必须只读、快速、不 panic；内部可自带 TTL 缓存控制读库频率。
+
+**CcSwitchResolver 实现细节：**
+
+- `root = ~/.cc-switch`（home 探测来自 `status::hook::home_dir`；`cc-switch.db` 不存在时 root 为 None，恒不解析）。
+- 每次 `resolve_upstream`：先查 HashMap 缓存（5 秒 TTL）；miss 时以 `SQLITE_OPEN_READ_ONLY` 打开 db（`busy_timeout 200ms`）。
+- 匹配条件：① `proxy_config` 里该 app 的**全局服务器开关 `proxy_enabled=1` 且本 app 接管开关 `enabled=1`**；② `base_url` 的 `normalize_host_port` 与 `listen_address:listen_port` 相等（localhost 与 127.0.0.1 等价，省略默认端口）。两列语义取自 cc-switch 源码（`schema.rs` / `services/proxy.rs` / `dao/proxy.rs`）：`proxy_enabled` 是代理服务器总开关（三行镜像同值，服务器 stop 时置 0），`enabled` 是该 app 是否被接管（每 app 独立）。只看 `proxy_enabled` 会在「服务器开着但该 app 未接管」时误命中，故取两者之与。
+- ⚠️ `listen_port` 在 cc-switch 真实 schema 里是 **`INTEGER`**（`DEFAULT 15721`），必须按整数读：rusqlite 的 `String::column_result` 只接受 Text，用 `String` 读 INTEGER 列会 `InvalidType` **整行失败**，导致 `listen` 恒为 None、整个功能空转（历史 bug，现由 `seed_db` 用 INTEGER 列 + 全部 ccswitch 测试锁定）。`listen_address` 才是 TEXT。
+- 命中条件只看 db 的这两列与会话实际 base_url，**不读 `settings.json` 的 `enableLocalProxy` 总开关**：cc-switch 关代理时会把 `ANTHROPIC_BASE_URL` 改回真实上游，会话 base_url 不再匹配本地监听地址，自然回落不解析。
+- 查 `providers WHERE app_type=... AND is_current=1` 的 `settings_config`，`settings_config` 整块 JSON 会进内存解析，但**只提取 `env.ANTHROPIC_BASE_URL` 这一个 key**，同块里的 token / api key 一律不读取、不缓存、不上报。
+- Codex 的 `settings_config` 里 base_url 走的是内嵌 TOML（`config` 字段），不是 `env.ANTHROPIC_BASE_URL`，因此 Codex 会话命中代理后 `upstream` 读不到、回落本地地址（优雅降级，目前只反查 Claude）。
+- 结果（包括 None）都写进缓存；TTL 内重复调用不再读库。
+
+**ProxyState（跨窗口共享）：**
+
+`selected: Arc<Mutex<String>>` + `registry: Arc<ResolverRegistry>`。`set_selected` 由 `module_config::set_floating_module_config` 写入路径同步调用，切换立即生效。
+
+**快照填充（`attach_upstreams`）：**
+
+`StatusState::snapshot_with_upstream()` 在 `registry.snapshot()` 后调用 `attach_upstreams`：选中 `none` 时直接返回；否则对每个有 `base_url` 的会话调用 `proxy.resolve_upstream`，填 `upstream_url`。`get_status_snapshot` 与 `emit_snapshot` 都走这条路。
+
+**Monitor 循环的 upstream_signature 监测：**
+
+启用解析器时 monitor 每 500ms 调 `state.upstream_signature()`（对当前存活会话算 key→upstream 的有序列表）。签名变化时 `changed=true`，触发 `emit_snapshot`。这让 cc-switch 里手动切 provider（UFO 侧无新 hook 事件）在缓存 TTL 到期后（最多 5 秒）自动推送到前端。`upstream_signature` 先在 registry 锁内拷出 `(key, provider, base_url)` 三元组随即释放锁，再到锁外逐会话 `resolve_upstream`（可能触发读库），避免把 `apply_event` 阻塞在最坏 200ms 的 SQLite 读上。
+
+**normalize_host_port 辅助函数：**
+
+- 剥离 scheme、userinfo、path/query/fragment。
+- IPv6 形式 `[::1]:port` 与普通 `host:port` 均处理。
+- loopback 等价写法（`localhost`/`127.0.0.1`/`::1`/`[::1]`）统一成 `127.0.0.1`。
+- 省略默认端口（http→80、https→443）。
+- host 非数字端口 → None（不解析）。
+
+**前端 Endpoint 展示（`displayEndpoint`）：**
+
+`src/lib/agent-status.ts` 的纯函数 `displayEndpoint(session)`：`upstream_url ?? base_url`，两者都缺返回 null。TooltipWindow.vue 的 Endpoint 行直接用这个函数；当上游与原值不同时 `title` 标注本地代理地址（「经本地代理 xxx」）。
+
+**主窗口下拉：**
+
+`MainWindow.vue` 在「Token 单位」设置下方渲染 `<select class="ufo-input ufo-select">`，选项来自 `ProxyResolverInfo[]`（store 在 `start()` 里 invoke `get_proxy_resolvers` 拉取）。选项含 `none` 恒在首位。change 调 `modules.updateProxyResolver(id)` 持久化并即时同步给状态监测。
+
+**接入新代理工具：**
+
+只需：① 在 `src/proxy/` 下新建文件实现 `ProxyResolver`；② 在 `build_registry` 里 push 一行。前端无需任何改动——下拉、upstream 填充和持久化全部自动适配。
+
+### 2.9 lib.rs — Tauri 集成
 
 setup 阶段：
 
 1. 获取 app-data 目录。
 2. 加载 `ModuleState`（从 `floating-modules.json`）。
-3. 用 module_config 的 retention_ms / running_timeout_ms 初始化 `StatusState`。
-4. `app.manage(StatusState)` + `app.manage(ModuleState)`。
-5. `spawn_monitor` 启动唯一监测线程。
-6. 注册托盘菜单和 devtools。
+3. 构建 `ProxyState`，并用 `module_state.proxy_resolver()` 设入初值（重启后不回落 none）。
+4. 用 module_config 的 retention_ms / running_timeout_ms + ProxyState 初始化 `StatusState`。
+5. `app.manage(StatusState)` + `app.manage(ModuleState)`。
+6. `spawn_monitor` 启动唯一监测线程。
+7. 注册托盘菜单和 devtools。
 
 注册的 commands：
 
-- `get_status_snapshot` — 读取当前全量快照。
+- `get_status_snapshot` — 读取当前全量快照（含 upstream_url）。
+- `get_proxy_resolvers` — 列出可用代理解析器（供主窗口下拉）。
 - `get_floating_module_config` — 读取模块配置。
 - `set_floating_module_config` — 写入模块配置（仅 main 窗口有权限）。
 
-### 2.9 权限
+### 2.10 权限
 
 `src-tauri/permissions/status.toml`：
 
 - `allow-get-status-snapshot` → `get_status_snapshot`
+- `allow-get-proxy-resolvers` → `get_proxy_resolvers`
 - `allow-get-floating-module-config` → `get_floating_module_config`
 - `allow-set-floating-module-config` → `set_floating_module_config`
 
-`src-tauri/capabilities/default.json`（main + floating）：
+`src-tauri/capabilities/default.json`（main + floating + tooltip）：
 
 - core:default、core:event:default
 - 窗口操作（hide/show/set-focus/set-position/set-size/start-dragging/unminimize）
-- allow-get-status-snapshot、allow-get-floating-module-config
+- allow-get-status-snapshot、allow-get-proxy-resolvers、allow-get-floating-module-config
 
 `src-tauri/capabilities/main-module-settings.json`（仅 main）：
 
@@ -455,7 +535,7 @@ src/
 
 - `Provider`: `'claude' | 'codex'`
 - `SessionPhase`: `'running' | 'waiting' | 'error' | 'unknown' | 'completed'`
-- `SessionSnapshot`: 含 key、provider、session_id、phase、source、confidence、started_at_ms、last_seen_at_ms、completed_at_ms、remove_at_ms、is_flashing、pid、error_code、base_url、prompt、tokens、last_sequence、termination_confirmed
+- `SessionSnapshot`: 含 key、provider、session_id、phase、source、confidence、started_at_ms、last_seen_at_ms、completed_at_ms、remove_at_ms、is_flashing、pid、error_code、base_url、upstream_url、prompt、tokens、last_sequence、termination_confirmed
 - `TokenTotals`: input_tokens、cache_creation_input_tokens、cache_read_input_tokens、output_tokens
 - `StatusSnapshot`: 含 schema_version、revision、generated_at_ms、sessions[]、counts、source_health
 
@@ -474,6 +554,8 @@ src/
 | `tokenTotal(tokens)` | 四项求和，与 Rust `TokenTotals::total()` 同口径；null 按 0 |
 | `formatTokenCount(n)` | 千分位整数（`1,261,847`） |
 | `formatTokenMillions(n)` | 百万（`1.26M`），不足 0.01M 显示 `<0.01M` |
+
+| `displayEndpoint(session)` | Endpoint 展示值：`upstream_url ?? base_url`，两者都缺返回 null（提示窗据此优先显示反查出的上游） |
 
 `colorForSession` 映射：
 
@@ -606,6 +688,8 @@ onMounted(() => {
 
 Token 单位：分段选择控件（`.ufo-segmented`）绑定 `tokenUnitInput`（`tokens` / `m_tokens`），change 时调用 `modules.updateTokenUnit`，失败时回滚。选中态用 `:has(input:checked)` 跟随原生 radio，不需要额外 JS 状态。
 
+代理解析器：`<select class="ufo-input ufo-select">` 绑定 `proxyResolverInput`，选项来自 `modules.resolvers`（store 在 `start()` 时 invoke `get_proxy_resolvers` 拉取，`none` 恒在首位），change 时调用 `modules.updateProxyResolver`，失败时回滚；后端写入路径即时同步到 `StatusState.proxy`。
+
 会话列表：遍历 `agentStatus.sessions`，显示彩色圆点、provider、短 session id 和 phase。
 
 ### 3.12 CSS 关键样式
@@ -684,7 +768,7 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 | 字段 | 说明 |
 |---|---|
 | provider / phase | 顶部行：状态点 + provider 图标 + 名称 + phase 徽标 |
-| Endpoint | `base_url`，未知显示 `—`，完整值挂 `title` |
+| Endpoint | `displayEndpoint` = `upstream_url ?? base_url`，未知显示 `—`；命中解析出的上游时 `title` 标注「经本地代理 <base_url>」 |
 | 已使用 token | 会话累计总量，单位由主窗口配置决定（见下）；四项明细挂在 `title` 上 |
 | 提问 | `prompt`，最多 4 行后省略，完整内容挂 `title` |
 
@@ -712,9 +796,9 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 
 ## 4. 测试覆盖
 
-### 4.1 Rust 测试（127 个）
+### 4.1 Rust 测试（143 个）
 
-按模块：`reducer` 39、`hook` 43、`module_config` 23、`tokens` 12、`model` 10。
+按模块：`reducer` 39、`hook` 43、`module_config` 26、`tokens` 12、`model` 10、`proxy` 13（`proxy::tests` 4 + `ccswitch::tests` 9）。
 
 **model.rs：**
 
@@ -788,15 +872,16 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 - user_prompt_accepts_alternate_field_names
 - transcript_path_reads_and_trims / transcript_path_rejects_missing_blank_and_oversized
 
-**module_config.rs（23 个）：**
+**module_config.rs（26 个）：**
 
 - default_config_has_agent_status_enabled / default_retention_is_thirty_seconds
 - default_max_cells_are_eight / default_running_timeout_is_sixty_seconds
-- default_token_unit_is_plain_tokens
+- default_token_unit_is_plain_tokens / default_proxy_resolver_is_none
 - token_unit_serializes_as_snake_case / token_unit_roundtrips_through_config
 - parse_token_unit_accepts_known_values / parse_token_unit_falls_back_on_unknown_or_missing
 - unknown_token_unit_does_not_discard_the_rest_of_the_config — 非法单位不得牵连其它设置
-- migrates_legacy_config_without_token_unit — 旧配置缺字段回落
+- migrates_legacy_config_without_token_unit / migrates_legacy_config_without_proxy_resolver — 旧配置缺字段回落
+- proxy_resolver_roundtrips_and_empty_falls_back — 空串回落 none
 - validate_clamps_retention_to_range — 0 → 1000, u64::MAX → 86400000
 - validate_clamps_running_timeout_to_range — 0 → 60000, u64::MAX → 3600000
 - validate_clamps_max_cells_by_layout — 各形态 0/3 → 4，255 → 8
@@ -805,13 +890,35 @@ displayKey 变为非 null → present(payload)：先 setPosition 再 show
 - validate_rejects_module_id_with_slash / backslash / overlong（65 字符）
 - config_serialization_roundtrip / module_state_loads_default_on_missing_file
 
-### 4.2 TypeScript 测试（73 个）
+**proxy（12 个）：**
 
-按文件：`agent-status` 32、`snap` 14、`tooltip` 11、`floating-modules` 8、`agent-status-layout` 7、`example` 1。
+`proxy::tests`（4 个）：
 
-**agent-status.spec.ts（32 个）：**
+- normalize_host_port_handles_common_forms — localhost/默认端口/IPv6/userinfo 归一化
+- normalize_host_port_rejects_host_with_nonnumeric_port
+- matches_listen_address_compares_normalized — 端口匹配/不匹配
+- options_list_none_first_then_resolvers — `none` 恒在首位，cc-switch 已注册
+
+`proxy::ccswitch::tests`（9 个）：
+
+- base_url_from_settings_reads_only_env_base_url — 只取 base_url、不碰 token
+- base_url_from_settings_rejects_missing_or_blank_or_bad_json
+- resolve_maps_local_proxy_to_current_upstream — 临时 SQLite 造样例库（INTEGER 端口 + 两开关都为 1），端到端解析出上游
+- resolve_returns_none_when_listen_port_mismatches — 会话连的端口不是代理监听端口
+- resolve_returns_none_when_proxy_disabled_for_app — 本 app 未接管（enabled=0）不解析
+- resolve_returns_none_when_global_server_off_even_if_app_enabled — 全局服务器关（proxy_enabled=0）但 app 残留 enabled=1，仍不解析
+- resolve_is_app_scoped_codex_proxy_disabled — 按 app 分流
+- cache_holds_stale_value_within_ttl — 改库后 TTL 内仍返回旧值（缓存的是代理状态，非单地址结果）
+- new_without_db_disables_resolution — 无 cc-switch.db 时 root=None、恒不解析
+
+### 4.2 TypeScript 测试（76 个）
+
+按文件：`agent-status` 35、`snap` 14、`tooltip` 11、`floating-modules` 8、`agent-status-layout` 7、`example` 1。
+
+**agent-status.spec.ts（35 个）：**
 
 - colorForSession 5 个 phase 各自映射正确 / 不返回聚合颜色
+- displayEndpoint 上游优先 / 无上游回落 base_url / 两者都缺返回 null
 - isStatusSnapshot 接受有效快照；拒绝 null / non-object / wrong schema / negative revision / non-integer revision / missing generated_at_ms / non-array sessions / 1001 sessions / missing key / invalid provider / missing termination_confirmed；接受 codex provider / 空 sessions；拒绝 missing counts
 - tokenTotal 四项求和含缓存读 / null 与 undefined 归 0 / 全零会话
 - formatTokenCount 千分位分组 / 小数截断与负数归零 / NaN 与 Infinity 兜底

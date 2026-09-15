@@ -180,6 +180,9 @@ impl StatusRegistry {
                 // base_url 是会话属性，与灯色无关：新事件没带就继承旧值，
                 // 避免后续事件把已探明的 endpoint 抹成 null。
                 base_url: event.base_url.or(previous_base_url),
+                // upstream_url 不是事件派生字段，由 status 侧生成快照时按选中的
+                // 解析器现算，这里恒置 None（见 StatusState::attach_upstreams）。
+                upstream_url: None,
                 // prompt 同理：只有 UserPromptSubmit 携带，同轮内的后续事件继承，
                 // 直到下一次提交才被覆盖。
                 prompt: event.prompt.or(previous_prompt),

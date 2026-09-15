@@ -135,6 +135,13 @@ pub struct SessionSnapshot {
     pub error_code: Option<String>,
     /// 会话使用的 API endpoint；未知时为 None，供悬浮窗展示。
     pub base_url: Option<String>,
+    /// `base_url` 经所选代理解析器反查出的**上游 endpoint**（如 cc-switch 代理后的 `https://api.b.ai`）。
+    ///
+    /// 由 `status` 在生成快照时按当前选中的解析器填充，不是事件派生字段，
+    /// 因此**不得升 SCHEMA_VERSION**；旧事件缺此字段反序列化为 None。
+    /// 未启用解析 / 未命中时为 None，前端回落到 `base_url`。
+    #[serde(default)]
+    pub upstream_url: Option<String>,
     /// 用户最近一次提问内容；未知时为 None，供悬浮窗展示。
     pub prompt: Option<String>,
     /// 会话累计消耗的 token；尚未统计到时为 None，供悬浮窗展示。

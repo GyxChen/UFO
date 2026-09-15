@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   colorForSession,
+  displayEndpoint,
   formatTokenCount,
   formatTokenMillions,
   isStatusSnapshot,
@@ -27,6 +28,7 @@ const session = (
   pid: null,
   error_code: null,
   base_url: null,
+  upstream_url: null,
   prompt: null,
   tokens: null,
   last_sequence: null,
@@ -74,6 +76,25 @@ describe('colorForSession', () => {
       const color = colorForSession(session(phase))
       expect(['green', 'yellow', 'red']).toContain(color)
     }
+  })
+})
+
+describe('displayEndpoint', () => {
+  it('prefers resolved upstream over the local proxy base_url', () => {
+    const resolved = session('running', {
+      base_url: 'http://127.0.0.1:15721',
+      upstream_url: 'https://api.b.ai',
+    })
+    expect(displayEndpoint(resolved)).toBe('https://api.b.ai')
+  })
+
+  it('falls back to base_url when no upstream was resolved', () => {
+    const direct = session('running', { base_url: 'https://api.anthropic.com' })
+    expect(displayEndpoint(direct)).toBe('https://api.anthropic.com')
+  })
+
+  it('returns null when neither is known', () => {
+    expect(displayEndpoint(session('running'))).toBeNull()
   })
 })
 
