@@ -43,7 +43,7 @@
         "label": "tooltip",
         "title": "tauri-app tooltip",
         "width": 300,
-        "height": 190,
+        "height": 240,
         "visible": false,
         "decorations": false,
         "transparent": true,

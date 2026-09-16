@@ -6,6 +6,9 @@
   "permissions": [
     "allow-set-floating-module-config",
     "allow-manage-endpoint-profiles",
+    "allow-save-endpoint-flow",
+    "allow-run-flow-test",
+    "allow-manage-flow-secrets",
     "allow-manage-session-records"
   ]
 }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::{
     menu::{Menu, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconEvent},
@@ -5,6 +7,7 @@ use tauri::{
 };
 
 mod endpoint_profiles;
+mod flow;
 mod module_config;
 mod mouse;
 mod proxy;
@@ -13,6 +16,10 @@ mod status;
 
 use endpoint_profiles::{
     add_endpoint_profile, delete_endpoint_profile, get_endpoint_profiles, EndpointProfileState,
+};
+use flow::{
+    delete_flow_secret, get_flow_results, get_flow_snapshot, run_flow_test, save_endpoint_flow,
+    set_flow_secret, KeyringSecrets, FlowState, UreqFetch,
 };
 use module_config::ModuleState;
 use mouse::is_left_mouse_pressed;
@@ -67,6 +74,9 @@ pub fn run() {
             // 与 profiles 同样处理：clone 进 StatusState（monitor 线程写），再 manage 一份（命令读）。
             let session_store =
                 SessionStoreState::load(app_data.join("session-records.db"), now_ms());
+            // 信息卡拓展的流程脚本运行态：HTTP/密钥用生产实现；worker 线程消费调度队列。
+            let (flow_state, flow_rx) =
+                FlowState::new(Arc::new(UreqFetch), Arc::new(KeyringSecrets));
             let status_state = StatusState::new(
                 status_dir,
                 module_state.retention_ms(),
@@ -74,12 +84,15 @@ pub fn run() {
                 proxy_state,
                 profile_state.clone(),
                 session_store.clone(),
+                flow_state.clone(),
             );
             app.manage(status_state.clone());
             app.manage(profile_state);
             app.manage(session_store);
             app.manage(module_state);
+            app.manage(flow_state.clone());
             spawn_monitor(app.handle().clone(), status_state);
+            flow::spawn_worker(app.handle().clone(), flow_state, flow_rx);
 
             let show = MenuItemBuilder::with_id(SHOW_MENU_ITEM, "打开主体").build(app)?;
             let hide = MenuItemBuilder::with_id(HIDE_MENU_ITEM, "隐藏主体").build(app)?;
@@ -173,6 +186,12 @@ pub fn run() {
             get_endpoint_profiles,
             add_endpoint_profile,
             delete_endpoint_profile,
+            get_flow_results,
+            get_flow_snapshot,
+            save_endpoint_flow,
+            run_flow_test,
+            set_flow_secret,
+            delete_flow_secret,
             get_session_records,
             delete_session_record,
             clear_session_records,

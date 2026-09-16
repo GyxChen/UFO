@@ -3,6 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useAgentStatusStore } from './stores/agentStatus'
 import { useFloatingModulesStore } from './stores/floatingModules'
+import { useFlowResultsStore } from './stores/flowResults'
 import FloatingWindow from './components/FloatingWindow.vue'
 import MainWindow from './components/MainWindow.vue'
 import TooltipWindow from './components/TooltipWindow.vue'
@@ -12,6 +13,7 @@ const isFloatingWindow = windowLabel === 'floating'
 const isTooltipWindow = windowLabel === 'tooltip'
 const agentStatus = useAgentStatusStore()
 const floatingModules = useFloatingModulesStore()
+const flowResults = useFlowResultsStore()
 
 // 原生透明窗口要求 html/body/#app 也透明；按窗口类型打标记给 CSS 用。
 if (isFloatingWindow) {
@@ -27,11 +29,15 @@ onMounted(() => {
   // 否则主窗口切换单位后提示窗仍停留在默认值。
   void agentStatus.start()
   void floatingModules.start()
+  // 流程脚本结果同样是跨窗口数据：tooltip 悬停时按会话 key 查字段。
+  // ⚠️ 不 start 就永远收不到 flow-results 广播，信息卡拓展字段不显示。
+  void flowResults.start()
 })
 
 onBeforeUnmount(() => {
   agentStatus.stop()
   floatingModules.stop()
+  flowResults.stop()
 })
 </script>
 

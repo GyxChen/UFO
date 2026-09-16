@@ -131,6 +131,64 @@ impl EndpointProfileState {
             .unwrap_or_default()
     }
 
+    /// 按 id 读一条档案的拷贝（含 url 与 extensions）；未登记时 None。
+    pub fn profile(&self, id: &str) -> Option<EndpointProfile> {
+        self.list
+            .lock()
+            .ok()?
+            .profiles
+            .iter()
+            .find(|profile| profile.id == id)
+            .cloned()
+    }
+
+    /// 按 id 就地读取该档案的 extensions（只 clone 那一个 map，**不整表 clone**）。
+    ///
+    /// monitor 每 500ms 的 tick 要用它读流程配置 —— `snapshot()` 会 clone 全部档案含脚本正文，
+    /// 单份脚本上限 64KB × 档案上限 64 条，每轮整表 clone 是纯浪费。找不到返回 None。
+    pub fn with_profile<T>(
+        &self,
+        id: &str,
+        read: impl FnOnce(&serde_json::Map<String, serde_json::Value>) -> T,
+    ) -> Option<T> {
+        let guard = self.list.lock().ok()?;
+        let profile = guard.profiles.iter().find(|profile| profile.id == id)?;
+        Some(read(&profile.extensions))
+    }
+
+    /// 按 id 就地修改 extensions；有该档案时写盘并返回新列表，否则 Err。
+    ///
+    /// 供主窗口「信息卡拓展」保存流程配置、增删密钥名清单用。revision 递增让前端即时同步。
+    pub fn update_extensions(
+        &self,
+        id: &str,
+        edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+    ) -> Result<EndpointProfileList, String> {
+        let updated = {
+            let mut list = self
+                .list
+                .lock()
+                .map_err(|_| "endpoint profile lock poisoned".to_string())?;
+            match list
+                .profiles
+                .iter_mut()
+                .find(|profile| profile.id == id.trim())
+            {
+                Some(profile) => {
+                    edit(&mut profile.extensions);
+                    list.revision = list.revision.saturating_add(1);
+                    true
+                }
+                None => false,
+            }
+        };
+        if !updated {
+            return Err("该 endpoint 未登记".to_string());
+        }
+        self.persist()?;
+        Ok(self.snapshot())
+    }
+
     /// 已登记条目的 id 集合，供采集路径做「是否需要落盘」的廉价判断。
     fn known_ids(&self) -> BTreeSet<String> {
         self.list
@@ -291,14 +349,21 @@ pub fn add_endpoint_profile(
 }
 
 /// 删除一条 endpoint 档案（主窗口）。
+///
+/// ⚠️ 级联清理流程凭据必须在 `remove` **之前**做：密钥名清单存在该档案的 extensions 里，
+/// 删了行就读不到了。清理只在 flow 侧 warn 失败，不阻断删除。
 #[tauri::command]
 pub fn delete_endpoint_profile(
     app: AppHandle,
     state: State<'_, EndpointProfileState>,
+    flow: State<'_, crate::flow::FlowState>,
     id: String,
 ) -> Result<EndpointProfileList, String> {
+    flow.cleanup_for_profile(&state, id.trim());
     let list = state.remove(&id)?;
     let _ = app.emit(ENDPOINT_PROFILES_EVENT, &list);
+    // 再广播一次流程结果：该 endpoint 的字段已被清掉，tooltip 得立刻收回去。
+    let _ = app.emit(crate::flow::FLOW_RESULTS_EVENT, flow.snapshot());
     Ok(list)
 }
 

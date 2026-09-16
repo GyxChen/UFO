@@ -13,7 +13,9 @@ use super::model::{now_ms, AgentEvent, Provider, SCHEMA_VERSION};
 use super::reducer::normalize_event_name;
 
 const MAX_HOOK_INPUT: u64 = 64 * 1024;
-const APP_IDENTIFIER: &str = "com.tauri-app.my";
+/// App 标识（与 `tauri.conf.json` 的 `identifier` 保持一致）：既用于定位 AppData 下的
+/// status 目录，也被 flow 模块用作凭据 service 前缀 —— 统一从这里导出，避免两处各写一份。
+pub(crate) const APP_IDENTIFIER: &str = "com.tauri-app.my";
 
 pub fn try_run_status_hook(args: &[String]) -> Option<i32> {
     if !args.iter().any(|arg| arg == "--status-hook") {

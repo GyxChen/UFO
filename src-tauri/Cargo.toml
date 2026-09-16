@@ -26,6 +26,15 @@ serde_json = "1"
 tauri-plugin-prevent-default = "5.0"
 # 代理解析：只读打开 cc-switch 的 SQLite 库。bundled 自带 SQLite，免依赖系统库。
 rusqlite = { version = "0.32", features = ["bundled"] }
+# 信息卡拓展（用户自写流程）：内嵌 QuickJS 作脚本沙盒。
+# 只开必要 feature —— `parallel` 让 Runtime 能跨线程持有（脚本跑在专用 worker 线程），
+# `classes`/`properties` 用于把宿主对象挂到 global。刻意不开 `loader`/`dyn-load`：
+# 沙盒不允许脚本读文件或其它模块。
+rquickjs = { version = "0.13", default-features = false, features = ["std", "parallel", "classes", "properties"] }
+# 脚本的 http API：Rust 侧代发请求（渲染进程受 CSP `connect-src` 限制无法直连外网）。
+ureq = "3"
+# 脚本要用的第三方 API key 存 OS 凭据管理器（Windows = Credential Manager），不落盘。
+keyring = "4"
 
 # 悬浮窗贴边：轮询物理鼠标左键状态（GetAsyncKeyState），绕开 Windows 原生拖拽吞 pointerup 的问题。
 [target.'cfg(windows)'.dependencies]

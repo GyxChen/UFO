@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /**
- * 「信息卡拓展」面板：左侧 endpoint 列表，右侧该 endpoint 的拓展字段配置区。
+ * 「信息卡拓展」面板：左侧 endpoint 列表，右侧该 endpoint 的拓展字段配置（流程脚本编辑器）。
  *
  * 列表数据来自后端持久化的 endpoint 档案（会话里发现的、非本地代理的地址，
- * 或用户手动添加的）。右侧目前是占位 —— 拓展字段的编辑表单在下一步接入。
+ * 或用户手动添加的）。右侧委派给 `EndpointFlowEditor`，写一段跑在 QuickJS 沙盒里的脚本。
  *
  * 不使用 window.alert / window.confirm：本应用装了 tauri-plugin-prevent-default，
  * 原生对话框可能被拦掉，所以反馈一律走行内提示。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { formatProfileTime, type EndpointProfile } from '@/lib/endpoint-profiles'
+import { flowFromExtensions } from '@/lib/flow'
 import { useEndpointProfilesStore } from '@/stores/endpointProfiles'
+import EndpointFlowEditor from './EndpointFlowEditor.vue'
 import closeIcon from '@/assets/close.svg'
 
 const profiles = useEndpointProfilesStore()
@@ -116,7 +118,15 @@ function onAdd() {
             @click="selectedId = profile.id"
           >
             <span class="ep-list__url">{{ profile.url }}</span>
-            <span class="ep-list__time">{{ formatProfileTime(profile.first_seen_at_ms) }}</span>
+            <span class="ep-list__meta">
+              <span
+                v-if="flowFromExtensions(profile.extensions)?.enabled"
+                class="ep-list__tag"
+                title="该 endpoint 已启用流程脚本"
+                >流程</span
+              >
+              <span class="ep-list__time">{{ formatProfileTime(profile.first_seen_at_ms) }}</span>
+            </span>
           </button>
           <button
             type="button"
@@ -152,14 +162,6 @@ function onAdd() {
       <p v-if="feedback" class="ep-list__feedback" role="status">{{ feedback }}</p>
     </section>
 
-    <section class="ufo-card ep-detail" aria-labelledby="ep-detail-title">
-      <div class="ufo-card__header">
-        <h2 id="ep-detail-title" class="ufo-card__title">拓展字段</h2>
-        <span v-if="selected" class="ufo-card__hint ep-detail__endpoint">{{ selected.url }}</span>
-      </div>
-      <p class="ep-detail__placeholder">
-        {{ selected ? '该 endpoint 的 tooltip 拓展字段配置即将开放。' : '先在左侧选择一个 endpoint。' }}
-      </p>
-    </section>
+    <EndpointFlowEditor :profile="selected" />
   </div>
 </template>

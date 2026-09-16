@@ -11,14 +11,17 @@ import {
   type SessionSnapshot,
 } from '@/lib/agent-status'
 import { placeTooltip, TOOLTIP_HOVER_EVENT, type TooltipHoverPayload } from '@/lib/tooltip'
+import { flowColorClass, type FlowField } from '@/lib/flow'
 import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import { useFlowResultsStore } from '@/stores/flowResults'
 import claudeIcon from '@/assets/claude.svg'
 import codexIcon from '@/assets/codex.svg'
 
 const window = getCurrentWindow()
 const store = useAgentStatusStore()
 const modules = useFloatingModulesStore()
+const flowResults = useFlowResultsStore()
 const hover = ref<TooltipHoverPayload | null>(null)
 let unlisten: UnlistenFn | undefined
 
@@ -77,6 +80,19 @@ const tokenDisplay = computed(() =>
     ? formatTokenMillions(tokenCount.value)
     : formatTokenCount(tokenCount.value),
 )
+
+/**
+ * 该会话的拓展字段（流程脚本返回）。
+ *
+ * 数据按会话 key 索引，由后端 worker 跑脚本后广播（见 `stores/flowResults`）；
+ * 无对应 endpoint / 脚本未跑或失败时为空数组，整块不渲染、不占位。
+ */
+const extensionFields = computed<FlowField[]>(() =>
+  flowResults.fieldsFor(session.value?.key),
+)
+
+/** 有拓展字段时，提问行压缩为单行，把高度让给字段。 */
+const compactPrompt = computed(() => extensionFields.value.length > 0)
 
 /** 定位并显示提示窗；先 setPosition 再 show，避免在旧位置闪一下。 */
 async function present(payload: TooltipHoverPayload) {
@@ -158,13 +174,27 @@ onBeforeUnmount(() => {
         </span>
       </div>
 
-      <!-- 用户提问内容：多行显示，超出由 CSS 截断，完整内容放在 title。 -->
-      <div v-if="session.prompt" class="tooltip-prompt">
+      <!-- 用户提问内容：有拓展字段时压到单行，完整内容在 title。 -->
+      <div v-if="session.prompt" class="tooltip-prompt" :class="{ 'tooltip-prompt--compact': compactPrompt }">
         <span class="tooltip-row__label">提问</span>
         <p class="tooltip-prompt__text" :title="session.prompt">{{ session.prompt }}</p>
       </div>
 
-      <!-- 预留：下一轮接入用户自写脚本的结果行（余额等）。 -->
+      <!-- 拓展字段：来自该 endpoint 的流程脚本（QuickJS 沙盒返回）。空则整块不渲染。 -->
+      <div
+        v-for="(field, index) in extensionFields"
+        :key="index"
+        class="tooltip-row"
+      >
+        <span class="tooltip-row__label">{{ field.label }}</span>
+        <span
+          class="tooltip-row__value tooltip-row__value--mono"
+          :class="`tooltip-row__value--${flowColorClass(field.color)}`"
+          :title="field.value"
+        >
+          {{ field.value }}
+        </span>
+      </div>
     </template>
   </div>
 </template>

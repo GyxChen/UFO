@@ -20,20 +20,28 @@ use tauri::{AppHandle, Emitter, Runtime, State};
 pub use hook::try_run_status_hook;
 // 供 proxy 子模块复用主目录探测（定位 ~/.cc-switch）。
 pub(crate) use hook::home_dir;
+// flow 模块用 App 标识派生凭据 service 名，与 hook 定位 status 目录同一来源。
+pub(crate) use hook::APP_IDENTIFIER;
 // model 子模块本身私有，但这些类型是跨模块协议（session_store 存档回填、前端快照），
 // 统一从这里 re-export，避免 session_store 直连 `status::model`。
 pub use model::{
     now_ms, session_key, AgentEvent, Provider, SessionSnapshot, StatusSnapshot, StoredSeed,
     TokenTotals,
 };
-// 仅 session_store 的测试构造 SessionSnapshot 时需要，生产路径不引用 → 只在测试构建下导出。
+// StatusCounts 仅 flow 测试构造 StatusSnapshot 时需要，生产路径不引用 → 只在测试构建下导出。
 #[cfg(test)]
-pub(crate) use model::{SessionPhase, StatusSource};
+pub(crate) use model::StatusCounts;
+// SessionPhase 供 flow 侧把阶段映射成脚本可见的字符串，非测试构建也需要；
+// StatusSource 仅 session_store 测试构造 SessionSnapshot 时需要 → 只在测试构建下导出。
+pub(crate) use model::SessionPhase;
+#[cfg(test)]
+pub(crate) use model::StatusSource;
 pub use reducer::StatusRegistry;
 
 use tokens::TokenTracker;
 
 use crate::endpoint_profiles::EndpointProfileState;
+use crate::flow::FlowState;
 use crate::proxy::ProxyState;
 use crate::session_store::SessionStoreState;
 
@@ -50,6 +58,8 @@ pub struct StatusState {
     pub profiles: EndpointProfileState,
     /// 会话存档（SQLite）：跨重启续档的读写句柄，与命令侧共享同一份。
     pub store: SessionStoreState,
+    /// 信息卡拓展的流程脚本运行态：monitor 每轮调它做调度（只对存活会话涉及的 endpoint 跑脚本）。
+    pub flow: FlowState,
 }
 
 impl StatusState {
@@ -60,6 +70,7 @@ impl StatusState {
         proxy: ProxyState,
         profiles: EndpointProfileState,
         store: SessionStoreState,
+        flow: FlowState,
     ) -> Self {
         Self {
             registry: Arc::new(Mutex::new(StatusRegistry::new())),
@@ -69,6 +80,7 @@ impl StatusState {
             proxy,
             profiles,
             store,
+            flow,
         }
     }
 
@@ -214,6 +226,10 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
                 state.store.list(),
             );
         }
+
+        // 信息卡拓展：为「当前存活会话涉及的 endpoint」调度流程脚本（tick 只入队，跑在 worker 线程）。
+        // 复用本轮已带上游信息的 snapshot；内部对同 endpoint 去抖 + 按间隔退避，空闲（无会话）时零入队。
+        state.flow.tick(&snapshot, &state.profiles, now);
 
         if now >= next_cleanup {
             let running_timeout = state

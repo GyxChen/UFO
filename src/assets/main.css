@@ -434,6 +434,29 @@ html.is-tooltip-window #app {
   overflow-wrap: anywhere;
 }
 
+/* 有拓展字段时提问压到单行，把高度让给字段行。 */
+.tooltip-prompt--compact .tooltip-prompt__text {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+/* 拓展字段值的语义色：与状态灯同一套变量，缺失/muted 走次文本色。 */
+.tooltip-row__value--green {
+  color: var(--ufo-status-green);
+}
+
+.tooltip-row__value--yellow {
+  color: var(--ufo-status-yellow);
+}
+
+.tooltip-row__value--red {
+  color: var(--ufo-status-red);
+}
+
+.tooltip-row__value--muted {
+  color: var(--ufo-muted);
+}
+
 .tooltip-dot {
   @apply block h-2 w-2 shrink-0 rounded-full;
 }
@@ -631,6 +654,18 @@ html.is-tooltip-window #app {
   background: var(--ufo-accent-soft);
 }
 
+/* URL 下方一行元信息：启用标记 + 发现时间。 */
+.ep-list__meta {
+  @apply flex w-full min-w-0 items-center gap-2;
+}
+
+/* 「已启用流程脚本」标记。 */
+.ep-list__tag {
+  @apply shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold;
+  background: var(--ufo-accent-soft);
+  color: var(--ufo-accent);
+}
+
 .ep-list__row:focus-visible {
   outline: 2px solid var(--ufo-ring);
   outline-offset: 2px;
@@ -726,6 +761,186 @@ html.is-tooltip-window #app {
 }
 
 /*
+ * 信息卡拓展右侧：流程脚本编辑器（EndpointFlowEditor）。
+ * 全部走 Matte token，不新增硬编码灰色；小按钮修饰符 `ufo-btn--sm` 只服务本面板的密钥行。
+ */
+.flow-editor {
+  @apply grid min-w-0 gap-3;
+}
+
+.flow-editor__lead,
+.flow-editor__hint {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+.flow-editor__row {
+  @apply flex flex-wrap items-end gap-3;
+}
+
+.flow-editor__toggle {
+  @apply flex items-center gap-2 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__num {
+  @apply flex min-w-[120px] flex-1 flex-col gap-1 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__field {
+  @apply flex min-w-0 flex-col gap-1.5 text-[12px];
+  color: var(--ufo-muted);
+}
+
+/* 脚本编辑区：覆盖 .ufo-input 的固定行高，等宽字体，纵向可 resize。 */
+.flow-editor__script {
+  @apply h-auto min-h-[180px] w-full py-2 leading-relaxed;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: vertical;
+}
+
+.flow-editor__actions {
+  @apply flex items-center gap-2;
+}
+
+.flow-editor__feedback {
+  @apply m-0 text-[11px] leading-snug;
+  color: var(--ufo-muted);
+}
+
+/* 后台轮询最近一次失败的原因（成功时不占位）。 */
+.flow-editor__lastfail {
+  @apply m-0 text-[11px] leading-snug;
+  color: var(--ufo-danger);
+}
+
+.flow-editor__test {
+  @apply grid gap-2 rounded-[10px] border p-2.5;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+}
+
+.flow-editor__test-error {
+  @apply m-0 text-[12px];
+  color: var(--ufo-danger);
+}
+
+.flow-editor__test-empty {
+  @apply m-0 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__preview {
+  @apply m-0 grid list-none gap-1 p-0;
+}
+
+.flow-editor__preview-row {
+  @apply flex items-baseline justify-between gap-3 text-[12px];
+}
+
+.flow-editor__preview-label {
+  @apply shrink-0;
+  color: var(--ufo-muted);
+}
+
+.flow-editor__preview-value {
+  @apply min-w-0 truncate text-right;
+  color: var(--ufo-text);
+}
+
+.flow-editor__preview-value.is-green {
+  color: var(--ufo-status-green);
+}
+
+.flow-editor__preview-value.is-yellow {
+  color: var(--ufo-status-yellow);
+}
+
+.flow-editor__preview-value.is-red {
+  color: var(--ufo-status-red);
+}
+
+.flow-editor__preview-value.is-muted {
+  color: var(--ufo-muted);
+}
+
+/* console 回显：固定高度内滚动，避免长日志把面板撑爆。 */
+.flow-editor__logs {
+  @apply m-0 max-h-[140px] overflow-y-auto rounded-[8px] p-2 text-[11px] leading-snug whitespace-pre-wrap;
+  background: var(--ufo-input);
+  color: var(--ufo-muted);
+  font-family: var(--font-mono);
+  scrollbar-width: thin;
+}
+
+.flow-editor__secrets {
+  @apply grid gap-2 border-t pt-3;
+  border-color: var(--ufo-border);
+}
+
+.flow-editor__subhead {
+  @apply m-0 text-[13px] font-semibold;
+  color: var(--ufo-text);
+}
+
+.flow-editor__secret-list {
+  @apply m-0 grid list-none gap-1.5 p-0;
+}
+
+.flow-editor__secret-row {
+  @apply flex items-center justify-between gap-3 rounded-[10px] border px-3 py-1.5;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+}
+
+.flow-editor__secret-name {
+  @apply min-w-0 truncate text-[12px];
+  font-family: var(--font-mono);
+  color: var(--ufo-text);
+}
+
+.flow-editor__secret-empty {
+  @apply m-0 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__secret-add {
+  @apply flex items-center gap-2;
+}
+
+.flow-editor__secret-add .ufo-input {
+  @apply min-w-0 flex-1;
+}
+
+/* 密钥行的紧凑删除按钮。 */
+.ufo-btn--sm {
+  @apply h-7 px-2.5 text-[12px];
+}
+
+.flow-editor__ref {
+  @apply rounded-[10px] border p-2.5;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+}
+
+.flow-editor__ref summary {
+  @apply cursor-pointer text-[12px] font-semibold;
+  color: var(--ufo-text);
+}
+
+.flow-editor__ref-body {
+  @apply m-0 mt-2 overflow-x-auto whitespace-pre text-[11px] leading-relaxed;
+  color: var(--ufo-muted);
+  font-family: var(--font-mono);
+}
+
+.flow-editor__ref .flow-editor__hint {
+  @apply mt-2;
+}
+
+/*
  * 「会话记录」面板：左侧 SQLite 存档列表 + 右侧详情。
  * 复用信息卡拓展（ep-*）的行 / 移除按钮样式，这里只补本面板特有的部分。
  */
@@ -772,8 +987,8 @@ html.is-tooltip-window #app {
 }
 
 .sr-list__row:hover {
-  border-color: var(--ufo-border-strong);
-  background: #383838;
+  border-color: color-mix(in srgb, var(--ufo-accent) 25%, transparent);
+  background: var(--ufo-accent-soft);
 }
 
 .sr-list__row--active {
@@ -811,7 +1026,7 @@ html.is-tooltip-window #app {
 
 /* 提问摘要只给一行：省略号收尾，完整内容在右侧详情看。 */
 .sr-list__prompt {
-  @apply w-full truncate text-[11px];
+  @apply w-full line-clamp-2 text-[11px];
   color: var(--ufo-muted);
 }
 
