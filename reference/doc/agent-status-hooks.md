@@ -92,7 +92,27 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 | `notification_type` | Notification 类型 | `notificationType` |
 | `tool_name` | 工具名 | — |
 | `tool_input` | 工具输入 | — |
+| `agent_id` | **子代理**事件的来源标识；主线程事件**不带**此字段 | `agentId` |
 | `prompt` | 用户提问原文（**仅** `UserPromptSubmit`） | `user_prompt`, `prompt_text` |
+
+### 子代理事件与 `agent_id`
+
+⚠️ **子代理（subagent）的事件与主会话共用同一个 `session_id`**（实测确认），只有 `agent_id` / `agent_type` 能把两者分开。子代理侧的事件包括 `SubagentStart`、`SubagentStop`、`PreToolUse`、`PostToolUse`、`PostToolBatch` 等 —— 全部带 `agent_id`；主线程事件一律没有。
+
+因此 reducer 对**已存活会话**收到的子代理事件只做一件事：刷新 `last_seen_at_ms`，**不参与灯色迁移**。
+
+原因：主 agent 弹出提问框等你作答时（`PermissionRequest` → 黄灯），若后台还挂着子代理在跑，子代理的工具事件会把 `Waiting` 直接顶回 `Running`，表现为「Claude 已经在问我了，信号灯却一直是绿色」。这是实测抓到的真实时序：
+
+| 顺序 | 事件 | tool_name | agent_id | 期望 |
+|---|---|---|---|---|
+| 1 | `PermissionRequest` | `AskUserQuestion` | — | 🟡 |
+| 2 | `Notification`（`permission_prompt`） | — | — | 🟡 |
+| 3 | `PreToolUse` | Grep | **子代理** | 不得改灯 ← 曾经的污染源 |
+| 4 | `PostToolUse` | 用户作答后 `AskUserQuestion` | — | 🟢 |
+
+⚠️ `AskUserQuestion`（选择框提问）**不走 `PreToolUse`**，走的是 `PermissionRequest` + `Notification(permission_prompt)`。因此不需要按工具名特判，靠既有的 Waiting 语义即可。
+
+会话尚不存在时（UFO 中途启动）子代理事件仍会正常建档为 `Running`，保证指示灯能出现；但**不会**触发「新运行清除旧 Waiting」的规则，以免后台子代理误清掉其它会话的黄灯。
 
 ### base_url 的来源
 
@@ -163,9 +183,27 @@ SDK 中 SessionEnd 使用 `reason`（UFO 归一化进 `outcome`），枚举大�
 |---|---|---|---|
 | 🟢 常亮 | `Running` | Agent 正在执行 | `SessionStart`, `Setup`, `UserPromptSubmit`, `UserPromptExpansion`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch`, `SubagentStart`, `SubagentStop`, `TaskCreated`, `TaskCompleted`, `TeammateIdle`, `PermissionDenied`, `MessageDisplay`, `PreCompact`, `PostCompact`, `ElicitationResult`, `InstructionsLoaded`, `ConfigChange`, `CwdChanged`, `DirectoryAdded`, `FileChanged`, `WorktreeCreate`, `WorktreeRemove`，以及非等待类 `Notification` |
 | 🟢 + 闪烁 → 🟡 | `Waiting` + `is_flashing` | 一轮执行完成（对话未结束） | `Stop`：先绿闪，`retention_ms` 后落成黄常亮 |
-| 🟡 黄灯 | `Waiting` | 等待用户操作（对话未结束） | `PermissionRequest`；`Elicitation`；`Notification` 且 `notification_type` ∈ `idle_prompt` / `permission_prompt` / `elicitation_dialog` / `agent_needs_input`；以及 Stop 绿闪结束后的稳态 |
+| 🟡 黄灯 | `Waiting` | 等待用户操作（对话未结束） | `PermissionRequest`；`Elicitation`；`Notification` 且 `notification_type` ∈ `idle_prompt` / `permission_prompt` / `elicitation_dialog` / `agent_needs_input` / `elicitation_url_dialog` / `worker_permission_prompt`；以及 Stop 绿闪结束后的稳态 |
 | 🟢 + 闪烁 → 移除 | `Completed` | 对话已完成（非错误结束） | 任意 `SessionEnd`（不按 reason 分流）；绿闪 `retention_ms` 后移除 |
 | 🔴 红灯 | `Error` | 错误 | `StopFailure`；任何带 `error_code` 的事件；outcome 为 `error`/`failed`/`cancelled`/`denied` 的事件 |
+
+⚠️ **子代理事件不参与灯色迁移**（见上「子代理事件与 `agent_id`」）：带 `agent_id` 的事件对已存活会话只刷新存活时间，不改变阶段 / 闪烁 / 移除计时。
+
+### `notification_type` 完整枚举
+
+Claude Code 2.1.270 共 16 个（从 CLI 二进制常量提取），UFO 只把下面标注的 6 个当作「等人操作」：
+
+| 值 | 是否「等人操作」 |
+|---|---|
+| `permission_prompt` | ✅ |
+| `idle_prompt` | ✅ |
+| `elicitation_dialog` | ✅ |
+| `elicitation_url_dialog` | ✅ |
+| `agent_needs_input` | ✅ |
+| `worker_permission_prompt` | ✅ |
+| `auth_success` / `agent_completed` / `push_notification` / `computer_use_enter` / `computer_use_exit` / `quota_auto_resume_fired` / `quota_auto_resume_stale` / `quota_auto_resume_disabled` / `elicitation_complete` / `elicitation_response` | ❌（按 Running 处理） |
+
+⚠️ 漏列「等人操作」的值会退化成 `Running`，表现就是「该等用户了、灯还是绿色」。新增枚举值时对照此表补齐。
 
 ### Error 转灯（红灯不粘）
 

@@ -138,6 +138,22 @@ impl StatusRegistry {
             None => (None, None, None, None, None, None),
         };
 
+        // ── 子代理事件守卫 ──
+        // 子代理(subagent)的事件与主会话**共用同一个 `session_id`**（实测确认），只靠
+        // `agent_id` 区分。若让它们参与灯色迁移，主线程 Waiting（等用户作答/授权）会被
+        // 仍在后台跑的子代理事件顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是
+        // 绿色」。因此对**已存活**的会话：只刷新 last_seen_at_ms（保住存活判定，避免长子代理
+        // 把主线程灯判超时清掉），阶段 / is_flashing / remove_at / completed_at / error_code
+        // 全部原样保留，整块早返回（不能再走下面的建档路径 —— 否则 flash_deadline 会按
+        // 子代理事件重算成 None，抹掉 Completed 的移除计时与 Waiting+Stop 的落黄计时）。
+        // 会话**尚不存在**（UFO 中途启动）时正常建档，落到 Running，保证灯能出现。
+        if event.agent_id.is_some() {
+            if let Some(previous) = self.sessions.get_mut(&key) {
+                previous.last_seen_at_ms = now;
+                return false;
+            }
+        }
+
         // 红灯不粘：事件映射出的阶段即最终阶段。
         // 任何能转灯的事件（Stop→黄、SessionEnd→绿闪、工具事件→绿等）都允许把红灯带走；
         // 唯一例外是 Unknown —— 无法识别的事件不构成转灯信号，保持原红灯。
@@ -152,7 +168,9 @@ impl StatusRegistry {
 
         // When a new run starts (Running phase), clear old Waiting sessions
         // for the same provider. This implements "completed state stays until next run".
-        if phase == SessionPhase::Running {
+        // ⚠️ 子代理事件跳过：它建档成 Running 是「UFO 中途启动」的兜底，
+        // 不能让一个后台子代理误清掉其它会话的黄灯。
+        if phase == SessionPhase::Running && event.agent_id.is_none() {
             let provider = event.provider;
             let current_session = &event.session_id;
             self.sessions.retain(|_, session| {
@@ -471,6 +489,10 @@ fn phase_for_event(event: &AgentEvent) -> SessionPhase {
 }
 
 /// 判断 Notification 是否属于「等待用户操作」类型。
+///
+/// 枚举值与 Claude Code 的 `notification_type` 完整清单对照（从 CLI 2.1.270 二进制常量
+/// 提取，共 16 个）；这里只列**需要用户操作**的那几个。漏列的值会退化成 Running，
+/// 表现就是「该等用户了灯还是绿色」。
 fn is_waiting_notification(notification_type: Option<&str>) -> bool {
     notification_type
         .map(|value| value.to_ascii_lowercase())
@@ -481,6 +503,10 @@ fn is_waiting_notification(notification_type: Option<&str>) -> bool {
                     | "permission_prompt"
                     | "elicitation_dialog"
                     | "agent_needs_input"
+                    // MCP 弹链接让用户确认/选择，同样在等人操作。
+                    | "elicitation_url_dialog"
+                    // 团队成员请求权限（worker 会话需要主线程授权）。
+                    | "worker_permission_prompt"
             )
         })
 }
@@ -530,7 +556,24 @@ mod tests {
             base_url: None,
             prompt: None,
             transcript_path: None,
+            agent_id: None,
         }
+    }
+
+    /// 构造一条**子代理**事件：与 `event()` 同构，但带 `agent_id`。
+    ///
+    /// 子代理事件与主会话共用同一个 `session_id`，只靠本字段区分 —— 这正是
+    /// `apply_event_with_seed` 里「已存活会话只刷存活时间、不驱灯色」的判据。
+    fn subagent_event(
+        id: &str,
+        provider: Provider,
+        session_id: &str,
+        name: &str,
+        received: i64,
+    ) -> AgentEvent {
+        let mut event = event(id, provider, session_id, name, received);
+        event.agent_id = Some("agent-abc".to_string());
+        event
     }
 
     /// 构造带 notification_type 的事件，用于 Notification 分流测试。
@@ -668,6 +711,9 @@ mod tests {
             "permission_prompt",
             "elicitation_dialog",
             "agent_needs_input",
+            // MCP 弹链接 / 团队成员请求权限：同属「等人操作」。
+            "elicitation_url_dialog",
+            "worker_permission_prompt",
         ]
         .into_iter()
         .enumerate()
@@ -1149,9 +1195,148 @@ mod tests {
         assert_eq!(registry.snapshot(200).sessions.len(), 2);
     }
 
+    // ── 子代理事件守卫 ──
+    // 子代理事件与主会话共用 session_id，只靠 agent_id 区分。这批用例锁定
+    // 「子代理事件不得改变已存活会话的灯色」这一契约。
+
+    #[test]
+    fn subagent_events_do_not_override_waiting() {
+        let mut registry = StatusRegistry::new();
+        // 主线程弹出提问/授权框 → 黄灯（AskUserQuestion 实测走 PermissionRequest）。
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "PermissionRequest", 100),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(100).sessions[0].phase,
+            SessionPhase::Waiting
+        );
+
+        // 后台子代理仍在跑：它的工具事件与主会话共用 session_id。
+        // 修复前这些事件会把 Waiting 顶回 Running（灯一直绿）。
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", "PreToolUse", 200),
+            30_000,
+        );
+        registry.apply_event(
+            subagent_event("3", Provider::Claude, "one", "PostToolUse", 300),
+            30_000,
+        );
+        registry.apply_event(
+            subagent_event("4", Provider::Claude, "one", "SubagentStart", 400),
+            30_000,
+        );
+
+        let session = &registry.snapshot(400).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Waiting, "子代理事件不得把黄灯顶回绿");
+        assert!(!session.is_flashing);
+        assert_eq!(session.remove_at_ms, None);
+    }
+
+    #[test]
+    fn subagent_events_do_not_settle_stop_flash_early() {
+        let mut registry = StatusRegistry::new();
+        // Stop：Waiting + 绿闪，retention 后落黄常亮。
+        registry.apply_event(event("1", Provider::Claude, "one", "Stop", 100), 30_000);
+        let remove_at = registry.snapshot(100).sessions[0].remove_at_ms;
+        assert_eq!(remove_at, Some(30_100));
+
+        // 子代理事件不得抹掉绿闪计时（若只改 phase 而重算 flash_deadline 就会丢）。
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", "PreToolUse", 200),
+            30_000,
+        );
+        let session = &registry.snapshot(200).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Waiting);
+        assert!(session.is_flashing, "绿闪不得被子代理事件关掉");
+        assert_eq!(session.remove_at_ms, remove_at, "落黄计时不得被重算");
+
+        // 到点仍正常落成黄常亮。
+        assert!(registry.cleanup(30_100, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(true)));
+        assert!(!registry.snapshot(30_100).sessions[0].is_flashing);
+    }
+
+    #[test]
+    fn subagent_events_preserve_completed_removal_timer() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "SessionEnd", 100),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(100).sessions[0].remove_at_ms,
+            Some(30_100)
+        );
+
+        // Completed 绿闪期间来子代理事件：移除计时必须保留，否则灯永远不消失。
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", "PostToolUse", 200),
+            30_000,
+        );
+        let session = &registry.snapshot(200).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Completed);
+        assert_eq!(session.remove_at_ms, Some(30_100));
+
+        assert!(registry.cleanup(30_100, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(false)));
+        assert!(registry.snapshot(30_100).sessions.is_empty());
+    }
+
+    #[test]
+    fn subagent_events_refresh_liveness_without_changing_phase() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", "PreToolUse", 100),
+            30_000,
+        );
+        // 子代理事件推进 last_seen：把 Running 超时窗口内本应到期的会话续住。
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", "PostToolUse", 50_000),
+            30_000,
+        );
+        let session = &registry.snapshot(50_000).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Running);
+        assert_eq!(session.last_seen_at_ms, 50_000);
+
+        // 以首次事件为准的 60s 超时点（100 + 60_000）上仍不该被清掉。
+        let running_timeout = DEFAULT_RUNNING_TIMEOUT_MS;
+        assert!(!registry.cleanup(100 + running_timeout + 1, running_timeout, |_| None));
+        assert_eq!(registry.snapshot(100 + running_timeout + 1).sessions.len(), 1);
+    }
+
+    #[test]
+    fn subagent_event_bootstraps_an_unseen_session_as_running() {
+        let mut registry = StatusRegistry::new();
+        // UFO 中途启动：只先收到子代理事件，也要把灯建出来（否则长时间没有灯）。
+        registry.apply_event(
+            subagent_event("1", Provider::Claude, "one", "PreToolUse", 100),
+            30_000,
+        );
+        let session = &registry.snapshot(100).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Running);
+    }
+
+    #[test]
+    fn subagent_events_do_not_clear_other_waiting_sessions() {
+        let mut registry = StatusRegistry::new();
+        // 会话 A 进入 Waiting。
+        registry.apply_event(event("1", Provider::Claude, "a", "Stop", 100), 30_000);
+        // 会话 B 上只有子代理事件（UFO 中途启动的建档路径）：不得清掉 A 的黄灯。
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "b", "PreToolUse", 200),
+            30_000,
+        );
+        let snapshot = registry.snapshot(200);
+        assert_eq!(snapshot.sessions.len(), 2);
+        let a = snapshot
+            .sessions
+            .iter()
+            .find(|session| session.session_id == "a")
+            .expect("session a present");
+        assert_eq!(a.phase, SessionPhase::Waiting);
+    }
+
     /// 构造一条回填摘要（模拟从存档读出的历史值）。
-    fn seed(started_at_ms: i64, prompt: Option<&str>, base_url: Option<&str>) -> StoredSeed {
-        StoredSeed {
+    fn seed(started_at_ms: i64, prompt: Option<&str>, base_url: Option<&str>) -> StoredSeed {        StoredSeed {
             started_at_ms,
             prompt: prompt.map(str::to_string),
             base_url: base_url.map(str::to_string),

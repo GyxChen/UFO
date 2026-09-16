@@ -125,6 +125,7 @@ fn run_status_hook(args: &[String]) -> Result<(), String> {
         base_url: provider_base_url(provider, cwd.as_deref()),
         prompt,
         transcript_path: transcript_path(&payload),
+        agent_id: agent_id(&payload),
     };
 
     let inbox = status_dir.join("inbox");
@@ -318,6 +319,22 @@ fn transcript_path(payload: &Value) -> Option<String> {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty() && value.len() <= MAX_TRANSCRIPT_PATH_LEN)
 }
+
+/// 提取子代理事件的来源标识。主线程事件不带此字段，返回 None。
+///
+/// ⚠️ 子代理事件与主会话共用同一个 `session_id`（实测确认），只有本字段能把两者分开。
+/// reducer 靠它把子代理事件限制为「只刷存活时间、不驱灯色」，否则主线程 Waiting
+/// 会被仍在后台跑的子代理顶回 Running（灯一直绿）。
+///
+/// 只透传标识，不做任何语义解释。
+fn agent_id(payload: &Value) -> Option<String> {
+    string_field(payload, &["agent_id", "agentId"])
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.len() <= MAX_AGENT_ID_LEN)
+}
+
+/// 子代理标识的长度上限：只防异常 payload 撑大事件文件，不做语义校验。
+const MAX_AGENT_ID_LEN: usize = 256;
 
 /// 提问内容长度上限（字符数）。
 ///
@@ -903,8 +920,32 @@ mod tests {
     }
 
     #[test]
-    fn transcript_path_rejects_missing_blank_and_oversized() {
-        assert_eq!(transcript_path(&serde_json::json!({})), None);
+    fn agent_id_reads_and_trims() {
+        let payload: Value = serde_json::json!({"agent_id": "  ac8ff3b71756050d1  "});
+        assert_eq!(agent_id(&payload).as_deref(), Some("ac8ff3b71756050d1"));
+        // 驼峰别名同样认
+        let camel: Value = serde_json::json!({"agentId": "agent-abc"});
+        assert_eq!(agent_id(&camel).as_deref(), Some("agent-abc"));
+    }
+
+    #[test]
+    fn agent_id_is_none_for_main_thread_events() {
+        // 主线程事件不带 agent_id（实测为字段缺省，不是空串）。
+        assert_eq!(agent_id(&serde_json::json!({})), None);
+        assert_eq!(agent_id(&serde_json::json!({"agent_id": null})), None);
+        assert_eq!(agent_id(&serde_json::json!({"agent_id": ""})), None);
+        assert_eq!(agent_id(&serde_json::json!({"agent_id": "   "})), None);
+    }
+
+    #[test]
+    fn agent_id_rejects_oversized_value() {
+        // 超长标识丢弃 → 视为主线程事件（map 失效也是唯一可能的语义）。
+        let huge = "a".repeat(MAX_AGENT_ID_LEN + 1);
+        assert_eq!(agent_id(&serde_json::json!({ "agent_id": huge })), None);
+    }
+
+    #[test]
+    fn transcript_path_rejects_missing_blank_and_oversized() {        assert_eq!(transcript_path(&serde_json::json!({})), None);
         assert_eq!(transcript_path(&serde_json::json!({"transcript_path": "   "})), None);
         assert_eq!(transcript_path(&serde_json::json!({"transcript_path": ""})), None);
         // 超长路径丢弃，避免撑大事件文件

@@ -95,6 +95,15 @@ pub struct AgentEvent {
     /// 旧事件缺此字段时反序列化为 None。
     #[serde(default)]
     pub transcript_path: Option<String>,
+    /// 子代理（subagent）事件的来源标识；主线程事件缺省为 None。
+    ///
+    /// ⚠️ 子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有本字段能区分。
+    /// 若让子代理事件参与灯色迁移，主线程 Waiting（等用户作答/授权）会被仍在后台跑的子代理
+    /// 事件顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。因此 reducer
+    /// 用本字段把子代理事件限制为「只刷存活时间、不驱灯色」（见 `apply_event_with_seed`）。
+    /// 旧事件缺此字段时反序列化为 None。
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 /// 一个会话累计消耗的 token。
@@ -261,6 +270,7 @@ mod tests {
             base_url: Some("http://127.0.0.1:15721".to_string()),
             prompt: Some("修一下这个 bug".to_string()),
             transcript_path: Some("/tmp/sess-123.jsonl".to_string()),
+            agent_id: Some("agent-abc".to_string()),
         };
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: AgentEvent = serde_json::from_str(&json).unwrap();
@@ -282,6 +292,7 @@ mod tests {
             deserialized.transcript_path.as_deref(),
             Some("/tmp/sess-123.jsonl")
         );
+        assert_eq!(deserialized.agent_id.as_deref(), Some("agent-abc"));
     }
 
     #[test]
@@ -326,6 +337,8 @@ mod tests {
         assert_eq!(deserialized.prompt, None);
         // 旧事件同样没有 transcript_path，缺省为 None，token 行不显示。
         assert_eq!(deserialized.transcript_path, None);
+        // 也没有 agent_id：缺省 None 即视为主线程事件（沿用旧行为）。
+        assert_eq!(deserialized.agent_id, None);
     }
 
     #[test]
