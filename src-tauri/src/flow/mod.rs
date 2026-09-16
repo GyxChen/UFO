@@ -82,7 +82,21 @@ pub struct FlowOutcome {
     pub ok: bool,
 }
 
-/// 广播给前端的快照：按**会话 key** 索引该会话所配 endpoint 的字段。
+/// 一次运行的产物中「与新鲜度有关」的部分：字段 + 生成时刻 + 下次刷新的间隔。
+///
+/// 后两项只为 tooltip 标注「更新于 HH:MM:SS · 每 Ns 刷新」，让用户能判断屏上的余额/用量
+/// 是刚跑的还是几十分钟前的旧值（脚本挂了时 tooltip 直接不显字段，更需要这个锚点）。
+#[derive(Debug, Clone, Serialize)]
+pub struct FlowSessionResult {
+    /// 清洗后的拓展字段。
+    pub fields: Vec<FlowField>,
+    /// 本批字段的生成时刻（毫秒）。
+    pub updated_at_ms: i64,
+    /// 该 endpoint 配置的轮询间隔（秒）；退避只会把它拉长，显示值取配置原值。
+    pub interval_sec: u64,
+}
+
+/// 广播给前端的快照：按**会话 key** 索引该会话所配 endpoint 的字段与新鲜度。
 ///
 /// 用会话 key 而非 endpoint id 做键，是为了让 tooltip 零归一逻辑（它手里只有会话 key）；
 /// endpoint 归一口径（`proxy::endpoint_identity`）只在后端算一次。
@@ -90,8 +104,8 @@ pub struct FlowOutcome {
 pub struct FlowSnapshot {
     /// 每次内容变化递增，供前端丢弃乱序事件。
     pub revision: u64,
-    /// 会话 key → 该会话 endpoint 的拓展字段（无字段/未启用的会话不进表）。
-    pub sessions: HashMap<String, Vec<FlowField>>,
+    /// 会话 key → 该会话 endpoint 的拓展字段结果（无字段/未启用的会话不进表）。
+    pub sessions: HashMap<String, FlowSessionResult>,
 }
 
 /// 一次入队的运行任务：所有依赖都在 tick 时拷好，worker 不再回查任何锁。
@@ -104,6 +118,8 @@ struct FlowJob {
     script: String,
     /// 单次超时（毫秒，已 clamp）。
     timeout_ms: u64,
+    /// 该 endpoint 配置的轮询间隔（秒）：透传给结果，供 tooltip 标注「每 Ns 刷新」。
+    interval_sec: u64,
     /// 脚本指纹：worker 成功回来后按它写 last_result，tick 据此判断脚本是否被改过。
     script_hash: u64,
     /// 上次成功结果（`ctx.lastResult`），已在 tick 侧按 hash 过滤。
@@ -112,13 +128,16 @@ struct FlowJob {
     session: Option<SessionContext>,
 }
 
-/// endpoint 维度的运行态（结果、退避计数）。
+/// endpoint 维度的运行态（结果、退避计数、刷新间隔）。
 #[derive(Debug, Clone)]
 struct EndpointState {
     /// 最近一次运行产物（None = 从没跑过）。
     outcome: Option<FlowOutcome>,
     /// 连续失败次数：算退避用（`interval * 2^n` 封顶 [`MAX_BACKOFF_SEC`]）。
     fail_streak: u32,
+    /// 该 endpoint 配置的轮询间隔（秒）：tick 到点时按当轮配置写入，供广播带出。
+    /// （没跑过的 endpoint 不会有结果，因此这个值只在有 outcome 时被读到。）
+    interval_sec: u64,
 }
 
 /// FlowState 的内部可变状态。
@@ -200,19 +219,29 @@ impl FlowState {
     }
 
     /// 从内部状态算广播快照（锁内调用；只读 endpoints + session_endpoints）。
+    ///
+    /// 字段之外还带该 endpoint 的 `updated_at_ms` 与配置的 `interval_sec`：tooltip 据此标出
+    /// 「更新于 · 每 Ns 刷新」，让用户能分辨屏上是刚跑的值还是旧值。
     fn build_snapshot(inner: &FlowInner) -> FlowSnapshot {
-        let mut sessions: HashMap<String, Vec<FlowField>> = HashMap::new();
+        let mut sessions: HashMap<String, FlowSessionResult> = HashMap::new();
         for (session_key, endpoint_id) in &inner.session_endpoints {
-            let fields = inner
-                .endpoints
-                .get(endpoint_id)
-                .and_then(|state| state.outcome.as_ref())
-                .filter(|outcome| outcome.ok)
-                .map(|outcome| outcome.fields.clone())
-                .unwrap_or_default();
-            if !fields.is_empty() {
-                sessions.insert(session_key.clone(), fields);
+            let Some(state) = inner.endpoints.get(endpoint_id) else {
+                continue;
+            };
+            // 只广播成功且有字段的运行：失败/空结果不进表（tooltip 也就不占位）。
+            let outcome = state.outcome.as_ref().filter(|outcome| outcome.ok);
+            let Some(outcome) = outcome else { continue };
+            if outcome.fields.is_empty() {
+                continue;
             }
+            sessions.insert(
+                session_key.clone(),
+                FlowSessionResult {
+                    fields: outcome.fields.clone(),
+                    updated_at_ms: outcome.updated_at_ms,
+                    interval_sec: state.interval_sec,
+                },
+            );
         }
         FlowSnapshot {
             revision: inner.revision,
@@ -322,6 +351,7 @@ impl FlowState {
                 endpoint_url: endpoint_url.clone(),
                 script: config.script.clone(),
                 timeout_ms: config.timeout_ms,
+                interval_sec: config.interval_sec,
                 script_hash: config.script_hash,
                 last_result,
                 session,
@@ -406,10 +436,13 @@ impl FlowState {
             EndpointState {
                 outcome: None,
                 fail_streak: 0,
+                interval_sec: job.interval_sec,
             }
         });
         state.fail_streak = fail_streak;
         state.outcome = Some(outcome);
+        // 刷新间隔随每次回写更新：用户改了「间隔」但没改脚本时（不触发 invalidate），标注也要跟上。
+        state.interval_sec = job.interval_sec;
         // 每次回写都推进 revision：广播快照带它，前端据此丢弃乱序。
         inner.revision = inner.revision.saturating_add(1);
         Self::build_snapshot(&inner)
@@ -913,6 +946,7 @@ mod tests {
                         ok: true,
                     }),
                     fail_streak: 0,
+                    interval_sec: 60,
                 },
             );
             inner.endpoints.insert(
@@ -925,6 +959,7 @@ mod tests {
                         ok: false,
                     }),
                     fail_streak: 1,
+                    interval_sec: 60,
                 },
             );
             inner
@@ -937,6 +972,11 @@ mod tests {
         let snapshot = state.snapshot();
         assert!(snapshot.sessions.contains_key("claude:s1"));
         assert!(!snapshot.sessions.contains_key("claude:s2"), "失败结果不进表");
+        // 成功项要带新鲜度信息（tooltip 用「更新于 / 每 Ns 刷新」标注）。
+        let result = snapshot.sessions.get("claude:s1").expect("s1 应有结果");
+        assert_eq!(result.updated_at_ms, 1);
+        assert_eq!(result.interval_sec, 60);
+        assert_eq!(result.fields.len(), 1);
     }
 
     #[test]
@@ -949,6 +989,7 @@ mod tests {
                 EndpointState {
                     outcome: None,
                     fail_streak: 3,
+                    interval_sec: 60,
                 },
             );
             inner.last_result.insert(
@@ -974,6 +1015,7 @@ mod tests {
             endpoint_url: "https://api.example.com".to_string(),
             script: "return []".to_string(),
             timeout_ms: 2000,
+            interval_sec: 60,
             script_hash: 7,
             last_result: None,
             session: None,
@@ -1012,6 +1054,7 @@ mod tests {
             endpoint_url: "https://x.example.com".to_string(),
             script: "throw 1".to_string(),
             timeout_ms: 2000,
+            interval_sec: 60,
             script_hash: 1,
             last_result: None,
             session: None,

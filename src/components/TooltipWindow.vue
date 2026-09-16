@@ -11,7 +11,12 @@ import {
   type SessionSnapshot,
 } from '@/lib/agent-status'
 import { placeTooltip, TOOLTIP_HOVER_EVENT, type TooltipHoverPayload } from '@/lib/tooltip'
-import { flowColorClass, type FlowField } from '@/lib/flow'
+import {
+  formatFlowInterval,
+  formatFlowUpdatedAt,
+  flowColorClass,
+  type FlowField,
+} from '@/lib/flow'
 import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { useFlowResultsStore } from '@/stores/flowResults'
@@ -82,14 +87,30 @@ const tokenDisplay = computed(() =>
 )
 
 /**
- * 该会话的拓展字段（流程脚本返回）。
+ * 该会话的拓展结果（流程脚本返回的字段 + 新鲜度）。
  *
  * 数据按会话 key 索引，由后端 worker 跑脚本后广播（见 `stores/flowResults`）；
- * 无对应 endpoint / 脚本未跑或失败时为空数组，整块不渲染、不占位。
+ * 无对应 endpoint / 脚本未跑或失败时为 null，整块不渲染、不占位。
  */
-const extensionFields = computed<FlowField[]>(() =>
-  flowResults.fieldsFor(session.value?.key),
-)
+const extensionResult = computed(() => flowResults.resultFor(session.value?.key))
+
+/** 拓展字段列表（null 结果当空数组，方便 v-for 与占位判断）。 */
+const extensionFields = computed<FlowField[]>(() => extensionResult.value?.fields ?? [])
+
+/**
+ * 刷新标注：`每 Ns 刷新 · 更新于 HH:MM:SS`。让用户分辨屏上字段是刚跑的还是旧值
+ * （脚本挂掉时 tooltip 直接不显字段，更需要这个时间锚点）。缺元信息时回落空串不渲染。
+ */
+const extensionStamp = computed(() => {
+  const result = extensionResult.value
+  if (!result) return ''
+  const interval = formatFlowInterval(result.interval_sec)
+  const updated = formatFlowUpdatedAt(result.updated_at_ms)
+  if (!interval && !updated) return ''
+  if (!updated) return `每 ${interval} 刷新`
+  if (!interval) return `更新于 ${updated}`
+  return `每 ${interval} 刷新 · 更新于 ${updated}`
+})
 
 /** 有拓展字段时，提问行压缩为单行，把高度让给字段。 */
 const compactPrompt = computed(() => extensionFields.value.length > 0)
@@ -174,26 +195,32 @@ onBeforeUnmount(() => {
         </span>
       </div>
 
+      <!--
+        拓展字段：紧跟 token 行之后（语义同属「用量类」），来自该 endpoint 的流程脚本。
+        空则整块不渲染；末尾一行小字标刷新周期与更新时间。
+      -->
+      <template v-if="extensionFields.length">
+        <div
+          v-for="(field, index) in extensionFields"
+          :key="index"
+          class="tooltip-row"
+        >
+          <span class="tooltip-row__label">{{ field.label }}</span>
+          <span
+            class="tooltip-row__value tooltip-row__value--mono"
+            :class="`tooltip-row__value--${flowColorClass(field.color)}`"
+            :title="field.value"
+          >
+            {{ field.value }}
+          </span>
+        </div>
+        <p v-if="extensionStamp" class="tooltip-stamp">{{ extensionStamp }}</p>
+      </template>
+
       <!-- 用户提问内容：有拓展字段时压到单行，完整内容在 title。 -->
       <div v-if="session.prompt" class="tooltip-prompt" :class="{ 'tooltip-prompt--compact': compactPrompt }">
         <span class="tooltip-row__label">提问</span>
         <p class="tooltip-prompt__text" :title="session.prompt">{{ session.prompt }}</p>
-      </div>
-
-      <!-- 拓展字段：来自该 endpoint 的流程脚本（QuickJS 沙盒返回）。空则整块不渲染。 -->
-      <div
-        v-for="(field, index) in extensionFields"
-        :key="index"
-        class="tooltip-row"
-      >
-        <span class="tooltip-row__label">{{ field.label }}</span>
-        <span
-          class="tooltip-row__value tooltip-row__value--mono"
-          :class="`tooltip-row__value--${flowColorClass(field.color)}`"
-          :title="field.value"
-        >
-          {{ field.value }}
-        </span>
       </div>
     </template>
   </div>

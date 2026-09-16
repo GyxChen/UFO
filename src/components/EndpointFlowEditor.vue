@@ -321,27 +321,94 @@ function clampInt(value: number, min: number, max: number): number {
       </section>
 
       <details class="flow-editor__ref">
-        <summary>API 参考</summary>
-        <pre class="flow-editor__ref-body">http.get(url, opts?)        → { status, ok, headers, text(), json() }
-http.post(url, opts?)       opts: { headers, body, timeoutMs }
-http.request(method, url, opts?)
-secrets.get(name)           取系统凭据；未配置抛异常
-cache.get(name) / cache.set(name, value, ttlMs?)
-format.num(n) format.pct(0.42) format.bytes(n)
-ctx.endpoint { id, url }    ctx.session { provider, phase, prompt, tokens }
-ctx.lastResult              上次成功返回值（脚本未改时继承）
+        <summary>API 参考（沙盒里能用什么）</summary>
 
-示例：
-const res = await http.get('https://api.example.com/v1/usage', {
+        <!--
+          逐项说明而不是贴一坨伪代码：脚本作者多是「知道自己要查什么、不知道宿主给了什么」，
+          因此每项都写清「返回什么 / 参数怎么传 / 失败会怎样」。⚠️ 不用 whitespace-pre，
+          窄列下长行必须能换行（旧写法靠 overflow-x-auto 横向滚动，展开后看起来像溢出）。
+        -->
+        <dl class="flow-editor__ref-list">
+          <div class="flow-editor__ref-item">
+            <dt>
+              <code>http.get(url, opts?)</code>
+              <code>http.post(url, opts?)</code>
+              <code>http.request(method, url, opts?)</code>
+            </dt>
+            <dd>
+              唯一的出网方式，由 Rust 代发真实请求。<code>opts</code> 可带
+              <code>headers</code>（字符串键值对）、<code>body</code>（字符串或对象，对象按
+              JSON 发送）、<code>timeoutMs</code>（500–15000，默认 5000）。返回
+              <code>{ status, ok, headers, text(), json() }</code>：4xx/5xx
+              <em>不抛异常</em>（余额接口常用 401 表示 key 失效），要自己看
+              <code>status</code>；<code>json()</code> 解析失败才抛「响应不是合法 JSON」。
+              响应体最多读 256KB，超出截断。
+            </dd>
+          </div>
+          <div class="flow-editor__ref-item">
+            <dt><code>secrets.get(name)</code></dt>
+            <dd>
+              按名字从系统凭据管理器取值（值在下面「密钥」区配）。没配这个名字直接
+              <em>抛异常</em>，所以要么先配好、要么自己
+              <code>try/catch</code>。绝没有写入 / 列举接口。
+            </dd>
+          </div>
+          <div class="flow-editor__ref-item">
+            <dt><code>cache.get(name)</code> / <code>cache.set(name, value, ttlMs?)</code></dt>
+            <dd>
+              跨次运行的进程内 KV（本 endpoint 独享，不持久化）。用来做「值没变就不重复请求」这类
+              节流。<code>ttlMs</code> 缺省 10 分钟；<code>get</code> 未命中返回
+              <code>undefined</code>。
+            </dd>
+          </div>
+          <div class="flow-editor__ref-item">
+            <dt>
+              <code>format.num(n)</code>
+              <code>format.pct(0.42)</code>
+              <code>format.bytes(n)</code>
+            </dt>
+            <dd>
+              展示格式化：千分位（<code>12345 → 12,345</code>）、百分比（<code>0.42 →
+              42%</code>）、字节（<code>1536 → 1.50 KB</code>，最大到 GB）。
+            </dd>
+          </div>
+          <div class="flow-editor__ref-item">
+            <dt><code>ctx.endpoint</code> / <code>ctx.session</code> / <code>ctx.lastResult</code></dt>
+            <dd>
+              只读上下文。<code>ctx.endpoint = { id, url }</code>；<code>ctx.session = {
+              provider, phase, prompt, tokens }</code>（无存活会话时为 <code>null</code>，<em>不要</em>
+              直接取字段，先判空）；<code>ctx.lastResult</code> 是上次成功的返回值（脚本源码没改时才给，
+              改了就是 <code>null</code>），可用来对比上一次做增量。
+            </dd>
+          </div>
+          <div class="flow-editor__ref-item">
+            <dt><code>return</code> 的形态</dt>
+            <dd>
+              <code>[{ label, value, color? }]</code>（也接受 <code>{ fields: [...] }</code>
+              或单个对象）。<code>value</code> 能给数字/布尔，会转成文本；<code>color</code> 只认
+              <code>green / yellow / red / muted</code>。最多 4 条、label 24 字、value 120 字，超出裁掉。
+              <code>console.log</code> 只在「运行测试」回显，正式轮询不外传。
+            </dd>
+          </div>
+        </dl>
+
+        <p class="flow-editor__hint">
+          ⚠️ 出网只能走 <code>http</code>：脚本没有模块加载器（<code>import</code> /
+          <code>require</code> 不可用）、没有文件系统与网络原生接口，所以除了宿主注入的这一条通道，
+          脚本物理上不存在第二个出口 —— 这条通道于是能在 Rust 侧统一做私网拦截与超时限制。
+        </p>
+
+        <!-- 可复制的最小可用示例：脚本作者最常要的是「带 key 查一次再返回字段」。 -->
+        <pre class="flow-editor__ref-body">const res = await http.get('https://api.example.com/v1/usage', {
   headers: { Authorization: `Bearer ${secrets.get('TOKEN')}` },
 })
+if (!res.ok) return [{ label: '查询失败', value: `HTTP ${res.status}`, color: 'red' }]
+
 const data = res.json()
 return [
-  { label: '余额', value: `$${data.balance}`, color: data.balance < 1 ? 'red' : 'green' },
+  { label: '余额', value: `$${data.balance}`, color: data.balance &lt; 1 ? 'red' : 'green' },
+  { label: '已用', value: format.pct(data.used / data.quota), color: 'muted' },
 ]</pre>
-        <p class="flow-editor__hint">
-          ⚠️ 脚本无法访问文件系统 / 本机与私有网段地址，`import` / `require` 不可用；出网只走 `http`。
-        </p>
       </details>
     </div>
   </section>

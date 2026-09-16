@@ -67,7 +67,7 @@ UI设计请使用:ui-ux-pro-max-skill
 |---|---|---|
 | `floating` | 悬浮窗（状态灯） | 56×56，transparent，alwaysOnTop |
 | `main` | 设置主窗 | 800×600，`visible:false`，按需显示 |
-| `tooltip` | 悬浮信息提示窗 | 300×190，`visible:false`，`focusable:false`，点击穿透 |
+| `tooltip` | 悬浮信息提示窗 | 300×260，`visible:false`，`focusable:false`，点击穿透 |
 
 - `tooltip` 采用「声明 + 隐藏 + 按需显示」，不在运行时创建窗口，因此**不需要** `core:webview:allow-create-webview-window`。
 - 点击穿透在 Rust 侧 `setup` 中设置（`set_ignore_cursor_events(true)`），Rust 调用不经过 capability 校验，无需额外权限。
@@ -81,7 +81,7 @@ UI设计请使用:ui-ux-pro-max-skill
 - 定位是纯函数 `placeTooltip`（`src/lib/tooltip.ts`），优先放在悬浮窗**未贴边**的一侧，越界自动换侧。
 - 拖拽 / 点击 / 贴边重算时必须 `dismissTooltip()`：`startDragging()` 后指针交给系统，`pointerleave` 可能不再触发。
 - tooltip 是独立窗口，**不适用**方形/横条/竖条三形态适配；其尺寸由 `tauri.conf.json` 给出，内容用 flex + 省略号自适应。
-- 展示字段：provider、phase、Endpoint（见「代理解析器」）、`prompt`（用户提问）、token 用量。**不展示 session id**。
+- 展示字段（自上而下顺序固定）：provider/phase、Endpoint（见「代理解析器」）、token 用量、**流程脚本拓展字段 + 刷新标注**、`prompt`（用户提问）。拓展字段紧跟 token 行、提问永远在最后（不要插回提问下面，否则与「字段属用量类」的视觉分组错位）。**不展示 session id**。
 - ⚠️ **指示灯不要加 `title` 属性**：`title` 会触发 Windows 原生文字提示，与悬浮窗自己的 tooltip 重复且更简陋。无障碍信息只走 `aria-label`（不产生可见提示）。
 - ⚠️ tooltip 的 token 单位来自模块配置，因此 tooltip 窗口**必须**在 `App.vue` 中 `floatingModules.start()`；否则它永远停留在 `fallbackConfig` 的默认单位，主窗口切换后不生效。
 
@@ -127,6 +127,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - 档案结构含 `extensions`（JSON map），**加拓展字段不改协议**。信息卡拓展的 per-endpoint 配置（流程脚本 `FlowConfig`）就整体存在 `extensions["flow"]` 下，不给 `EndpointProfile` 加字段。
 - ⚠️ `normalize_host_port` 早期把 `[::1]:8080` 切成 `[::1:8080`（漏 `]`），会让 loopback 判定失效、本地地址被登记；已由 `normalize_host_port_keeps_ipv6_brackets_and_port` 锁定。
 - 主窗 tabbar 走 WAI-ARIA Tabs：roving tabindex + ←/→/Home/End；面板容器加 `.main-window--wide` 以突破 `.ufo-card` 的 `max-w-md` 限宽。
+- ⚠️ 「信息卡拓展」/「会话记录」两面板的左右两列**高度各自独立**（grid `items-start`，不让列互相拉伸）；左侧列表卡固定高（`height: clamp(300px,46vh,520px)` + flex 列，列表 `flex-1` 内部滚动），宽度随网格列 flex。别改回 `max-h`：那会让左卡随内容长高、撑开右侧，并把底部「清除全部 / 手动添加」挤出可视区。
 - 读写分离：读命令 `get_endpoint_profiles` 给三窗口；`add/delete_endpoint_profile` 只在 `main-module-settings.json` 授权（仅 main 窗口）。
 - ⚠️ 拓展面板的反馈**不能用 `window.alert` / `confirm`**：装了 `tauri-plugin-prevent-default`，原生对话框会被拦；一律走 `role="status"` 行内提示，移除用两步确认。
 - ⚠️ tick 读配置必须走 `profiles.with_profile(id, …)`（只 clone 该档案的 extensions），**不要**用 `snapshot()`——后者整表 clone 含脚本正文（单份上限 64KB × 64 条），每 500ms 一次是纯浪费。
@@ -138,12 +139,14 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - **执行方式**：内嵌 QuickJS（`rquickjs`，features 只 `std/parallel/classes/properties`，**刻意不含 `loader`/`dyn-load`** ⇒ 脚本 `import`/`require` 不可用，没有读文件/隐式出网路径）。沙盒三件套：内存帽 2MB + 中断超时 + 无模块加载器。见 `flow/runner.rs`。
 - **注入的宿主 API**（唯一能做的事）：`http.get/post/request`（Rust 侧 `ureq` 代发）、`secrets.get`、`cache.get/set`、`format.num/pct/bytes`、只读 `ctx.endpoint/session/lastResult`。`console` 只写内存缓冲、**不广播**（防脚本 `log(secrets.get('K'))` 泄漏）。
 - ⚠️ 出网只走 `http`，且 `validate_http_url` 拦住 loopback / 私网 / 链路本地 / CGNAT / 云元数据 / 无点短主机名。固有代价：域名解析到内网 IP 挡不住（不发连接无法预解），文档已注明。
+- **为什么把出网收成一个 `http`**（改沙盒能力前先读这段）：脚本是用户原文，安全性完全依赖「他能碰到什么」。QuickJS 本身没有任何 syscall —— 没有 `loader`/`dyn-load` feature 就连 `import`/`require` 都不存在，JS 层也没有 fs/net/child_process 这些宿主接口。因此脚本唯一能「影响外界」的路径，就是我们主动 `globals.set` 进去的那几个闭包。收成一条通道换来三件事：① **地址策略只有一处可管** —— `validate_http_url` 把 loopback/私网/云元数据挡在发起连接之前，若同时开放 socket 或模块加载，端口扫描与 SSRF 根本无从拦起。② **资源可控** —— 单次请求 500ms–15s 超时、响应体 256KB 封顶，配 worker 串行队列，不会出现一个脚本把带宽和内存吃光。③ **可审计、可静默** —— agent 全停 = 零出网（调度只看存活会话），用户能靠「网络有没有动静」判断脚本在干什么；多一条出网路径这条不变量就破了。要加新能力（如读本地文件、走 IPC）必须同样收敛成一个带策略校验的宿主闭包，绝不能给脚本原生网络。
 - **调度**：status monitor 每轮（约 500ms）调 `flow.tick`，**只对「当前存活会话涉及的 endpoint」且到点者入队**；口径是「还在 `StatusSnapshot.sessions` 里」，不看 phase（黄/绿/闪烁灯都可能被悬停）。agent 全停 = 零出网。跑在专用 worker 线程、串行执行；结果按**会话 key** 索引广播 `flow-results`，tooltip 零归一逻辑直接查表。
+- ⚠️ 广播值类型是 `FlowSessionResult { fields, updated_at_ms, interval_sec }`（不是裸 `FlowField[]`）：tooltip 要在字段下方标注「每 Ns 刷新 · 更新于 HH:MM:SS」，让用户能分辨屏上是刚跑的值还是旧值（脚本挂掉时字段整块不显，更需要时间锚点）。`interval_sec` 由 `FlowJob` 透传进 `EndpointState`，`apply_result` 每次回写都刷新（改间隔不改脚本时不触发 invalidate，标注也要跟上）。格式化在 `src/lib/flow.ts` 的 `formatFlowInterval` / `formatFlowUpdatedAt`；`isFlowSnapshot` 对**整份结果对象**严格校验（缺新鲜度字段的旧形态直接拒绝）。
 - ⚠️ **同 endpoint 多会话只跑一次**（`running` 去抖），但结果回填到每个会话 key。连续失败按 `interval × 2^n` 指数退避、封顶 600s（否则脚本挂了还每秒打网）。
 - **密钥**：`secrets.get(name)` 按名字从 OS 凭据管理器取（`keyring`，service = `<APP_ID>/flow/<endpoint_id>`）；值不落盘、不进档案、不进日志。⚠️ Windows 凭据管理器**不能按 service 列举**，因此档案 extensions 里存一份 `secret_names` 名字清单——它是删档案时唯一能级联清凭据的依据，清单丢了凭据就成了孤儿。
 - ⚠️ `secret_names` 与 `script_hash` 由**服务端权威维护**：`save_endpoint_flow` 会保留旧 `secret_names`、按脚本内容重算 `script_hash`，**不接受**前端传入这两项（前端漏传会清空凭据记账）。
 - `script_hash`（FNV-1a，非加密）只用于判断「改没改脚本」：脚本没改才把上次结果作为 `ctx.lastResult` 继承（增量语义），改了就不给（否则语义错位）。
-- ⚠️ `parse_fields` 的 `MAX_FIELDS=4` 与 tooltip 高度（`tauri.conf.json` 的 240）绑定：加字段数要同步看窗口尺寸，超出会被 clip。
+- ⚠️ `parse_fields` 的 `MAX_FIELDS=4` 与 tooltip 高度（`tauri.conf.json` 的 260）绑定：加字段数要同步看窗口尺寸，超出会被 clip。一屏预算（含刷新标注）：head + Endpoint + token + 4 字段 + 标注 + 提问 1 行 ≈ 236px；提问靠 `--compact` 压到 1 行，**不要再给它加行数**，否则标注会被挤出可视区。
 - ⚠️ rquickjs 闭包两个坑（已踩过）：① 参数生命周期必须写外层具名 `'js`，不能写 `'_`（否则 E0106 / lifetime may not live long enough）；② 可选参数用 `prelude::Opt` 而非 `Option`——`Option` 没实现 `FromParam`，会被当成**必填**参数。
 - ⚠️ release 是 `panic = "abort"`：`flow` 全模块宿主闭包不得 panic（不 unwrap/expect/索引/slice），失败一律变 `Err(String)` 或跳过，否则一次 panic 带走整个 App。
 - 前端：编辑器 `EndpointFlowEditor.vue` + `lib/flow.ts` + `stores/flowResults.ts`；`flowResults.start()` **必须在 `App.vue` 调用**（tooltip 要用它，和 tokenUnit 同坑，不启动永远收不到数据）。`run_flow_test` 不进调度队列，日志回显（仅主窗口）；⚠️ 它是 **`async` 命令 + `spawn_blocking`**——非 async 命令跑在主线程，一次测试最坏阻塞 15s 会冻结窗口事件循环；带引用入参的 async 命令按 tauri 宏要求必须返回 `Result`。

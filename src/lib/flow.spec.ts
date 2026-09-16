@@ -3,6 +3,8 @@ import {
   emptyFlowSnapshot,
   flowColorClass,
   flowFromExtensions,
+  formatFlowInterval,
+  formatFlowUpdatedAt,
   isFlowField,
   isFlowSnapshot,
   type FlowField,
@@ -11,10 +13,15 @@ import {
 /** 一条合法字段，字段与 Rust `flow::FlowField` 的序列化结果对齐。 */
 const field: FlowField = { label: '余额', value: '¥12.30', color: 'green' }
 
+/** 一份合法会话结果（字段 + 新鲜度），与 Rust `flow::FlowSessionResult` 对齐。 */
+function result(overrides: Partial<{ fields: FlowField[]; updated_at_ms: number; interval_sec: number }> = {}) {
+  return { fields: [field], updated_at_ms: 1_700_000_000_000, interval_sec: 60, ...overrides }
+}
+
 describe('isFlowSnapshot', () => {
   it('accepts a well-formed snapshot', () => {
     expect(
-      isFlowSnapshot({ revision: 0, sessions: { 'claude:s1': [field] } }),
+      isFlowSnapshot({ revision: 0, sessions: { 'claude:s1': result() } }),
     ).toBe(true)
   })
 
@@ -39,8 +46,14 @@ describe('isFlowSnapshot', () => {
   })
 
   it('rejects when any field is malformed', () => {
-    expect(isFlowSnapshot({ revision: 1, sessions: { k: [{ label: 'a' }] } })).toBe(false)
+    expect(isFlowSnapshot({ revision: 1, sessions: { k: result({ fields: [{ label: 'a' } as never] }) } })).toBe(false)
     expect(isFlowSnapshot({ revision: 1, sessions: { k: 'not-array' } })).toBe(false)
+  })
+
+  it('rejects a result missing freshness metadata', () => {
+    // 缺 updated_at_ms / interval_sec 的旧形态不再认（tooltip 要靠它们标刷新时间）。
+    expect(isFlowSnapshot({ revision: 1, sessions: { k: { fields: [field] } } })).toBe(false)
+    expect(isFlowSnapshot({ revision: 1, sessions: { k: result({ updated_at_ms: NaN }) } })).toBe(false)
   })
 })
 
@@ -66,6 +79,36 @@ describe('flowColorClass', () => {
     expect(flowColorClass(null)).toBe('muted')
     expect(flowColorClass(undefined)).toBe('muted')
     expect(flowColorClass('purple' as never)).toBe('muted')
+  })
+})
+
+describe('formatFlowInterval', () => {
+  it('formats seconds / minutes / hours compactly', () => {
+    expect(formatFlowInterval(30)).toBe('30s')
+    expect(formatFlowInterval(60)).toBe('1min')
+    expect(formatFlowInterval(90)).toBe('1.5min')
+    expect(formatFlowInterval(3600)).toBe('1h')
+    expect(formatFlowInterval(5400)).toBe('1.5h')
+  })
+
+  it('returns empty for missing or sub-second values', () => {
+    expect(formatFlowInterval(0)).toBe('')
+    expect(formatFlowInterval(NaN)).toBe('')
+    expect(formatFlowInterval(undefined)).toBe('')
+  })
+})
+
+describe('formatFlowUpdatedAt', () => {
+  it('renders a local HH:MM:SS clock', () => {
+    // 用本地时区构造，断言不依赖具体时区：格式必须是 00:00:00 形态。
+    const date = new Date(2026, 0, 2, 3, 4, 5)
+    expect(formatFlowUpdatedAt(date.getTime())).toBe('03:04:05')
+  })
+
+  it('returns empty for missing or non-positive values', () => {
+    expect(formatFlowUpdatedAt(0)).toBe('')
+    expect(formatFlowUpdatedAt(null)).toBe('')
+    expect(formatFlowUpdatedAt(NaN)).toBe('')
   })
 })
 

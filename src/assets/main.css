@@ -434,10 +434,20 @@ html.is-tooltip-window #app {
   overflow-wrap: anywhere;
 }
 
-/* 有拓展字段时提问压到单行，把高度让给字段行。 */
+/*
+ * 有拓展字段时提问压到单行，把高度让给字段行 + 刷新标注。
+ * ⚠️ tooltip 固定高（tauri.conf.json 240）：字段（≤4）+ 标注已占掉约 86px，
+ * 提问再放宽就会把标注挤出可视区，这里不再加行数。
+ */
 .tooltip-prompt--compact .tooltip-prompt__text {
   -webkit-line-clamp: 1;
   line-clamp: 1;
+}
+
+/* 拓展字段刷新标注：小字次文本色，紧跟字段、让在提问块之前。 */
+.tooltip-stamp {
+  @apply m-0 shrink-0 truncate text-[10px] leading-tight tabular-nums;
+  color: var(--ufo-muted);
 }
 
 /* 拓展字段值的语义色：与状态灯同一套变量，缺失/muted 走次文本色。 */
@@ -605,6 +615,8 @@ html.is-tooltip-window #app {
 
 .ep-panel {
   @apply grid w-full min-h-0 gap-3;
+  /* align-items:start：左右两列各自按内容定高，互不拉伸（否则矮的一侧被高的一侧撑开）。 */
+  @apply items-start;
   grid-template-columns: minmax(240px, 1fr) minmax(0, 1.4fr);
 }
 
@@ -624,8 +636,24 @@ html.is-tooltip-window #app {
   @apply my-0 min-w-0;
 }
 
+/*
+ * 左侧 endpoint 列表卡：高度固定（与右侧编辑器的内容高度无关），宽度随网格列伸缩。
+ * 覆盖 .ufo-card 的 grid：改成 flex 列，让列表自身吃掉剩余高度并内部滚动，
+ * 底部「手动添加」表单始终贴在卡片底部。
+ */
+.ep-list-card {
+  @apply flex flex-col;
+  height: clamp(300px, 46vh, 520px);
+}
+
+/* 头部与底部表单/提示不参与压缩：只有列表在固定高度内滚动。 */
+.ep-list-card > :not(.ep-list),
+.sr-list-card > :not(.sr-list) {
+  @apply shrink-0;
+}
+
 .ep-list {
-  @apply m-0 max-h-[46vh] list-none overflow-y-auto p-0;
+  @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
   @apply grid gap-1.5;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
@@ -930,14 +958,58 @@ html.is-tooltip-window #app {
   color: var(--ufo-text);
 }
 
-.flow-editor__ref-body {
-  @apply m-0 mt-2 overflow-x-auto whitespace-pre text-[11px] leading-relaxed;
-  color: var(--ufo-muted);
+/* API 参考：逐项 dl，说明文字要能自然换行；旧版整块 pre 会在窄列里横向溢出。 */
+.flow-editor__ref-list {
+  @apply m-0 mt-2 grid gap-2;
+}
+
+.flow-editor__ref-item dt {
+  @apply flex flex-wrap gap-1;
+}
+
+.flow-editor__ref-item code {
+  @apply rounded-[6px] px-1 py-0.5 text-[11px];
+  background: var(--ufo-input);
+  color: var(--ufo-text);
   font-family: var(--font-mono);
+}
+
+.flow-editor__ref-item dd {
+  @apply m-0 mt-1 text-[11.5px] leading-relaxed;
+  color: var(--ufo-muted);
+  overflow-wrap: anywhere;
+}
+
+.flow-editor__ref-item dd code {
+  @apply rounded-[4px] px-1 py-0 text-[11px];
+  background: var(--ufo-input);
+  color: var(--ufo-text);
+  font-family: var(--font-mono);
+}
+
+.flow-editor__ref-item dd em {
+  @apply not-italic font-semibold;
+  color: var(--ufo-text);
+}
+
+/* 示例代码：保留换行，但超宽时换行而非溢出（长 URL 常见）。 */
+.flow-editor__ref-body {
+  @apply m-0 mt-2 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-all rounded-[8px] p-2 text-[11px] leading-relaxed;
+  color: var(--ufo-muted);
+  background: var(--ufo-input);
+  font-family: var(--font-mono);
+  scrollbar-width: thin;
 }
 
 .flow-editor__ref .flow-editor__hint {
   @apply mt-2;
+}
+
+.flow-editor__ref .flow-editor__hint code {
+  @apply rounded-[4px] px-1 py-0 text-[11px];
+  background: var(--ufo-input);
+  color: var(--ufo-text);
+  font-family: var(--font-mono);
 }
 
 /*
@@ -946,6 +1018,8 @@ html.is-tooltip-window #app {
  */
 .sr-panel {
   @apply grid w-full min-h-0 gap-3;
+  /* 左右两列各自按内容定高，不互相拉伸（与信息卡拓展一致）。 */
+  @apply items-start;
   grid-template-columns: minmax(240px, 1fr) minmax(0, 1.4fr);
 }
 
@@ -965,9 +1039,18 @@ html.is-tooltip-window #app {
   @apply my-0 min-w-0;
 }
 
+/*
+ * 左侧会话记录列表卡：与右侧详情高度分开算，卡片自身固定高度（同 ep-list-card），
+ * 列表吃满剩余高度并内部滚动 —— 否则行多时会把底部「清除全部」挤出可视区。
+ */
+.sr-list-card {
+  @apply flex flex-col;
+  height: clamp(300px, 46vh, 520px);
+}
+
 /* 列表可滚动：行数上限 200，不封顶会把右侧详情挤下去。 */
 .sr-list {
-  @apply m-0 max-h-[46vh] list-none overflow-y-auto p-0;
+  @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
   @apply grid gap-1.5;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;

@@ -6,6 +6,7 @@ import {
   isFlowSnapshot,
   FLOW_RESULTS_EVENT,
   type FlowField,
+  type FlowSessionResult,
   type FlowSnapshot,
 } from '@/lib/flow'
 
@@ -27,7 +28,7 @@ export const useFlowResultsStore = defineStore('flow-results', {
   }),
 
   getters: {
-    /** 会话 key → 字段表；tooltip 按 `session.key` 直接查。 */
+    /** 会话 key → 该会话 endpoint 的拓展结果（字段 + 新鲜度）；tooltip 按 `session.key` 直接查。 */
     bySession: (state) => state.snapshot.sessions,
   },
 
@@ -38,10 +39,15 @@ export const useFlowResultsStore = defineStore('flow-results', {
       this.snapshot = snapshot
     },
 
+    /** 取某会话完整的拓展结果（无则 null，tooltip 用它显示刷新时间标注）。 */
+    resultFor(sessionKey: string | null | undefined): FlowSessionResult | null {
+      if (!sessionKey) return null
+      return this.snapshot.sessions[sessionKey] ?? null
+    },
+
     /** 取某会话应显示的字段（无则空数组，调用方据此不渲染该行）。 */
     fieldsFor(sessionKey: string | null | undefined): FlowField[] {
-      if (!sessionKey) return []
-      return this.snapshot.sessions[sessionKey] ?? []
+      return this.resultFor(sessionKey)?.fields ?? []
     },
 
     async start() {

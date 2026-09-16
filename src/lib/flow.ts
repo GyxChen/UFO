@@ -30,7 +30,22 @@ export interface FlowOutcome {
 }
 
 /**
- * 广播快照：按**会话 key** 索引该会话 endpoint 的字段（后端 `flow::FlowSnapshot`）。
+ * 一个会话应展示的拓展字段 + 新鲜度（后端 `flow::FlowSessionResult`）。
+ *
+ * 只给字段的话用户无从判断屏上的余额/用量是刚跑的还是旧值，因此结果额外带：
+ * 生成时刻 + 该 endpoint 配置的轮询间隔，tooltip 据此标注「更新于 · 每 Ns 刷新」。
+ */
+export interface FlowSessionResult {
+  /** 清洗后的拓展字段。 */
+  fields: FlowField[]
+  /** 本批字段的生成时刻（毫秒）。 */
+  updated_at_ms: number
+  /** 配置的轮询间隔（秒）；退避只拉长实际间隔，标注取配置原值。 */
+  interval_sec: number
+}
+
+/**
+ * 广播快照：按**会话 key** 索引该会话 endpoint 的字段与新鲜度（后端 `flow::FlowSnapshot`）。
  *
  * 用会话 key 而非 endpoint id 做键，让 tooltip 零归一逻辑（它手里只有会话 key）；
  * endpoint 归一口径只在后端算一次。
@@ -38,8 +53,8 @@ export interface FlowOutcome {
 export interface FlowSnapshot {
   /** 每次内容变化递增，供前端丢弃乱序事件。 */
   revision: number
-  /** 会话 key → 该会话 endpoint 的拓展字段（无字段/未启用的会话不进表）。 */
-  sessions: Record<string, FlowField[]>
+  /** 会话 key → 该会话 endpoint 的拓展结果（无字段/未启用的会话不进表）。 */
+  sessions: Record<string, FlowSessionResult>
 }
 
 /**
@@ -118,9 +133,13 @@ export function isFlowSnapshot(value: unknown): value is FlowSnapshot {
   if (!Number.isSafeInteger(snapshot.revision) || (snapshot.revision ?? 0) < 0) return false
   if (!snapshot.sessions || typeof snapshot.sessions !== 'object') return false
   return Object.values(snapshot.sessions).every(
-    (fields: unknown) =>
-      Array.isArray(fields) &&
-      fields.every((field) => isFlowField(field ?? undefined)),
+    (result: unknown) =>
+      !!result &&
+      typeof result === 'object' &&
+      Array.isArray((result as FlowSessionResult).fields) &&
+      (result as FlowSessionResult).fields.every((field) => isFlowField(field ?? undefined)) &&
+      Number.isSafeInteger((result as FlowSessionResult).updated_at_ms) &&
+      Number.isFinite((result as FlowSessionResult).interval_sec),
   )
 }
 
@@ -172,6 +191,35 @@ export function flowFromExtensions(
       ? value.secret_names.filter((name): name is string => typeof name === 'string')
       : [],
   }
+}
+
+/**
+ * 把轮询间隔（秒）写成简短的刷新标注：`60` → `60s`、`90` → `1.5min`、`3600` → `1h`。
+ *
+ * tooltip 一行放不下长句，因此取「数值 + 单位」紧凑形态；非法/缺失回落空串（调用方不渲染）。
+ */
+export function formatFlowInterval(intervalSec: number | null | undefined): string {
+  if (!Number.isFinite(intervalSec) || !intervalSec || intervalSec < 1) return ''
+  if (intervalSec < 60) return `${Math.round(intervalSec)}s`
+  if (intervalSec < 3600) {
+    const minutes = intervalSec / 60
+    // 整分不带小数，非整分保留一位（1.5min 比 1min30s 更短更好读）。
+    return Number.isInteger(minutes) ? `${minutes}min` : `${minutes.toFixed(1)}min`
+  }
+  const hours = intervalSec / 3600
+  return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`
+}
+
+/**
+ * 把结果生成时刻（epoch 毫秒）写成 `HH:MM:SS`；无效值回落空串。
+ *
+ * tooltip 只在悬停那几秒可见，用「当天时刻」而非相对时间，避免用户还要换算。
+ */
+export function formatFlowUpdatedAt(ms: number | null | undefined): string {
+  if (!Number.isFinite(ms) || !ms || ms <= 0) return ''
+  const date = new Date(ms)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 /**
