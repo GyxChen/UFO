@@ -36,13 +36,13 @@
 
 :root {
   color-scheme: dark;
-  --ufo-bg: rgba(61, 61, 61, 0.8);
+  --ufo-bg: rgba(61, 61, 61, 0.80);
   /* 主窗实色，不做透明合成 / backdrop-filter */
   --ufo-bg-main: #3d3d3d;
   --ufo-surface: #2a2a2a;
   --ufo-surface-2: #323232;
   --ufo-border: rgba(255, 255, 255, 0.08);
-  --ufo-border-strong: rgba(255, 255, 255, 0.14);
+  --ufo-border-strong: rgba(255, 255, 255, 0.2);
   --ufo-text: #f3f4f6;
   --ufo-muted: #a3a3a3;
   --ufo-accent: #34d399;
@@ -385,7 +385,7 @@ html.is-tooltip-window #app {
 
 .tooltip-row--head {
   @apply gap-1.5 pb-1.5;
-  border-bottom: 1px solid var(--ufo-border);
+  border-bottom: 1px solid var(--ufo-border-strong);
 }
 
 .tooltip-row__label {
@@ -419,7 +419,7 @@ html.is-tooltip-window #app {
 /* 提问区块：标签在上、正文在下，正文最多 4 行后省略。 */
 .tooltip-prompt {
   @apply mt-auto flex min-h-0 flex-col gap-1;
-  border-top: 1px solid var(--ufo-border);
+  border-top: 1px solid var(--ufo-border-strong);
   padding-top: 6px;
 }
 
@@ -435,13 +435,25 @@ html.is-tooltip-window #app {
 }
 
 /*
- * 有拓展字段时提问压到单行，把高度让给字段行 + 刷新标注。
- * ⚠️ tooltip 固定高（tauri.conf.json 240）：字段（≤4）+ 标注已占掉约 86px，
+ * 有拓展字段时提问压到单行，把高度让给字段行 + 更新时间标注。
+ * ⚠️ tooltip 固定高（tauri.conf.json 260）：字段（≤4）+ 标注 + 分组分隔线已占掉约 86px，
  * 提问再放宽就会把标注挤出可视区，这里不再加行数。
  */
 .tooltip-prompt--compact .tooltip-prompt__text {
   -webkit-line-clamp: 1;
   line-clamp: 1;
+}
+
+/*
+ * 拓展字段分组：流程脚本字段自成一组，顶部强分隔线与上方基础信息
+ * （provider / Endpoint / token）切分，也和下方提问块区分。
+ * 用 --ufo-border-strong（0.14）比行内弱边框（0.08）醒目近一倍；
+ * 零新增硬编码色，复用同一套 token。
+ */
+.tooltip-section {
+  @apply flex min-h-0 flex-col gap-1.5;
+  border-top: 1px solid var(--ufo-border-strong);
+  padding-top: 6px;
 }
 
 /* 拓展字段刷新标注：小字次文本色，紧跟字段、让在提问块之前。 */

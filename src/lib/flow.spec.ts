@@ -3,7 +3,6 @@ import {
   emptyFlowSnapshot,
   flowColorClass,
   flowFromExtensions,
-  formatFlowInterval,
   formatFlowUpdatedAt,
   isFlowField,
   isFlowSnapshot,
@@ -51,7 +50,8 @@ describe('isFlowSnapshot', () => {
   })
 
   it('rejects a result missing freshness metadata', () => {
-    // 缺 updated_at_ms / interval_sec 的旧形态不再认（tooltip 要靠它们标刷新时间）。
+    // 缺 updated_at_ms / interval_sec 的旧形态不再认（tooltip 要靠 updated_at_ms 标更新时间；
+    // interval_sec 已不展示但仍在协议里，后端调度/退避要用）。
     expect(isFlowSnapshot({ revision: 1, sessions: { k: { fields: [field] } } })).toBe(false)
     expect(isFlowSnapshot({ revision: 1, sessions: { k: result({ updated_at_ms: NaN }) } })).toBe(false)
   })
@@ -79,22 +79,6 @@ describe('flowColorClass', () => {
     expect(flowColorClass(null)).toBe('muted')
     expect(flowColorClass(undefined)).toBe('muted')
     expect(flowColorClass('purple' as never)).toBe('muted')
-  })
-})
-
-describe('formatFlowInterval', () => {
-  it('formats seconds / minutes / hours compactly', () => {
-    expect(formatFlowInterval(30)).toBe('30s')
-    expect(formatFlowInterval(60)).toBe('1min')
-    expect(formatFlowInterval(90)).toBe('1.5min')
-    expect(formatFlowInterval(3600)).toBe('1h')
-    expect(formatFlowInterval(5400)).toBe('1.5h')
-  })
-
-  it('returns empty for missing or sub-second values', () => {
-    expect(formatFlowInterval(0)).toBe('')
-    expect(formatFlowInterval(NaN)).toBe('')
-    expect(formatFlowInterval(undefined)).toBe('')
   })
 })
 

@@ -32,8 +32,9 @@ export interface FlowOutcome {
 /**
  * 一个会话应展示的拓展字段 + 新鲜度（后端 `flow::FlowSessionResult`）。
  *
- * 只给字段的话用户无从判断屏上的余额/用量是刚跑的还是旧值，因此结果额外带：
- * 生成时刻 + 该 endpoint 配置的轮询间隔，tooltip 据此标注「更新于 · 每 Ns 刷新」。
+ * 只给字段的话用户无从判断屏上的余额/用量是刚跑的还是旧值，因此结果额外带生成时刻，
+ * tooltip 据此标注「更新于 HH:MM:SS」；`interval_sec` 仍走协议 + 严格校验，
+ * 但仅作后端调度/退避用，前端已不展示（按需求移除「每 Ns 刷新」）。
  */
 export interface FlowSessionResult {
   /** 清洗后的拓展字段。 */
@@ -191,23 +192,6 @@ export function flowFromExtensions(
       ? value.secret_names.filter((name): name is string => typeof name === 'string')
       : [],
   }
-}
-
-/**
- * 把轮询间隔（秒）写成简短的刷新标注：`60` → `60s`、`90` → `1.5min`、`3600` → `1h`。
- *
- * tooltip 一行放不下长句，因此取「数值 + 单位」紧凑形态；非法/缺失回落空串（调用方不渲染）。
- */
-export function formatFlowInterval(intervalSec: number | null | undefined): string {
-  if (!Number.isFinite(intervalSec) || !intervalSec || intervalSec < 1) return ''
-  if (intervalSec < 60) return `${Math.round(intervalSec)}s`
-  if (intervalSec < 3600) {
-    const minutes = intervalSec / 60
-    // 整分不带小数，非整分保留一位（1.5min 比 1min30s 更短更好读）。
-    return Number.isInteger(minutes) ? `${minutes}min` : `${minutes.toFixed(1)}min`
-  }
-  const hours = intervalSec / 3600
-  return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`
 }
 
 /**

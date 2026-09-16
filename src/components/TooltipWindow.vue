@@ -12,7 +12,6 @@ import {
 } from '@/lib/agent-status'
 import { placeTooltip, TOOLTIP_HOVER_EVENT, type TooltipHoverPayload } from '@/lib/tooltip'
 import {
-  formatFlowInterval,
   formatFlowUpdatedAt,
   flowColorClass,
   type FlowField,
@@ -98,18 +97,15 @@ const extensionResult = computed(() => flowResults.resultFor(session.value?.key)
 const extensionFields = computed<FlowField[]>(() => extensionResult.value?.fields ?? [])
 
 /**
- * 刷新标注：`每 Ns 刷新 · 更新于 HH:MM:SS`。让用户分辨屏上字段是刚跑的还是旧值
+ * 刷新标注：`更新于 HH:MM:SS`。让用户分辨屏上字段是刚跑的还是旧值
  * （脚本挂掉时 tooltip 直接不显字段，更需要这个时间锚点）。缺元信息时回落空串不渲染。
+ * 按需求不再展示「每 Ns 刷新」——刷新周期对用户是噪音，只留时间锚点。
  */
 const extensionStamp = computed(() => {
   const result = extensionResult.value
   if (!result) return ''
-  const interval = formatFlowInterval(result.interval_sec)
   const updated = formatFlowUpdatedAt(result.updated_at_ms)
-  if (!interval && !updated) return ''
-  if (!updated) return `每 ${interval} 刷新`
-  if (!interval) return `更新于 ${updated}`
-  return `每 ${interval} 刷新 · 更新于 ${updated}`
+  return updated ? `更新于 ${updated}` : ''
 })
 
 /** 有拓展字段时，提问行压缩为单行，把高度让给字段。 */
@@ -196,10 +192,11 @@ onBeforeUnmount(() => {
       </div>
 
       <!--
-        拓展字段：紧跟 token 行之后（语义同属「用量类」），来自该 endpoint 的流程脚本。
-        空则整块不渲染；末尾一行小字标刷新周期与更新时间。
+        拓展字段分组：紧跟 token 行之后（语义同属「用量类」），来自该 endpoint 的流程脚本。
+        独立分组容器 + 顶部强分隔线，与上方基础信息、下方提问块切分；
+        空则整块不渲染；末尾一行小字标更新时间。
       -->
-      <template v-if="extensionFields.length">
+      <div v-if="extensionFields.length" class="tooltip-section">
         <div
           v-for="(field, index) in extensionFields"
           :key="index"
@@ -215,7 +212,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
         <p v-if="extensionStamp" class="tooltip-stamp">{{ extensionStamp }}</p>
-      </template>
+      </div>
 
       <!-- 用户提问内容：有拓展字段时压到单行，完整内容在 title。 -->
       <div v-if="session.prompt" class="tooltip-prompt" :class="{ 'tooltip-prompt--compact': compactPrompt }">
