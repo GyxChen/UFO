@@ -1159,6 +1159,14 @@ html.is-tooltip-window #app {
   overflow-wrap: anywhere;
 }
 
+/* Endpoint 行的本地代理副标注：上游后面用小字灰显「经本地代理 <地址>」。 */
+.sr-detail__endpoint-local {
+  @apply ml-1 text-[11px];
+  color: var(--ufo-muted);
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
 .sr-detail__prompt {
   @apply grid gap-1 rounded-[10px] border p-2.5;
   background: var(--ufo-input);

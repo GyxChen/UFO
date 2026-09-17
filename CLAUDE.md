@@ -57,7 +57,7 @@ UI设计请使用:ui-ux-pro-max-skill
 - 预览参考：`reference/mock/main-window-a-matte.html`
 
 ## 悬浮窗开发
-悬浮窗将来会引入更多的组件,因此悬浮窗的开发提示,需要在我更改悬浮窗的时候需要写明到claude.md中.
+悬浮窗将来会引入更多的组件,因此悬浮窗的开发提示
 
 ### 窗口构成
 
@@ -165,6 +165,8 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - ⚠️ **prompt 现在长期明文驻留磁盘**：原先只在 inbox 里约 500ms 就被消费删除，落库后会长期留在 `session-records.db` 且在主窗口「会话记录」页可见。提问可能含密钥/私有代码，这是已知代价（见下）。
 - ⚠️ **「清除全部」只删归档、不强清内存**：仍在运行的会话会在下一个 hook 事件后被重新记录（面板文案与详情都按此写明）。要连灯一起清是另一种语义（需 `registry.remove`），本轮按需求选择不这么做。
 - **存活标记在前端 join**：列表行的「灯亮着」按 `agentStatus.sessions` 现算，不给存档加存活态字段。
+- **Endpoint 展示 = `upstream_url ?? base_url`**（与 tooltip 的 `displayEndpoint` 同一口径）：`base_url` 是会话实际连的地址（用 cc-switch 时就是 `127.0.0.1:<port>`），`upstream_url` 是刷盘那一刻代理解析器反查出的上游。**两者都要存** —— 只存 base_url 会让面板一直显示 localhost；只存上游则丢失「经哪个本地代理转发」的副标注（`recordLocalNote` 用它）。前端读法是 `src/lib/session-records.ts` 的 `recordEndpoint` / `recordLocalNote`。
+- ⚠️ `upstream_url` 随 `SessionSnapshot` 一起落库，**不是**回填字段（`StoredSeed` 不含它）：reducer 的继承阶梯只用 `base_url`，上游由快照生成时按当前解析器现算。库内对应列由 `PRAGMA user_version` 2 迁移补上（v1 用 `ALTER TABLE ADD COLUMN`，老行取 NULL）。
 - **新命令注册三处**：`#[tauri::command]` + `permissions/status.toml` 的 `[[permission]]` + capability 文件。`get_session_records` 给三窗口（`default.json`），`delete_session_record`/`clear_session_records` 只在 `main-module-settings.json` 授权（仅 main）。
 - ⚠️ 会话记录面板同样**不能用 `window.alert`/`confirm`**（`tauri-plugin-prevent-default`），删除/清除都走两步确认 + `role="status"`。
 

@@ -15,6 +15,7 @@
 //! - [`SCHEMA_VERSION`]：**线协议**版本（`SessionRecord` ↔ 前端）。按项目硬规则**永不递增** ——
 //!   加字段一律 `Option` + `#[serde(default)]`，否则旧数据被静默丢弃。
 //! - `PRAGMA user_version`：**库内布局**版本。将来加列时递增它并配一次 `ALTER TABLE`，不动线协议。
+//!   （v1 → v2 加 `upstream_url` 列即是范例：migrate 里幂等 ADD COLUMN，老行取 NULL。）
 //!
 //! ## 锁纪律
 //! `rusqlite::Connection` 是 `Send` 而非 `Sync`，必须 `Mutex` 包住才能跨线程共享
@@ -37,7 +38,8 @@ use crate::status::{now_ms, Provider, SessionSnapshot, StoredSeed, TokenTotals};
 /// 线协议版本（前后端之间）；**不得递增**，见模块头「版本策略」。
 const SCHEMA_VERSION: u16 = 1;
 /// 库内布局版本，存 `PRAGMA user_version`；加列时递增并补一次迁移。
-const SCHEMA_USER_VERSION: i32 = 1;
+/// v2：新增 `upstream_url` 列（代理解析出的上游 endpoint）。
+const SCHEMA_USER_VERSION: i32 = 2;
 /// 存档行数上限：超出时按 `last_seen` 最旧优先淘汰，当前存活会话豁免。
 const MAX_RECORDS: usize = 200;
 /// 启动期一次性清理：`last_seen` 超过 30 天的行直接删。
@@ -66,9 +68,21 @@ pub struct SessionRecord {
     pub session_id: String,
     /// 用户最近一次提问原文（明文长期驻留磁盘，见 CLAUDE.md ⚠️）。
     pub prompt: Option<String>,
-    /// 会话实际使用的 API endpoint。存 `base_url`，**不存**反查出的 `upstream_url`
-    /// （后者是当前解析器现算的，跨重启可能已失效）。
+    /// 会话实际使用的 API endpoint。存 `base_url`（通常是本地代理监听地址）。
+    ///
+    /// ⚠️ 回填（[`StoredSeed`]）用的是本字段：reducer 的继承阶梯把 `base_url` 当作
+    /// 「会话原本的端点」，上游是快照生成时按当前解析器现算的，不进回填。
     pub base_url: Option<String>,
+    /// `base_url` 经代理解析器反查出的**上游 endpoint**（如 cc-switch 后的 `https://api.b.ai`）。
+    ///
+    /// 与 `SessionSnapshot.upstream_url` 同源：monitor 传进来的是已 `attach_upstreams`
+    /// 过的快照，因此这里落的是**刷盘那一刻**解析出的上游。
+    /// 展示口径与 tooltip 一致：`upstream_url ?? base_url`，上游优先、回落本地。
+    ///
+    /// 加字段一律 `Option` + `#[serde(default)]`（**不得升线协议 SCHEMA_VERSION**）；
+    /// 库里对应列由 `PRAGMA user_version` 迁移补上。
+    #[serde(default)]
+    pub upstream_url: Option<String>,
     /// 会话最早创建时刻：resume 时回填它，让指示灯排序位置不跳。
     pub started_at_ms: i64,
     /// 最后一次活动时刻：淘汰与 30 天过期都按它算。
@@ -403,6 +417,7 @@ fn record_from_snapshot(session: &SessionSnapshot) -> SessionRecord {
         session_id: session.session_id.clone(),
         prompt: session.prompt.clone(),
         base_url: session.base_url.clone(),
+        upstream_url: session.upstream_url.clone(),
         started_at_ms: session.started_at_ms,
         last_seen_at_ms: session.last_seen_at_ms,
         tokens: session.tokens,
@@ -419,7 +434,14 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute_batch("DROP TABLE IF EXISTS session_records;")?;
     }
     create_tables(conn)?;
-    // version==0 且表已建好、或列缺失（手改 / 早期版本）→ 已在 create_tables 用 IF NOT EXISTS 处理；
+    // v1 → v2：补 `upstream_url` 列。
+    // ⚠️ 幂等全靠忽略错误：`create_tables` 用的是 IF NOT EXISTS —— 库已存在时它不会补新列，
+    // 而全新库刚建的表已含该列，此时 ADD COLUMN 必然报 duplicate column，忽略即可。
+    // 这条路径同时覆盖「version==0 但表已存在」（早期版本 / 手改）的情形。
+    if version < 2 {
+        let _ = conn.execute_batch("ALTER TABLE session_records ADD COLUMN upstream_url TEXT;");
+    }
+    // version==0 且表已建好、或列缺失（手改 / 早期版本）→ 已在上面用 IF NOT EXISTS / ADD COLUMN 处理；
     // 这里只需确保 user_version 落定。
     conn.pragma_update(None, "user_version", SCHEMA_USER_VERSION)?;
     Ok(())
@@ -440,7 +462,8 @@ fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             input_tokens                 INTEGER NOT NULL DEFAULT 0,
             cache_creation_input_tokens  INTEGER NOT NULL DEFAULT 0,
             cache_read_input_tokens      INTEGER NOT NULL DEFAULT 0,
-            output_tokens                INTEGER NOT NULL DEFAULT 0
+            output_tokens                INTEGER NOT NULL DEFAULT 0,
+            upstream_url                 TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_session_records_last_seen
             ON session_records(last_seen_at_ms DESC);
@@ -454,8 +477,9 @@ fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 const UPSERT_SQL: &str = r#"
 INSERT INTO session_records
     (key, provider, session_id, prompt, base_url, started_at_ms, last_seen_at_ms,
-     input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+     input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens,
+     upstream_url)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
 ON CONFLICT(key) DO UPDATE SET
     prompt = excluded.prompt,
     base_url = excluded.base_url,
@@ -464,7 +488,8 @@ ON CONFLICT(key) DO UPDATE SET
     input_tokens = excluded.input_tokens,
     cache_creation_input_tokens = excluded.cache_creation_input_tokens,
     cache_read_input_tokens = excluded.cache_read_input_tokens,
-    output_tokens = excluded.output_tokens
+    output_tokens = excluded.output_tokens,
+    upstream_url = excluded.upstream_url
 "#;
 
 /// 在事务里 UPSERT 一行。
@@ -484,6 +509,7 @@ fn upsert(tx: &rusqlite::Transaction<'_>, record: &SessionRecord) -> rusqlite::R
             tokens.cache_creation_input_tokens as i64,
             tokens.cache_read_input_tokens as i64,
             tokens.output_tokens as i64,
+            record.upstream_url,
         ],
     )?;
     Ok(())
@@ -493,7 +519,8 @@ fn upsert(tx: &rusqlite::Transaction<'_>, record: &SessionRecord) -> rusqlite::R
 fn select_all(conn: &Connection) -> Vec<SessionRecord> {
     let mut statement = match conn.prepare(
         "SELECT key, provider, session_id, prompt, base_url, started_at_ms, last_seen_at_ms,
-                input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens
+                input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens,
+                upstream_url
          FROM session_records
          ORDER BY last_seen_at_ms DESC, key ASC",
     ) {
@@ -543,6 +570,7 @@ fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
         session_id: row.get(2)?,
         prompt: row.get(3)?,
         base_url: row.get(4)?,
+        upstream_url: row.get(11).ok().flatten(),
         started_at_ms: row.get(5)?,
         last_seen_at_ms: row.get(6)?,
         tokens,
@@ -711,7 +739,10 @@ mod tests {
     #[test]
     fn flush_then_reopen_roundtrips_records() {
         let (_dir, path, store) = state("roundtrip");
-        let outcome = store.record_flush(&[snapshot("s1", 100, 200)]);
+        let mut session = snapshot("s1", 100, 200);
+        // 上游是刷盘那一刻由代理解析器反查出来的，随快照一起落库。
+        session.upstream_url = Some("https://api.b.ai".to_string());
+        let outcome = store.record_flush(&[session]);
         assert_eq!(outcome.written, 1);
         assert_eq!(outcome.new_keys, vec!["claude:s1".to_string()]);
 
@@ -725,9 +756,67 @@ mod tests {
         assert_eq!(record.started_at_ms, 100);
         assert_eq!(record.last_seen_at_ms, 200);
         assert_eq!(record.prompt.as_deref(), Some("修一下这个 bug"));
+        // base_url 与上游都要留着：面板按「上游优先、回落本地」展示，副标注还要用本地地址。
+        assert_eq!(record.base_url.as_deref(), Some("https://api.example.com"));
+        assert_eq!(record.upstream_url.as_deref(), Some("https://api.b.ai"));
         let tokens = record.tokens.expect("tokens persisted");
         assert_eq!(tokens.input_tokens, 100);
         assert_eq!(tokens.cache_read_input_tokens, 3_000);
+    }
+
+    #[test]
+    fn v1_database_is_migrated_with_upstream_url_column() {
+        // v1 库（无 upstream_url 列）必须原地加列升级，既有的行保留下来、
+        // 新列取 NULL；而不是被当成「读不懂的库」整表重建。
+        let dir = TempDir::new("migrate-v1");
+        let path = dir.path().join("session-records.db");
+        {
+            let conn = Connection::open(&path).expect("open v1 db");
+            conn.execute_batch(
+                r#"
+                CREATE TABLE session_records (
+                    key                          TEXT    PRIMARY KEY NOT NULL,
+                    provider                     TEXT    NOT NULL,
+                    session_id                   TEXT    NOT NULL,
+                    prompt                       TEXT,
+                    base_url                     TEXT,
+                    started_at_ms                INTEGER NOT NULL,
+                    last_seen_at_ms              INTEGER NOT NULL,
+                    input_tokens                 INTEGER NOT NULL DEFAULT 0,
+                    cache_creation_input_tokens  INTEGER NOT NULL DEFAULT 0,
+                    cache_read_input_tokens      INTEGER NOT NULL DEFAULT 0,
+                    output_tokens                INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO session_records
+                    (key, provider, session_id, prompt, base_url, started_at_ms, last_seen_at_ms)
+                VALUES ('claude:old', 'claude', 'old', '旧提问', 'http://127.0.0.1:15721', 100, 200);
+                "#,
+            )
+            .expect("seed v1 schema");
+            conn.pragma_update(None, "user_version", 1)
+                .expect("mark user_version 1");
+        }
+
+        // load 触发迁移：老行还在，新列读回 None。
+        let store = SessionStoreState::load(path.clone(), 1_000);
+        let records = store.list().records;
+        assert_eq!(records.len(), 1, "迁移不得丢老行");
+        assert_eq!(records[0].key, "claude:old");
+        assert_eq!(records[0].base_url.as_deref(), Some("http://127.0.0.1:15721"));
+        assert_eq!(records[0].upstream_url, None, "新列在老行上取 NULL");
+
+        // 迁移后新列可正常写入并被读回（升级路径与全新库行为一致）。
+        let mut session = snapshot("new", 300, 400);
+        session.upstream_url = Some("https://api.b.ai".to_string());
+        store.record_flush(&[session]);
+        let reopened = SessionStoreState::load(path, 500);
+        let fresh = reopened
+            .list()
+            .records
+            .into_iter()
+            .find(|record| record.key == "claude:new")
+            .expect("new row present");
+        assert_eq!(fresh.upstream_url.as_deref(), Some("https://api.b.ai"));
     }
 
     #[test]

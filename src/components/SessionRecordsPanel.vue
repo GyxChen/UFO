@@ -12,7 +12,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { formatTokenCount, formatTokenMillions, tokenTotal, type Provider } from '@/lib/agent-status'
-import { formatRecordTime, type SessionRecord } from '@/lib/session-records'
+import { formatRecordTime, recordEndpoint, recordLocalNote, type SessionRecord } from '@/lib/session-records'
 import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { useSessionRecordsStore } from '@/stores/sessionRecords'
@@ -207,7 +207,16 @@ function onClearAll() {
           </div>
           <div>
             <dt>Endpoint</dt>
-            <dd>{{ selected.base_url || '—' }}</dd>
+            <dd>
+              {{ recordEndpoint(selected) || '—' }}
+              <span
+                v-if="recordLocalNote(selected)"
+                class="sr-detail__endpoint-local"
+                :title="`经本地代理 ${recordLocalNote(selected)}`"
+              >
+                {{ recordLocalNote(selected) }}
+              </span>
+            </dd>
           </div>
           <div v-if="tokenDisplay(selected.tokens)">
             <dt>Token 累计</dt>

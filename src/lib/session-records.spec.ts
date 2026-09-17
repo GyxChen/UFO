@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { emptyRecordList, formatRecordTime, isSessionRecordList, type SessionRecord } from './session-records'
+import {
+  emptyRecordList,
+  formatRecordTime,
+  isSessionRecordList,
+  recordEndpoint,
+  recordLocalNote,
+  type SessionRecord,
+} from './session-records'
 
 /** 一条合法存档，字段与 Rust `SessionRecord` 的序列化结果对齐。 */
 const record: SessionRecord = {
@@ -96,5 +103,41 @@ describe('formatRecordTime', () => {
     expect(formatRecordTime(0)).toBe('')
     expect(formatRecordTime(-1)).toBe('')
     expect(formatRecordTime(Number.NaN)).toBe('')
+  })
+})
+
+describe('recordEndpoint', () => {
+  it('prefers the resolved upstream over the local proxy base_url', () => {
+    // 用本地代理时两处必须显示同一个上游：与 tooltip 的 displayEndpoint 同样「上游优先」。
+    const withUpstream: SessionRecord = {
+      ...record,
+      base_url: 'http://127.0.0.1:15721',
+      upstream_url: 'https://api.b.ai',
+    }
+    expect(recordEndpoint(withUpstream)).toBe('https://api.b.ai')
+  })
+
+  it('falls back to base_url when there is no upstream', () => {
+    expect(recordEndpoint({ ...record, upstream_url: null })).toBe('https://api.example.com')
+    // 旧后端不上报 upstream_url（缺字段）也要兜底，不能显示 '—'。
+    expect(recordEndpoint({ ...record, upstream_url: undefined })).toBe('https://api.example.com')
+  })
+
+  it('returns null only when both are missing', () => {
+    expect(recordEndpoint({ ...record, base_url: null, upstream_url: null })).toBe(null)
+    expect(recordEndpoint({ ...record, base_url: null, upstream_url: undefined })).toBe(null)
+  })
+})
+
+describe('recordLocalNote', () => {
+  it('exposes the local proxy address when upstream differs', () => {
+    expect(
+      recordLocalNote({ ...record, base_url: 'http://127.0.0.1:15721', upstream_url: 'https://api.b.ai' }),
+    ).toBe('http://127.0.0.1:15721')
+  })
+
+  it('returns null when there is no upstream or it equals base_url', () => {
+    expect(recordLocalNote({ ...record, upstream_url: null })).toBe(null)
+    expect(recordLocalNote({ ...record, upstream_url: 'https://api.example.com' })).toBe(null)
   })
 })

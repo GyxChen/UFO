@@ -17,8 +17,15 @@ export interface SessionRecord {
   session_id: string
   /** 用户最近一次提问原文；可能为 null（尚未采集到）。⚠️ 明文长期驻留磁盘。 */
   prompt: string | null
-  /** 会话使用的 API endpoint（存 base_url，不含反查上游）。 */
+  /** 会话使用的 API endpoint（通常是本地代理监听地址）。 */
   base_url: string | null
+  /**
+   * `base_url` 经代理解析器反查出的上游 endpoint（如 cc-switch 后的 https://api.b.ai）。
+   *
+   * 未启用解析 / 未命中时为 null。展示口径与 tooltip 的 `displayEndpoint` 一致：
+   * **上游优先、回落 base_url**。旧后端不上报此字段 → 用 `recordEndpoint()` 兜底。
+   */
+  upstream_url?: string | null
   /** 会话最早创建时刻（毫秒）：回填它让指示灯排序不跳。 */
   started_at_ms: number
   /** 最后一次活动时刻（毫秒）：列表按它降序，淘汰与 30 天过期也按它算。 */
@@ -77,6 +84,28 @@ export function isSessionRecordList(value: unknown): value is SessionRecordList 
       typeof item.last_seen_at_ms === 'number'
     )
   })
+}
+
+/**
+ * 会话记录 Endpoint 的展示值：命中代理解析出的上游时优先显示上游，否则回落到 base_url。
+ *
+ * 与 tooltip 的 `displayEndpoint`（`src/lib/agent-status.ts`）同一口径 —— 都用本地代理
+ * 时，两处必须显示同一个上游地址，不能一个显示上游、一个显示 127.0.0.1。
+ * 两者都缺时返回 null（调用方显示占位符）。
+ */
+export function recordEndpoint(record: SessionRecord): string | null {
+  return record.upstream_url || record.base_url || null
+}
+
+/**
+ * 解析出上游且与原地址不同时，返回原本地代理地址作为副标注（如 127.0.0.1:15721）。
+ *
+ * 与 tooltip 的本地地址提示同一逻辑：让用户知道这个上游是经哪个本地代理转发的。
+ */
+export function recordLocalNote(record: SessionRecord): string | null {
+  if (!record.upstream_url || !record.base_url) return null
+  if (record.upstream_url === record.base_url) return null
+  return record.base_url
 }
 
 /**
