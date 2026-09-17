@@ -102,10 +102,12 @@ fn process_payload(provider: Provider, status_dir: &Path, payload: &Value) -> Re
         .ok_or_else(|| format!("no hook adapter for {provider:?}"))?;
     // 项目级配置以会话的 cwd 为基准；payload 未带 cwd 时适配器只读用户级配置。
     let cwd = compat::string_field(payload, &["cwd"]).map(PathBuf::from);
-    let adapted = adapter.adapt(
-        payload,
-        &compat::AdaptContext { cwd: cwd.as_deref() },
-    )?;
+    let adapted = adapter.adapt(payload, &compat::AdaptContext { cwd: cwd.as_deref() })?;
+    // `None` = 适配器表明「这条事件我不关心」（如 Codex 只要 PermissionRequest）。
+    // 静默返回：不落盘、不算失败、不写 hook-debug.log 的失败行。
+    let Some(adapted) = adapted else {
+        return Ok(());
+    };
 
     // ── 信封字段（与平台无关）：事件去重 id、进程 id、接收时刻 ──
     // 事件名 / 字段别名是通用约定，平台特有字段一律由适配器处理。
@@ -259,16 +261,27 @@ mod tests {
         assert_eq!(event.event, "Stop");
     }
 
-    /// 同一条链路走 Codex：证明 `--provider codex` 能选到适配器（注册表接线）。
+    /// Codex 的 hook 口子很窄：**只有 `PermissionRequest` 落盘，其余静默跳过**。
+    ///
+    /// 其余事件由 rollout（`status::codex_rollout`）负责；这里多落一个盘，就多一处
+    /// 与 rollout 抢同一盏灯的地方。见 `compat::codex` 的模块文档。
     #[test]
-    fn process_payload_writes_canonical_event_for_codex() {
+    fn codex_hook_writes_only_permission_request() {
         let temp = TempDir::new("hook-shell-codex");
-        let payload = serde_json::json!({
+
+        // 其余事件：不落盘、不报错（hook 退出码仍是 0）。
+        let other = serde_json::json!({"session_id": "thr_1", "hook_event_name": "PreToolUse"});
+        process_payload(Provider::Codex, temp.path(), &other).expect("静默跳过不算失败");
+        assert!(fs::read_dir(temp.path().join("inbox")).is_err(), "不该写出事件");
+
+        // PermissionRequest：落盘一条「等人授权」。
+        let request = serde_json::json!({
             "session_id": "thr_1",
-            "hook_event_name": "Interrupt",
-            "turn_id": "turn_1",
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "Bash",
+            "tool_input": {"command": "curl https://example.com", "description": "是否允许我访问官网"},
         });
-        process_payload(Provider::Codex, temp.path(), &payload).expect("hook writes event");
+        process_payload(Provider::Codex, temp.path(), &request).expect("落盘");
 
         let inbox = temp.path().join("inbox");
         let path = fs::read_dir(&inbox)
@@ -277,12 +290,9 @@ mod tests {
             .expect("one event")
             .expect("readable")
             .path();
-        let event: AgentEvent =
-            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-
+        let event: AgentEvent = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(event.provider, Provider::Codex);
-        // 用户 Esc 取消本轮 → 黄灯（不闪），见 compat::codex::classify。
         assert_eq!(event.kind, AgentEventKind::WaitingForUser);
-        assert_eq!(event.event, "Interrupt");
+        assert_eq!(event.waiting_reason.as_deref(), Some("是否允许我访问官网"));
     }
 }

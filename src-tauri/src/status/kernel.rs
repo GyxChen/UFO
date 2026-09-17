@@ -116,6 +116,7 @@ impl StatusRegistry {
             previous_error_code,
             previous_base_url,
             previous_prompt,
+            previous_waiting_reason,
         ) = match self.sessions.get(&key) {
             Some(previous) => {
                 if event
@@ -139,9 +140,10 @@ impl StatusRegistry {
                     previous.error_code.clone(),
                     previous.base_url.clone(),
                     previous.prompt.clone(),
+                    previous.waiting_reason.clone(),
                 )
             }
-            None => (None, None, None, None, None, None),
+            None => (None, None, None, None, None, None, None),
         };
 
         // ── 子代理事件守卫 ──
@@ -260,6 +262,17 @@ impl StatusRegistry {
                 // upstream_url 不是事件派生字段，由 status 侧生成快照时按选中的
                 // 解析器现算，这里恒置 None（见 StatusState::attach_upstreams）。
                 upstream_url: None,
+                // 「等你操作」的理由（如 Codex 的审批理由）：与 error_code 同策略 —— 只在
+                // 等待期间保留。同一段等待内后续事件没带理由时继承旧的；一旦离开等待态
+                // （或被别的灯态接管）立刻清空，免得 tooltip 里挂着过期的理由。
+                waiting_reason: if phase == SessionPhase::Waiting {
+                    event.waiting_reason.clone().or_else(|| {
+                        previous_waiting_reason
+                            .filter(|_| previous_phase == Some(SessionPhase::Waiting))
+                    })
+                } else {
+                    None
+                },
                 // prompt 同理：只有 UserPromptSubmit 携带，同轮内的后续事件继承，
                 // 直到下一次提交才被覆盖。第三档回填让 resume 的会话立刻有「最近提问」。
                 prompt: event
@@ -461,6 +474,7 @@ mod tests {
             kind,
             // 内核不读原始事件名：这里填一个与 kind 无关的占位，顺便锁住「不据此转灯」。
             event: String::new(),
+            waiting_reason: None,
             sequence: None,
             occurred_at_ms: None,
             received_at_ms: received,

@@ -5,17 +5,18 @@
 //!   - `proxy_enabled`：全局代理服务器开关（UPDATE 无 WHERE，三行同值镜像，服务器起来才为 1）。
 //!   - `enabled`：该 app 是否被代理接管（每 app 独立；`takeover_single_proxy` 只翻本 app 行）。
 //!   另含监听地址 `listen_address:listen_port`（`listen_port` 是 INTEGER，非 TEXT）。
-//! - `providers`：每个 provider 的 `settings_config` JSON，`env` 块内含 `ANTHROPIC_BASE_URL`
-//!   （真实上游）—— 同一块里通常还有 `ANTHROPIC_AUTH_TOKEN`。
+//! - `providers`：每个 provider 的 `settings_config` JSON（真实上游藏在里面）。
+//!   两个 app 的存法不同：`claude` 用 `env.ANTHROPIC_BASE_URL`；`codex` **没有 `env` 块**，
+//!   base_url 埋在 `config` 字段那段 TOML 文本里（且同块 `auth` 字段存的是 API key）。
 //!
 //! 反查链路：会话 base_url 的 `host:port` 命中某 app 已接管（`proxy_enabled=1` 且 `enabled=1`）
-//! 的 `proxy_config` 监听地址时，返回该 app 下 `is_current=1` 的 provider 的上游
-//! `ANTHROPIC_BASE_URL`。命中条件只看 db 里这两列与会话实际 base_url：cc-switch 关掉代理
-//! 时会把 `ANTHROPIC_BASE_URL` 改回真实上游，会话 base_url 便不再匹配本地监听地址，
-//! 自然回落不解析，无需再读 `settings.json`。
+//! 的 `proxy_config` 监听地址时，返回该 app 下 `is_current=1` 的 provider 的上游 endpoint。
+//! 命中条件只看 db 里这两列与会话实际 base_url：cc-switch 关掉代理时会把 base_url 改回
+//! 真实上游，会话 base_url 便不再匹配本地监听地址，自然回落不解析，无需再读配置文件。
 //!
-//! 只读、短连接、带 TTL 缓存；`settings_config` 整块 JSON 会进内存解析，但**只提取
-//! `env.ANTHROPIC_BASE_URL` 这一个 key**，token / api key 一律不读取、不缓存、不上报。
+//! 只读、短连接、带 TTL 缓存；`settings_config` 整块 JSON 会进内存解析，但**只按名字取
+//! base_url 一个 key**（claude 的 `env.ANTHROPIC_BASE_URL` / codex 的 `config` 内嵌 TOML），
+//! token / api key 一律不读取、不缓存、不上报。
 
 use std::{
     collections::HashMap,
@@ -131,7 +132,7 @@ impl CcSwitchResolver {
             return AppProxyInfo { listen_addr: None, upstream: None };
         }
 
-        // ② 当前 provider 的上游：只取 env.ANTHROPIC_BASE_URL 一个 key。
+        // ② 当前 provider 的上游：只按名字取 base_url 一个 key（见 upstream_from_settings）。
         let settings: Option<String> = conn
             .query_row(
                 "SELECT settings_config FROM providers WHERE app_type = ?1 AND is_current = 1 LIMIT 1",
@@ -139,7 +140,9 @@ impl CcSwitchResolver {
                 |row| row.get(0),
             )
             .ok();
-        let upstream = settings.as_deref().and_then(base_url_from_settings);
+        let upstream = settings
+            .as_deref()
+            .and_then(|raw| upstream_from_settings(app, raw));
         AppProxyInfo { listen_addr, upstream }
     }
 }
@@ -152,11 +155,23 @@ fn app_key(app: AgentApp) -> &'static str {
     }
 }
 
-/// 从 provider 的 settings_config JSON 里取 `env.ANTHROPIC_BASE_URL`。
+/// 从 provider 的 `settings_config` JSON 里取上游 endpoint，按 app 分流。
+///
+/// 两个 app 在 cc-switch 里的存法不同（实测）：
+/// - `claude`：`{"env":{"ANTHROPIC_BASE_URL":"…"}}`
+/// - `codex`：`{"auth":…,"config":"<TOML 文本>"}` —— 没有 `env` 块，base_url 埋在 TOML 里
+fn upstream_from_settings(app: AgentApp, raw: &str) -> Option<String> {
+    match app {
+        AgentApp::Claude => claude_base_url_from_settings(raw),
+        AgentApp::Codex => codex_base_url_from_settings(raw),
+    }
+}
+
+/// Claude：取 `env.ANTHROPIC_BASE_URL`。
 ///
 /// 只按名字取这一个 key —— settings_config 里同时存有 token，绝不整体读取或上报。
 /// 缺失 / 非字符串 / 空白一律视为未命中。
-fn base_url_from_settings(raw: &str) -> Option<String> {
+fn claude_base_url_from_settings(raw: &str) -> Option<String> {
     let value: Value = serde_json::from_str(raw).ok()?;
     value
         .get("env")?
@@ -165,6 +180,18 @@ fn base_url_from_settings(raw: &str) -> Option<String> {
         .map(str::trim)
         .filter(|url| !url.is_empty())
         .map(ToString::to_string)
+}
+
+/// Codex：取内嵌 TOML（`config` 字段）里「当前 model_provider 的 base_url」。
+///
+/// ⚠️ 只读 `config` 这一个 key。同一块 JSON 里的 **`auth` 存的就是 API key**，
+/// 与 `config` 是兄弟字段 —— 绝不读取、不缓存、不上报（与 Claude 侧「只取一个 key」同一约定）。
+/// 解析规则复用适配器那份（`status::base_url_from_config_text`），保证 tooltip 显示的
+/// endpoint 与这里反查出的上游同源。
+fn codex_base_url_from_settings(raw: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let config = value.get("config")?.as_str()?;
+    crate::status::base_url_from_config_text(config)
 }
 
 impl ProxyResolver for CcSwitchResolver {
@@ -195,26 +222,64 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
-    fn base_url_from_settings_reads_only_env_base_url() {
+    fn claude_settings_read_only_env_base_url() {
         let raw = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"secret","ANTHROPIC_BASE_URL":"  https://api.b.ai  "}}"#;
         assert_eq!(
-            base_url_from_settings(raw).as_deref(),
+            claude_base_url_from_settings(raw).as_deref(),
             Some("https://api.b.ai")
         );
     }
 
     #[test]
-    fn base_url_from_settings_rejects_missing_or_blank_or_bad_json() {
-        assert_eq!(base_url_from_settings("{}"), None);
-        assert_eq!(base_url_from_settings(r#"{"env":{}}"#), None);
+    fn claude_settings_reject_missing_or_blank_or_bad_json() {
+        assert_eq!(claude_base_url_from_settings("{}"), None);
+        assert_eq!(claude_base_url_from_settings(r#"{"env":{}}"#), None);
         assert_eq!(
-            base_url_from_settings(r#"{"env":{"ANTHROPIC_BASE_URL":"   "}}"#),
+            claude_base_url_from_settings(r#"{"env":{"ANTHROPIC_BASE_URL":"   "}}"#),
             None
         );
-        assert_eq!(base_url_from_settings("not json"), None);
+        assert_eq!(claude_base_url_from_settings("not json"), None);
         // token 在，但没有 base_url：不能误返回任何东西。
         assert_eq!(
-            base_url_from_settings(r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"secret"}}"#),
+            claude_base_url_from_settings(r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"secret"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn codex_settings_read_base_url_from_embedded_toml() {
+        // cc-switch 里 codex provider 的真实形态：没有 env 块，base_url 埋在 config TOML。
+        let raw = r#"{"auth":{"OPENAI_API_KEY":"secret"},"config":"model_provider = \"custom\"\nmodel = \"deepseek-flash\"\n\n[model_providers.custom]\nname = \"deepseek\"\nbase_url = \"https://api.deepseek.com\"\n"}"#;
+        assert_eq!(
+            codex_base_url_from_settings(raw).as_deref(),
+            Some("https://api.deepseek.com")
+        );
+    }
+
+    #[test]
+    fn codex_settings_ignore_the_auth_block() {
+        // auth 里存的是 API key：只能取 config 那一个 key，绝不能误把它当上游。
+        let raw = r#"{"auth":{"OPENAI_API_KEY":"https://not-an-endpoint.example"},"config":"model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://real.example\"\n"}"#;
+        assert_eq!(
+            codex_base_url_from_settings(raw).as_deref(),
+            Some("https://real.example")
+        );
+        // 只有 auth、没有 config：不解析。
+        assert_eq!(
+            codex_base_url_from_settings(r#"{"auth":{"OPENAI_API_KEY":"sk-x"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn codex_settings_reject_missing_or_broken_config() {
+        assert_eq!(codex_base_url_from_settings("{}"), None);
+        assert_eq!(codex_base_url_from_settings("not json"), None);
+        // config 存在但不是字符串（形态变了）：不解析，也不 panic。
+        assert_eq!(codex_base_url_from_settings(r#"{"config":{"a":1}}"#), None);
+        // TOML 里没有对应 provider 的 base_url。
+        assert_eq!(
+            codex_base_url_from_settings(r#"{"config":"model_provider = \"openai\""}"#),
             None
         );
     }
@@ -338,6 +403,76 @@ mod tests {
         seed_taken_over(&temp, "https://api.b.ai");
         let resolver = resolver_for(&temp);
         // codex 的两开关都是 0，同样地址不解析（按 app 分流）。
+        assert_eq!(
+            resolver.resolve_upstream(AgentApp::Codex, "http://127.0.0.1:15721"),
+            None
+        );
+    }
+
+    /// 在临时目录里造一份「codex 已接管」的库：codex provider 的上游写在 config TOML 里。
+    fn seed_codex_taken_over(temp: &TempDir, config_toml: &str) -> PathBuf {
+        let root = temp.path().join(".cc-switch");
+        std::fs::create_dir_all(&root).expect("create root");
+        let db = root.join("cc-switch.db");
+        let conn = Connection::open(&db).expect("create db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY, listen_address TEXT, listen_port INTEGER,
+                proxy_enabled INTEGER, enabled INTEGER);
+            CREATE TABLE providers (id TEXT, app_type TEXT, is_current INTEGER, settings_config TEXT);
+            "#,
+        )
+        .expect("create schema");
+        conn.execute(
+            "INSERT INTO proxy_config VALUES ('codex','127.0.0.1',15721,1,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO proxy_config VALUES ('claude','127.0.0.1',15721,1,0)",
+            [],
+        )
+        .unwrap();
+        // settings_config 与真实库同形：auth（API key）+ config（TOML 文本）两个兄弟字段。
+        let settings = serde_json::json!({
+            "auth": {"OPENAI_API_KEY": "secret"},
+            "config": config_toml,
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO providers VALUES ('cur','codex',1,?1)",
+            [settings],
+        )
+        .expect("seed provider");
+        db
+    }
+
+    #[test]
+    fn resolve_reads_codex_upstream_from_embedded_toml() {
+        // 回归：codex 的 provider 没有 env 块，早先只读 env.ANTHROPIC_BASE_URL 会让
+        // upstream 恒为 None —— 表现为 tooltip 的 Endpoint 一直停在本地代理地址。
+        let temp = TempDir::new("ccswitch-codex-ok");
+        seed_codex_taken_over(
+            &temp,
+            "model_provider = \"custom\"\n\n[model_providers.custom]\nbase_url = \"https://api.deepseek.com\"\n",
+        );
+        let resolver = resolver_for(&temp);
+        assert_eq!(
+            resolver
+                .resolve_upstream(AgentApp::Codex, "http://127.0.0.1:15721")
+                .as_deref(),
+            Some("https://api.deepseek.com")
+        );
+    }
+
+    #[test]
+    fn resolve_returns_none_when_codex_config_has_no_base_url() {
+        let temp = TempDir::new("ccswitch-codex-nourl");
+        seed_codex_taken_over(&temp, "model_provider = \"openai\"\n");
+        let resolver = resolver_for(&temp);
+        // 监听地址命中但上游读不到：宁可回落本地地址（前端 displayEndpoint 会退到 base_url），
+        // 也不能瞎猜一个。
         assert_eq!(
             resolver.resolve_upstream(AgentApp::Codex, "http://127.0.0.1:15721"),
             None

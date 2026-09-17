@@ -708,6 +708,7 @@ mod tests {
             base_url: Some("https://api.example.com".to_string()),
             upstream_url: None,
             prompt: Some("修一下这个 bug".to_string()),
+            waiting_reason: None,
             tokens: Some(TokenTotals {
                 input_tokens: 100,
                 cache_creation_input_tokens: 0,

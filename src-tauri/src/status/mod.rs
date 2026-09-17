@@ -23,6 +23,9 @@ use tauri::{AppHandle, Emitter, Runtime, State};
 pub use hook::try_run_status_hook;
 // 供 proxy 子模块复用主目录探测（定位 ~/.cc-switch）；实现已随兼容层迁到 compat。
 pub(crate) use compat::home_dir;
+// 供 proxy 的 cc-switch 解析器复用：Codex 上游写在 config TOML 里（cc-switch 把它内嵌在
+// providers.settings_config.config），必须与适配器用同一套解析规则。
+pub(crate) use compat::codex::base_url_from_config_text;
 // flow 模块用 App 标识派生凭据 service 名，与 hook 定位 status 目录同一来源。
 pub(crate) use hook::APP_IDENTIFIER;
 // model 子模块本身私有，但这些类型是跨模块协议（session_store 存档回填、前端快照），
@@ -189,14 +192,34 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
     let mut next_cleanup = now_ms();
     // token 统计器由 monitor 线程独占，无需加锁。
     let mut tokens = TokenTracker::new();
-    // Codex rollout 补漏巡检器（hook 没有错误类事件），同样由 monitor 独占。
+    // Codex 的事件源：读它自己写的 rollout（hook 实测不可靠），同样由 monitor 独占。
     let mut codex_rollout = CodexRolloutWatcher::new();
     // 上一轮快照的「上游签名」：会话 key → 解析出的 upstream_url。
     // 用于在 cc-switch 里手动切了 provider（无新 hook 事件）时，也能把新上游推到前端。
     let mut last_upstream_sig: Vec<(String, Option<String>)> = Vec::new();
 
     loop {
-        let mut changed = consume_inbox(
+        let mut changed = false;
+
+        // Codex：事件与用量都来自 rollout（hook 实测不可靠，见 compat::codex 的模块文档）。
+        // 发现新会话、增量读、去重都在巡检器内部，这里只把产出喂给内核。
+        //
+        // ⚠️ 顺序：**rollout 在前、inbox 在后**。hook 事件代表的是更晚发生的事实
+        // （弹审批框之前 rollout 已经写过 function_call 记录），放后手它才能在同一轮里压过
+        // 由「文件在长」推出的绿；反过来会让刚抬起的黄灯被同一批旧字节顶回绿。
+        let updates = codex_rollout.poll();
+        for event in updates.events {
+            changed |=
+                apply_status_event(&app, &state, &mut tokens, &mut codex_rollout, EventSource::Rollout, event);
+        }
+        for (key, totals) in updates.tokens {
+            // 事件先应用（会话得先存在），用量才登记得上；已消失的会话会被 set_tokens 忽略。
+            if let Ok(mut registry) = state.registry.lock() {
+                changed |= registry.set_tokens(&key, totals);
+            }
+        }
+
+        changed |= consume_inbox(
             &app,
             &inbox,
             &quarantine,
@@ -204,11 +227,6 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
             &mut tokens,
             &mut codex_rollout,
         );
-
-        // Codex rollout 补漏：hook 覆盖不到的错误态，合成 Failed 事件走同一条内核入口。
-        for event in codex_rollout.poll() {
-            changed |= apply_status_event(&app, &state, &mut tokens, &mut codex_rollout, event);
-        }
 
         // 增量读取各会话的 transcript；只有数值真的变了才推快照。
         for (key, totals) in tokens.refresh_all() {
@@ -290,13 +308,24 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
     }
 }
 
+/// 一条事件的**来源**：决定它要不要把灯态回灌给 Codex 巡检器的去抖基线。
+///
+/// 巡检器自己产出的事件不需要回灌（它在产出前已经写好基线），因此只有 hook 那一侧要同步。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EventSource {
+    /// inbox 里的规范事件：各平台 hook 落的盘。
+    Hook,
+    /// Codex rollout 巡检器合成的事件。
+    Rollout,
+}
+
 fn consume_inbox<R: Runtime>(
     app: &AppHandle<R>,
     inbox: &Path,
     quarantine: &Path,
     state: &StatusState,
     tokens: &mut TokenTracker,
-    codex_rollout: &mut CodexRolloutWatcher,
+    codex: &mut CodexRolloutWatcher,
 ) -> bool {
     let Ok(entries) = fs::read_dir(inbox) else {
         return false;
@@ -314,7 +343,7 @@ fn consume_inbox<R: Runtime>(
         match parsed {
             Some(event) => {
                 let _ = fs::remove_file(&path);
-                changed |= apply_status_event(app, state, tokens, codex_rollout, event);
+                changed |= apply_status_event(app, state, tokens, codex, EventSource::Hook, event);
             }
             None => {
                 let _ = fs::create_dir_all(quarantine);
@@ -342,20 +371,28 @@ fn apply_status_event<R: Runtime>(
     app: &AppHandle<R>,
     state: &StatusState,
     tokens: &mut TokenTracker,
-    codex_rollout: &mut CodexRolloutWatcher,
+    codex: &mut CodexRolloutWatcher,
+    source: EventSource,
     event: AgentEvent,
 ) -> bool {
     let _ = app.emit("status-hook-event", &event);
     // 先记下 key 与会话 id：`event` 随后会被 `apply_event_with_seed` 移走。
     let key = session_key(event.provider, &event.session_id);
+    // Codex 的 hook 事件（当前只有 `PermissionRequest`）改的是巡检器**之外**的那盏灯：
+    // 把新灯态同步回去抖基线，否则巡检器认不出「黄 → 绿」这次变化 —— 用户批准后 rollout
+    // 恢复写入的那条绿活动会被当成重复吃掉，灯要等 30 秒保活才回绿（见 `note_light`）。
+    if source == EventSource::Hook && event.provider == Provider::Codex {
+        codex.note_light(&key, event.kind);
+    }
     // 只登记路径：真正的解析在 monitor 线程里增量做，
     // hook 进程每次事件都要快速返回，不能去读 MB 级的 transcript。
-    if let Some(transcript) = event.transcript_path.as_deref() {
-        let path = Path::new(transcript);
-        tokens.observe(&key, event.provider, path);
-        // Codex 的错误态只能从 rollout 里补读（hook 没有错误类事件），见 codex_rollout.rs。
-        if event.provider == Provider::Codex {
-            codex_rollout.observe(&key, &event.session_id, path);
+    // （Codex 的 transcript 不由这里登记 —— 它的会话由 rollout 巡检器自己发现，见 codex_rollout.rs。）
+    // ⚠️ 只给 Claude 登记：Codex 的 transcript 是 rollout，由 `codex_rollout` 自己发现并读，
+    // 塞进 Claude 的 TokenTracker 只会白解析一遍（格式还不对）。Codex 的 hook 事件也带
+    // transcript_path（PermissionRequest 实测带），所以这里必须按 provider 分流。
+    if event.provider == Provider::Claude {
+        if let Some(transcript) = event.transcript_path.as_deref() {
+            tokens.observe(&key, Path::new(transcript));
         }
     }
     // 回填摘要在 **registry 锁之外**取：内部只查一张内存 HashMap，不做 I/O。

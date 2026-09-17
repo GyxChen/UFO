@@ -42,6 +42,8 @@ export interface SessionSnapshot {
   upstream_url: string | null
   /** 用户最近一次提问内容；未知时为 null。 */
   prompt: string | null
+  /** 「正在等你操作」的原因原文（如 Codex 的审批理由）；非等待态为 null。 */
+  waiting_reason: string | null
   /** 会话累计消耗的 token；尚未统计到时为 null（旧 hook 二进制或未采集到 transcript）。 */
   tokens: TokenTotals | null
   last_sequence: number | null

@@ -1,6 +1,9 @@
 # UFO Agent 状态 Hook 接入指南
 
-UFO 通过本地 CLI hook 接收归一化的生命周期事件。hook 进程必须快速返回，只写入一个小事件文件，不能等待 GUI。
+UFO 从两条链路获取 agent 的生命周期事件：
+
+- **Claude Code**：本地 CLI hook（本文档第 1 节）。hook 进程必须快速返回，只写入一个小事件文件，不能等待 GUI。
+- **Codex**：**读 rollout**，不用 hook（见文末「Codex」节）。
 
 ## Claude Code
 
@@ -99,7 +102,7 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 
 ⚠️ **子代理（subagent）的事件与主会话共用同一个 `session_id`**（实测确认），只有 `agent_id` / `agent_type` 能把两者分开。子代理侧的事件包括 `SubagentStart`、`SubagentStop`、`PreToolUse`、`PostToolUse`、`PostToolBatch` 等 —— 全部带 `agent_id`；主线程事件一律没有。
 
-因此 reducer 对**已存活会话**收到的子代理事件只做一件事：刷新 `last_seen_at_ms`，**不参与灯色迁移**。
+因此内核对**已存活会话**收到的子代理事件只做一件事：刷新 `last_seen_at_ms`，**不参与灯色迁移**。
 
 原因：主 agent 弹出提问框等你作答时（`PermissionRequest` → 黄灯），若后台还挂着子代理在跑，子代理的工具事件会把 `Waiting` 直接顶回 `Running`，表现为「Claude 已经在问我了，信号灯却一直是绿色」。这是实测抓到的真实时序：
 
@@ -143,6 +146,8 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 
 `codex` 的配置文件是 `$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），TOML 格式，与 settings.json 不同，因此单独解析：按顶层 `model_provider` 取 `[model_providers.<name>].base_url`，`<cwd>/.codex/config.toml` 覆盖用户级。只读这一个 key，api key（`~/.codex/auth.json`）不读取。
 
+⚠️ 用 cc-switch 时这个 base_url 是**本地代理地址**（如 `http://127.0.0.1:15721/v1`），你要的真实上游由「代理解析器」反查出来显示 —— 而 cc-switch 里 **codex 的 provider 上游藏在 `settings_config.config` 那段内嵌 TOML 里**（claude 才是 `env.ANTHROPIC_BASE_URL`）。两边用同一套 TOML 解析规则，缺了它 Codex 的 Endpoint 会一直停在 localhost。
+
 只读 endpoint 类变量，不读取 token / api key。**按需求不做脱敏**：原样保留（含 userinfo / query），仅去首尾空白；长度上限 4096 字节。
 
 ### prompt 的来源
@@ -162,7 +167,7 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 ```
 
 - 上限 4000 字符，超出截断并加 `…`（按字符计数，不截断 UTF-8）。
-- **只认 `UserPromptSubmit`**：同轮内后续事件（`PreToolUse` 等）本就不带 `prompt`，由 reducer 继承该值；下一次 `UserPromptSubmit` 才覆盖。即提示窗始终显示**最近一次用户手输**的提问。
+- **只认 `UserPromptSubmit`**：同轮内后续事件（`PreToolUse` 等）本就不带 `prompt`，由内核继承该值；下一次 `UserPromptSubmit` 才覆盖。即提示窗始终显示**最近一次用户手输**的提问。
 - ⚠️ `UserPromptExpansion` 紧随 `UserPromptSubmit` 触发、**同样携带 `prompt`**，但那是斜杠命令展开后的模板文本，不是用户输入。UFO 不放行它 —— 否则展开内容会立刻把用户真正的提问覆盖掉。
 
 ⚠️ `base_url` 与 `prompt` 都会明文写入 `status/inbox/*.json`（约 500ms 内被消费删除）。提问内容可能含密钥或私有代码。
@@ -230,84 +235,80 @@ Claude Code 2.1.270 共 16 个（从 CLI 二进制常量提取），UFO 只把�
 
 ## Codex
 
-Codex（CLI / 桌面版）的 hook 与 Claude Code 同构：命令配一次、由 Codex 在生命周期事件发生时自动调用，**不需要手动运行**。事件清单与字段已对本机 `codex.exe` v0.155.0-alpha.2.6 实测确认。
+⚠️ **Codex 不用 hook，UFO 读它的 rollout。** 这一节解释为什么，以及怎么工作。
 
-命令格式与 Claude 完全一致，只是 provider 换成 `codex`：
+### 为什么事件源是 rollout 而不是 hook
 
-```text
-ufo --status-hook --provider codex
+Codex 确实有一套 hook（12 个事件，`HOOK_EVENT_NAMES` 实测自 `codex.exe` v0.155.0-alpha.2.6）：
+`PreToolUse` / `PermissionRequest` / `PostToolUse` / `PreCompact` / `PostCompact` /
+`SessionStart` / `SessionEnd` / `UserPromptSubmit` / `SubagentStart` / `SubagentStop` /
+`Stop` / `Interrupt`。但实测**不足以支撑状态灯**：
+
+| 问题 | 实测证据 |
+|---|---|
+| **没有错误类事件** | Claude 有 `StopFailure`，Codex 没有对等物。429/502 这类以 error 结束的轮次，`task_complete` 已写进 rollout，hook 侧零调用 |
+| **中断路径也不触发** | 从 Desktop 停止按钮取消一轮（app-server 的 `turn/interrupt`），rollout 里 `turn_aborted` 已落盘，hook 侧仍是一次都没有 |
+| **会静默失效** | hooks 要在设置页逐条信任、且按**内容哈希**记账（改一次要重新信任）。实测出现过「一段时间一次都不触发、四处日志无任何报错」 |
+
+**所以 Codex 侧 `hooks.json` 只配一个事件**（`PermissionRequest`）—— rollout 覆盖不到的只有它：
+
+```json
+{ "hooks": { "PermissionRequest": [
+  { "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }] } }
 ```
 
-### 配置 hook
+多配一个事件就多起一份进程；适配器会静默忽略它们，等于白花。Claude 侧仍然走 hook —— 那是唯一途径，且工作正常。
 
-Codex 从 `$CODEX_HOME/hooks.json`（默认 `~/.codex/hooks.json`）、`~/.codex/config.toml` 的 `[hooks]` 表、以及 `<repo>/.codex/` 下的同名文件里发现 hooks（多层**叠加**，不互相覆盖）。把下面内容写进 `~/.codex/hooks.json`，**再去信任它** —— 未信任的 hook 不会执行：
+### 「等你授权」只能靠 hook
 
-- **Codex Desktop**：`设置 → Hooks`。该页按来源分组列出已发现的 hook（我们这份会标 `From Config`），未信任的条目显示 `Disabled until hook is trusted` / `New hook`，点条目上的 **Trust**，或顶部 **Trust all** 一次全信任。页面顶部还有一行汇总计数（**`N needs review`**），看到它没归零就说明还有没信任的 hook。页面里另有 **Open config file** 可直接打开 `hooks.json`。
-- **Codex CLI（TUI）**：用 `/hooks` 查看并信任。
-
-⚠️ 信任是**按 hook 内容哈希**记账的：改过 `hooks.json` 之后会显示 `Hook changed since last trusted`，**需要重新 Trust**（改一次要再点一次）。
+rollout 里**没有**审批的任何记录（记录类型、`item_completed` 的 item 字段、命令 output 正文都查过），所以这一个状态只能由 hook 补。2026-09-18 用探针实测抓到的真实 payload：
 
 ```json
 {
-  "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "PreToolUse":       [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "PermissionRequest":[{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "PreCompact":       [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "PostCompact":      [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "SubagentStart":    [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "SubagentStop":     [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "Interrupt":        [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
-    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }]
+  "session_id": "01a0b060-f0b3-…", "turn_id": "01a0b063-35b6-…",
+  "cwd": "E:\workspace\AIProjects",
+  "hook_event_name": "PermissionRequest",
+  "model": "deepseek-flash", "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "curl.exe -L … https://developers.openai.com/sitemap.xml",
+    "description": "是否允许我访问 OpenAI 官方网站，定位 Codex 沙盒配置说明"
   }
 }
 ```
 
-若 `ufo` 不在 PATH，`command` 需写绝对路径；Windows 的 JSON 里反斜杠要双写：
+- 映射：**WaitingForUser**（黄灯不闪 —— 等人授权与「用户中断」同一语义，都不是错误）。
+- `tool_input.description` 进 `waiting_reason`，显示在 tooltip 的 head 行（窄了省略号，全文在 title）；没有 description 时退回 `tool_input.command`。
+- ⚠️ 适配器 `CodexPermissionAdapter` **刻意只认这一个事件**，其余一律 `Ok(None)` 静默忽略：多认一个就多一处与 rollout 抢同一盏灯的地方。
+- ⚠️ hook 仍可能整段静默失效（实测过一次），所以它只是锦上添花：挂了就退化成绿灯，rollout 链路不受影响。
 
-```json
-"command": "\"D:\\path\\to\\ufo.exe\" --status-hook --provider codex"
-```
+### rollout 在哪、长什么样
 
-**信任机制的绕过（仅在确有需要时用）**：Codex 提供 `BYPASS_HOOK_TRUST` 环境变量与 `--dangerously-bypass-hook-trust` 命令行开关，含义是「本次调用不要求 hook 已被信任」。官方措辞是 DANGEROUS、只给「已经自己审查过 hook 来源」的自动化用 —— 常规做法仍然是在设置页点一次 Trust，**不建议**为此长期设环境变量。
+`$CODEX_HOME/sessions/<年>/<月>/<日>/rollout-<本地时间>-<会话 id>.jsonl`（归档的会话会被**移走**到 `archived_sessions/`）。
+每行一条 JSON 记录，`type` 是外层记录名、`payload.type` 是内层。常用记录：
 
-### 事件与灯色
-
-共同 stdin 字段：`session_id`、`transcript_path`（可为 null）、`cwd`、`hook_event_name`、`model`（+ 轮内的 `turn_id` / `permission_mode`）。
-
-| 事件 | 灯态 | 说明 |
+| 记录 | 含义 | UFO 的灯态 |
 |---|---|---|
-| `SessionStart` | 🟢 Running | 会话开始 |
-| `UserPromptSubmit` | 🟢 Running | 提交提问（payload 的 `prompt` 进 tooltip） |
-| `PreToolUse` / `PostToolUse` | 🟢 Running | 工具调用前后 |
-| `PreCompact` / `PostCompact` | 🟢 Running | 上下文压缩前后 |
-| `SubagentStart` / `SubagentStop` | 🟢 Running | 子代理起止 |
-| `PermissionRequest` | 🟡 Waiting | 工具调用要你批准 |
-| `Interrupt` | 🟡 Waiting | 你按 Esc / Ctrl-C 取消本轮；**刻意不落红灯**（红灯专指接口/不可抗力错误） |
-| `Stop` | 🟢 闪烁 → 🟡 | 一轮正常跑完 |
-| `SessionEnd` | 🟢 闪烁 → 移除 | 会话结束（归档 / 关闭 / 空闲 30 分钟） |
+| `session_meta`（文件首行） | 会话身份：`id` / `cwd` / `originator` / `cli_version` / `model_provider` | 🟢 Running |
+| `event_msg`/`task_started` | 一轮开始 | 🟢 Running |
+| `event_msg`/`user_message` | 用户消息（带 `message` 正文） | 🟢 Running |
+| `event_msg`/`agent_message`、`response_item`/`reasoning`、`function_call(_output)`、`item_completed`… | 执行过程中的活动 | 文件在长即视为 🟢（不逐条解析） |
+| `event_msg`/`task_complete` | 一轮结束 | 无 `error` → 🟢 闪 → 🟡；**带 `error` → 🔴** |
+| `event_msg`/`turn_aborted` | 用户中断（`reason: "interrupted"`） | 🟡 Waiting（不闪） |
+| `event_msg`/`token_count` | 会话级**累计**用量 | 不改灯态，只更新 tooltip 的 token 行 |
 
-⚠️ **子代理事件带 `agent_id`（+`agent_type`）、主线程不带，且与主会话共用 `session_id`** —— 与 Claude 同理，内核会把已存活会话的子代理事件拦成「只刷存活时间、不驱灯色」，避免黄灯被顶回绿。
+### UFO 怎么读
 
-### 错误态（红灯）来自 rollout，不是 hook
+1. **发现**：扫最近两天的日期目录（目录名字典序即时间序，不需要本地日期库）；会话 id 取文件名末尾的 uuid（实测 == `session_meta.id`）。
+2. **播种**：注册时读一遍已有内容，只为拿 `cwd`（→ endpoint）与 token 累计，**不产出事件** —— 否则 UFO 一启动就会把当天所有历史会话复读成一串灯色动画。
+3. **增量**：之后只读新增字节。**文件在长 = 有活动**（绿）；只有上表的生命周期记录才改灯态；同一灯态只产出一次事件。长任务期间（Codex 一条记录都不写）每 30 秒补一条保活，避免被「执行中超时」清掉。
+4. **结束**：文件被移走（归档）且连续两轮读不到 → 会话结束（绿闪后移除）。
+5. **性能**：97% 的字节是命令输出/消息正文（单条可达 100 KB），先做一次子串预筛，只对命中小标记的行做完整 JSON 解析；增量游标保证与文件总大小无关。
 
-⚠️ Codex 的 12 个 hook 事件里**没有错误类事件**（Claude 有 `StopFailure`），而且实测：**「重试耗尽」这类以 error 结束的轮次连 `Stop` 都不触发**（公开 issue [#22858](https://github.com/openai/codex/issues/22858) 描述的历史行为，v0.150 补的 `Interrupt` 只覆盖用户 Esc 主动取消）。也就是说，只靠 hook 的话 Codex 会话的红灯**永远不可达** —— 灯会停在绿灯，直到「执行中超时」把它清掉，看起来就是「绿着绿着消失了」。
+### 取不到的东西
 
-UFO 因此对 Codex 额外巡检它自己写的 rollout：读到 `event_msg` / `task_complete` **带非空 `error`** 就补一条红灯事件（`error_code` 里带错误正文，如 `exceeded retry limit, last status: 429`）。
-
-- 只巡检**已登记会话**（hook 的 `transcript_path` 带过的那些），agent 全停即零 I/O。
-- 只认 `task_complete` 带 error：中间的重试不写 `task_complete`，所以**「重试后成功」不会被误报成错误**。
-- 按 `turn_id` 去重，同一轮只报一次。
-- 已知时序窗口约 500ms（rollout 落盘晚于真实发生），期间若用户已发下一条 prompt，红灯可能短暂盖住新绿灯，下一条 hook 事件会纠正。
-
-### token 用量
-
-取自该会话 rollout JSONL 里的 `event_msg` / `token_count` 事件（`info.total_token_usage`）。那是**会话级累计值**，同一文件内取最大值、同一会话的多个 rollout 各自相加。
-
-⚠️ Codex（OpenAI 口径）与 Claude（Anthropic 口径）的 input 含义相反：Codex 的 `input_tokens` 是 prompt **总量**、已含 `cached_input_tokens` / `cache_write_input_tokens`（实测 `total_tokens == input + output`），而 UFO 的 `TokenTotals` 沿用 Anthropic 口径（input 不含缓存）。因此解析时要把缓存从 input 里减出去，否则总量会重复计算缓存部分。`output_tokens` 已含 `reasoning_output_tokens`，不重复相加。
+- **「等你授权」**：批准/拒绝在 rollout 里**没有**结构化记录（记录类型、item 字段、output 正文都查过）。唯一线索是「`function_call` 很久没有 output」，而那与「命令跑得久」无法区分 —— 所以 Codex 上这个状态退化为绿灯。
+- **子代理**：子线程有自己的 rollout（带 `parent_thread_id` + `source.subagent`），天然不会污染父会话的灯 —— 不需要 Claude 那条 `agent_id` 守卫。
 
 ## 状态目录
 

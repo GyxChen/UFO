@@ -128,6 +128,10 @@ pub struct AgentEvent {
     /// 旧事件缺此字段时反序列化为 None。
     #[serde(default)]
     pub transcript_path: Option<String>,
+    /// 「正在等你操作」的原因原文（Codex 审批理由等）；非等待态为 None。
+    /// 旧事件缺此字段时反序列化为 None。
+    #[serde(default)]
+    pub waiting_reason: Option<String>,
     /// 子代理（subagent）事件的来源标识；主线程事件缺省为 None。
     ///
     /// ⚠️ 子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有本字段能区分。
@@ -196,6 +200,10 @@ pub struct SessionSnapshot {
     pub upstream_url: Option<String>,
     /// 用户最近一次提问内容；未知时为 None，供悬浮窗展示。
     pub prompt: Option<String>,
+    /// 「正在等你操作」的原因原文（如 Codex 的审批理由）；非等待态为 None。
+    /// 与 `error_code` 同策略：只在 Waiting 期间保留，离开即清空。
+    #[serde(default)]
+    pub waiting_reason: Option<String>,
     /// 会话累计消耗的 token；尚未统计到时为 None，供悬浮窗展示。
     /// 由 StatusRegistry 在 snapshot() 时合并进来，不属于事件派生字段。
     #[serde(default)]
@@ -304,6 +312,7 @@ mod tests {
             base_url: Some("http://127.0.0.1:15721".to_string()),
             prompt: Some("修一下这个 bug".to_string()),
             transcript_path: Some("/tmp/sess-123.jsonl".to_string()),
+            waiting_reason: Some("是否允许我访问官网".to_string()),
             agent_id: Some("agent-abc".to_string()),
         };
         let json = serde_json::to_string(&event).unwrap();
@@ -328,6 +337,10 @@ mod tests {
             Some("/tmp/sess-123.jsonl")
         );
         assert_eq!(deserialized.agent_id.as_deref(), Some("agent-abc"));
+        assert_eq!(
+            deserialized.waiting_reason.as_deref(),
+            Some("是否允许我访问官网")
+        );
     }
 
     #[test]

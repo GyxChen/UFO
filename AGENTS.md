@@ -99,7 +99,7 @@ UI设计请使用:ui-ux-pro-max-skill
 
 | 字段 | 来源 | 处理 |
 |---|---|---|
-| `base_url` | **配置文件优先**：`~/.claude/settings.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json` 的 `env.ANTHROPIC_BASE_URL`（后者覆盖前者，`cwd` 取自 hook payload）；**环境变量兜底**：`ANTHROPIC_BASE_URL`。codex 只走环境变量 `OPENAI_BASE_URL` / `OPENAI_API_BASE` | 只按名字取该 key（`env` 块里的 token 绝不读取）；不脱敏，仅 trim；上限 4096 |
+| `base_url` | **配置文件优先**：`~/.claude/settings.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json` 的 `env.ANTHROPIC_BASE_URL`（后者覆盖前者，`cwd` 取自 hook payload）；**环境变量兜底**：`ANTHROPIC_BASE_URL`。codex 读 `$CODEX_HOME/config.toml`（见下「Codex」节），环境变量兜底 | 只按名字取该 key（`env` 块里的 token 绝不读取）；不脱敏，仅 trim；上限 4096 |
 | `prompt` | **仅** `UserPromptSubmit` payload 的 `prompt` 字段（`UserPromptExpansion` 的展开模板文本不认，否则会覆盖用户真正的提问） | trim + 截断；上限 4000 字符；同轮内后续事件继承，下次提交才覆盖 |
 
 - 同轮内后续事件继承这两个值，下次提交/新事件才覆盖（`kernel.rs` 用 `.or(previous_*)`）。
@@ -112,8 +112,9 @@ UI设计请使用:ui-ux-pro-max-skill
 - 下拉选的是**解析器工具**（`不解析(none)` / `cc-switch` / 将来更多），不是代理内部的 provider。存 `module_config.rs` 的 `proxy_resolver` 字段，旧配置缺字段回落 `none`。
 - 命中解析时 `SessionSnapshot.upstream_url` 被填充；tooltip 用 `displayEndpoint`（`src/lib/agent-status.ts`）= `upstream_url ?? base_url`，**上游优先、回落本地**，两者都无才显示 `—`。
 - 接口：`ProxyResolver` trait（`proxy/mod.rs`），`build_registry` 里注册一行即接入新工具，下拉与填充逻辑零改动。
-- `CcSwitchResolver`：只读打开 `~/.cc-switch/cc-switch.db`，按 `proxy_config` + `providers` 反查。命中要求该 app 行**两列同时为 1**：`proxy_enabled`（全局代理服务器开关，三行镜像同值）且 `enabled`（该 app 是否被接管）——语义来自 cc-switch 源码，只看其一会在「服务器开着但该 app 未接管」时误命中。⚠️ `listen_port` 是 `INTEGER`（非 TEXT），必须按整数读，否则 rusqlite 读整行 `InvalidType` 失败、功能空转。上游取 `is_current=1` provider 的 `env.ANTHROPIC_BASE_URL`；带 5s TTL 缓存。
-- ⚠️ `settings_config` 整块 JSON 会进内存解析，但**只按名字提取 `env.ANTHROPIC_BASE_URL` 一个 key**，同块里的 token / api key 一律不读取、不缓存、不上报。Codex 的 base_url 走内嵌 TOML（`config` 字段）而非 `env.ANTHROPIC_BASE_URL`，因此目前只反查 Claude，Codex 会话回落本地地址。
+- `CcSwitchResolver`：只读打开 `~/.cc-switch/cc-switch.db`，按 `proxy_config` + `providers` 反查。命中要求该 app 行**两列同时为 1**：`proxy_enabled`（全局代理服务器开关，三行镜像同值）且 `enabled`（该 app 是否被接管）——语义来自 cc-switch 源码，只看其一会在「服务器开着但该 app 未接管」时误命中。⚠️ `listen_port` 是 `INTEGER`（非 TEXT），必须按整数读，否则 rusqlite 读整行 `InvalidType` 失败、功能空转。上游取 `is_current=1` provider 的 endpoint；带 5s TTL 缓存。
+- ⚠️ **两个 app 的 `settings_config` 存法不同，取上游必须按 app 分流**（`upstream_from_settings`）：claude 是 `env.ANTHROPIC_BASE_URL`；codex **没有 `env` 块**，base_url 埋在 `config` 字段那段 **TOML 文本**里（`model_provider` → `[model_providers.<name>].base_url`）。早先只读 `env.ANTHROPIC_BASE_URL`，导致 Codex 会话的 upstream 恒为 None、tooltip 一直停在本地代理地址。解析规则复用适配器那份（`status::base_url_from_config_text`），保证「tooltip 显示的 endpoint」与「反查出的上游」同源。
+- ⚠️ `settings_config` 整块 JSON 会进内存解析，但**只按名字取 base_url 一个 key**（codex 侧只读 `config`，与它同级的 **`auth` 存的是 API key，绝不读取**）；token / api key 一律不读取、不缓存、不上报。
 - ⚠️ `upstream_url` 是 `Option<String>` + `#[serde(default)]`，**不得升 `SCHEMA_VERSION`**。
 - ⚠️ cc-switch.db 被应用持有：必须 `SQLITE_OPEN_READ_ONLY` + 短 `busy_timeout`，避免争锁。切换 provider 后最多 5s（TTL）反映到悬浮窗。
 
@@ -185,15 +186,49 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - `AgentEvent.kind` 是 `#[serde(default)]` 新增字段，缺省 `Unknown`（**不得升 `SCHEMA_VERSION`**）；旧事件反序列化后为 Unknown = 不驱灯色，与「无法识别」一致。
 - **hook 输入上限 4 MiB**：Codex 的工具事件会把 `tool_input`（apply_patch 补丁等）原样带上，卡 64 KiB 会丢掉有效生命周期事件。落盘的 inbox 事件仍只带提取字段。
 
-### Codex（已接入）
+### Codex（已接入：读 rollout，不用 hook）
 
-- 12 个事件：`PreToolUse` / `PermissionRequest` / `PostToolUse` / `PreCompact` / `PostCompact` / `SessionStart` / `SessionEnd` / `UserPromptSubmit` / `SubagentStart` / `SubagentStop` / `Stop` / `Interrupt`（实测自 codex.exe v0.155 的 `HOOK_EVENT_NAMES`）。
-- 与 Claude 的差异：**没有 `Notification` 事件**（无 `notification_type` 分流）；`Interrupt`（用户 Esc / Ctrl-C 取消当前轮）是 Codex 独有，映射为 **WaitingForUser（黄灯不闪）**——红灯在本项目专指接口/不可抗力错误，用户主动取消不是。`Stop` 仍映射 TurnFinished（绿闪落黄）。
-- **子代理同构**：Codex 子代理事件也带 `agent_id`（+`agent_type`）、主线程不带，共用 `session_id` → 内核那条「子代理不驱灯」的守卫对两个平台同样生效。
-- **Endpoint**：读 `$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`）→ `<cwd>/.codex/config.toml` 覆盖，取顶层 `model_provider` 指向的 `[model_providers.<name>].base_url`；环境变量 `OPENAI_BASE_URL` / `OPENAI_API_BASE` 兜底。只读这一个 key，api key（`auth.json`）一律不碰。用 TOML 解析依赖 `basic-toml`（**只读**，刻意不用官方 `toml`，避免连带 toml_edit 序列化链）。
-- **token**：rollout JSONL 里 `event_msg`/`token_count` 的 `info.total_token_usage` 是**会话级累计值**（不是增量），同一文件内取 max；同一会话的多个 rollout 各文件累计值相加。⚠️ **口径与 Anthropic 相反**：Codex 的 `input_tokens` 是 prompt 总量、**已含** `cached_input_tokens` / `cache_write_input_tokens`（实测 `total_tokens == input + output`），而 `TokenTotals` 沿用 Anthropic 口径（input 不含缓存）—— 所以映射时必须把缓存从 input 里减出去，否则前端 `tokenTotal()` 会把缓存算两遍（实测缓存占比可达 1/3）。`output_tokens` 已含 `reasoning_output_tokens`，不重复加。
-- ⚠️ **红灯在 Codex 上靠 rollout 补漏，不是 hook**：Codex 的 12 个 hook 事件里**没有错误类事件**（Claude 有 `StopFailure`），实测「重试耗尽」（429）这类以 error 结束的轮次**连 `Stop` 都不触发** —— 只用 hook 的话红灯永远不可达，灯会停在绿灯直到超时被清。因此 `status/codex_rollout.rs` 增量巡检 rollout：读到 `event_msg`/`task_complete` 带非空 `error` 就合成一条 `Failed` 事件（`error_code` 带错误正文）走同一条内核入口。它**只巡检已登记会话**（hook 的 `transcript_path` 带过的），agent 全停即零 I/O；按 `turn_id` 去重（`event_id` 也由轮 id 派生，吃内核那层去重）。⚠️ 已知时序窗口：rollout 落盘比真实发生晚最多一个巡检周期（~500ms），若用户在这窗口内已发下一条 prompt，红灯可能短暂盖住新绿灯，下一条 hook 事件会纠正。
-- ⚠️ **`tokens.rs` 的解析必须按 provider 分流**（`observe()` 要传 provider）：Claude 是「按请求累加 + 按 `message.id` 去重」，Codex 是「取累计值」，混用会让数字翻倍或归零。
+**结论先说**：Codex 的**事件与 token 全部来自 rollout**（Codex 自己写的会话日志）；hook 只保留**一个极窄的口子** —— `PermissionRequest`，因为那是 rollout 里唯一拿不到的状态。原因如下：
+
+- **没有错误类事件**（Claude 有 `StopFailure`）：429/502 这类以 error 结束的轮次不触发任何 hook；
+- **中断路径也不触发**：从 Codex Desktop 的停止按钮取消（app-server 的 `turn/interrupt`），rollout 里 `turn_aborted` 已落盘，hook 侧零调用；
+- **会静默失效**：hooks 要在设置页逐条信任、按内容哈希记账（改一次重新信任），实测出现过「一段时间一次都不触发、四处日志无报错」。
+
+**因此 `~/.codex/hooks.json` 只需配一个事件**：
+
+```json
+{ "hooks": { "PermissionRequest": [
+  { "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }] } }
+```
+
+⚠️ 不要顺手把其它事件也加进来：`compat::codex::CodexPermissionAdapter` 会 `Ok(None)` 静默忽略它们（不落盘、不算失败），但每个事件都会**多起一个进程**空转 —— 白花钱。
+
+#### 机制（`status/codex_rollout.rs`）
+
+| 环节 | 做法 |
+|---|---|
+| 发现 | 扫 `$CODEX_HOME/sessions/<年>/<月>/<日>/`（回溯 2 天，目录名字典序即时间序，**不需要本地日期库**）；会话 id 取文件名末尾 uuid（实测 == `session_meta.id`） |
+| 播种 | 注册时读一遍已有内容，**只为**拿 `cwd`（→ endpoint）与 token 累计，**不产出事件**（否则一启动就复读当天所有历史会话） |
+| 映射 | `session_meta`/`task_started`/`user_message` → Running；`task_complete` 无 error → TurnFinished；**带 error → Failed**；`turn_aborted` → WaitingForUser（黄不闪） |
+| 增量 | 只读新增字节；**文件在长 = 有活动**（绿），只有生命周期记录才改灯态 |
+| 去抖 | 同灯态只产出一次事件；「绿」每 30 秒补一条保活（长命令期间 Codex 一条记录都不写，不续命会被「执行中超时」清掉）。⚠️ 去抖基线必须跟着**实际灯态**走：hook 把灯抬成黄的那一刻巡检器并不知情，所以 monitor 对**来源是 hook** 的 Codex 事件调 `note_light()` 回灌基线（`apply_status_event` 的 `EventSource` 参数就是干这个的）。不回灌的话，批准后 rollout 恢复写入的那条「绿」会被当成重复整个吃掉，灯卡在黄直到 30 秒保活 |
+| 结束 | 归档 = rollout 被**移走**到 `archived_sessions/`，连续两轮读不到即判 SessionFinished |
+| **等你授权** | rollout **没有**这个状态的任何记录（记录类型 / item 字段 / output 正文全查过）→ 只能靠 hook 的 `PermissionRequest` 补：它带 `tool_name` / `tool_input.command` / `tool_input.description`（Codex 自己写的审批理由）。映射为 WaitingForUser（黄灯不闪），理由进 `waiting_reason` 显示在 tooltip 的 head 行 |
+| 预筛 | `compat::codex::cares()` 先做子串扫描：97% 的字节是命令输出/消息正文（单条可达 100 KB），只有命中小标记的行才做 JSON 解析 |
+
+⚠️ 不要把 Codex 的 hook 适配器「顺手」补回来：两路同时驱动同一会话会让灯态互顶（`compat::tests::only_claude_uses_the_hook_adapter` 锁着这条）。
+
+#### 取不到的东西
+
+- **子代理**：子线程有自己的 rollout（带 `parent_thread_id` + `source.subagent`），天然不会污染父会话的灯，所以**不需要** Claude 那条 `agent_id` 守卫。
+- **hook 仍可能静默失效**：实测出现过「某个会话一次 hook 都不触发、四处日志无报错」。所以 `PermissionRequest` 只是**锦上添花** —— 它挂了就退化成黄灯不显（绿灯），rollout 那条链路完全不受影响。两条来源不冲突的根据：**等审批期间 rollout 一条记录都不写**（实测），批准后命令一跑就有新记录 → 恢复绿灯（由 `note_light` 保证「立刻」而不是 30 秒后，见上表「去抖」行）。
+- ⚠️ **monitor 每轮的处理顺序是「rollout 先、inbox 后」**，别调回去：hook 事件代表更晚发生的事实（弹审批框之前 rollout 已经写过 `function_call` 记录），放后手它才能在同一轮里压过由「文件在长」推出的绿；反过来会让刚抬起的黄灯被同一批旧字节顶回绿。
+
+#### endpoint / token
+
+- **Endpoint**：读 `$CODEX_HOME/config.toml` → `<cwd>/.codex/config.toml` 覆盖，取顶层 `model_provider` 指向的 `[model_providers.<name>].base_url`；环境变量 `OPENAI_BASE_URL` / `OPENAI_API_BASE` 兜底。只读这一个 key（`auth.json` 一律不碰）。用 `basic-toml`（只读，刻意不用官方 `toml` 以免拖进 toml_edit）。同一套解析规则被代理解析器复用（`status::base_url_from_config_text`），保证 tooltip 与上游反查同源。
+- **token**：`event_msg`/`token_count` 的 `info.total_token_usage` 是**会话级累计值**（不是增量），同一文件内取 max、同会话多 rollout 各自相加。⚠️ **口径与 Anthropic 相反**：`input_tokens` 是 prompt 总量、**已含** `cached_input_tokens` / `cache_write_input_tokens`（实测 `total_tokens == input + output`），映射时必须减出来，否则前端 `tokenTotal()` 把缓存算两遍（实测缓存占比可达 1/3）。`output_tokens` 已含 `reasoning_output_tokens`，不重复加。
+- ⚠️ **Codex 的用量不在 `tokens.rs`**：那个模块只管 Claude 的 transcript（按 `message.id` 去重累加）。
 
 ### Agent 状态指示灯语义
 - 🟢 常亮 = Running（正在执行）

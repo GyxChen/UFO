@@ -55,6 +55,8 @@ pub(crate) struct AdaptedEvent {
     pub base_url: Option<String>,
     /// 用户最近一次提交的提问。
     pub prompt: Option<String>,
+    /// 「正在等你操作」的原因原文（如审批理由）。
+    pub waiting_reason: Option<String>,
     /// transcript（JSONL）的绝对路径，供 monitor 增量统计 token。
     pub transcript_path: Option<String>,
     /// 可选序号，用于乱序过滤。
@@ -91,6 +93,7 @@ impl AdaptedEvent {
             base_url: self.base_url,
             prompt: self.prompt,
             transcript_path: self.transcript_path,
+            waiting_reason: self.waiting_reason,
             agent_id: self.agent_id,
         }
     }
@@ -98,10 +101,14 @@ impl AdaptedEvent {
 
 /// 平台 hook 适配器：把某平台的原始负载翻译成内核事件。
 ///
-/// 实现只关心「该平台长什么样」，产出一个与平台无关的 [`AdaptedEvent`]；
-/// 无法处理（缺 session id 等）时返回 `Err`，hook 外壳据此记日志并非零退出。
+/// 三个返回值各有含义，别混：
+/// - `Ok(Some(event))`：归一化成功，落盘喂内核；
+/// - `Ok(None)`：**这条事件本适配器不关心，静默忽略**（不落盘、不算失败）。
+///   Codex 用它把「只要 PermissionRequest、其余全部忽略」表达出来 —— 若返回 Err，
+///   hook 会记失败日志并把噪声写进 hook-debug.log；
+/// - `Err(_)`：真的坏了（缺 session id 等），hook 外壳记日志并非零退出。
 pub(crate) trait HookAdapter: Sync {
-    fn adapt(&self, payload: &Value, ctx: &AdaptContext<'_>) -> Result<AdaptedEvent, String>;
+    fn adapt(&self, payload: &Value, ctx: &AdaptContext<'_>) -> Result<Option<AdaptedEvent>, String>;
 }
 
 /// 按 provider 取适配器；尚未接入的平台返回 None（hook 外壳给出明确报错）。
@@ -110,7 +117,9 @@ pub(crate) trait HookAdapter: Sync {
 pub(crate) fn adapter_for(provider: Provider) -> Option<&'static dyn HookAdapter> {
     match provider {
         Provider::Claude => Some(&claude::ClaudeAdapter),
-        Provider::Codex => Some(&codex::CodexAdapter),
+        // Codex 走 rollout（`status::codex_rollout`），hook 只保留一个极窄的补充：
+        // `PermissionRequest` —— 那是 rollout 里唯一拿不到的状态。见 `compat::codex` 的模块文档。
+        Provider::Codex => Some(&codex::CodexPermissionAdapter),
     }
 }
 
@@ -330,16 +339,39 @@ mod tests {
         assert_eq!(normalize_event_name("Start"), "start");
     }
 
-    /// 每个 provider 都必须有适配器 —— 少一个就是 `--provider X` 的 hook 静默失效。
+    /// 适配器注册表：两个平台都有，但 Codex 那个**极窄** —— 只认 `PermissionRequest`。
+    ///
+    /// 这条断言防的是「顺手把 Codex 的其它事件也接进来」：多认一个事件，就多一处与
+    /// rollout 抢同一盏灯的地方（rollout 说绿、hook 说黄，灯就会跳）。
     #[test]
-    fn every_known_provider_has_an_adapter() {
-        for provider in [Provider::Claude, Provider::Codex] {
+    fn codex_adapter_only_accepts_permission_request() {
+        let adapter = adapter_for(Provider::Codex).expect("Codex 有极窄适配器");
+        let ctx = AdaptContext { cwd: None };
+
+        // 其余事件一律静默忽略（Ok(None)），不算失败、不落盘。
+        for name in ["PreToolUse", "PostToolUse", "Stop", "SessionStart", "Interrupt"] {
+            let payload = serde_json::json!({"session_id": "s1", "hook_event_name": name});
             assert!(
-                adapter_for(provider).is_some(),
-                "{} 缺少适配器",
-                provider.as_str()
+                adapter.adapt(&payload, &ctx).expect("不报错").is_none(),
+                "{name} 不该被 Codex 适配器接受"
             );
         }
+
+        // 只认这一个：等人授权 → 黄灯，且带上审批理由。
+        let payload = serde_json::json!({
+            "session_id": "s1",
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "Bash",
+            "tool_input": {"command": "curl …", "description": "是否允许我访问官网"},
+        });
+        let adapted = adapter
+            .adapt(&payload, &ctx)
+            .expect("不报错")
+            .expect("PermissionRequest 必须被接受");
+        assert_eq!(adapted.kind, AgentEventKind::WaitingForUser);
+        assert_eq!(adapted.waiting_reason.as_deref(), Some("是否允许我访问官网"));
+        // ⚠️ 理由只走 waiting_reason，绝不能污染用户的提问。
+        assert_eq!(adapted.prompt, None);
     }
 
     #[test]

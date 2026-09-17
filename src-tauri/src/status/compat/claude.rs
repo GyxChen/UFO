@@ -20,7 +20,7 @@ pub(crate) struct ClaudeAdapter;
 
 impl HookAdapter for ClaudeAdapter {
     /// 把一次 Claude Code hook 的原始 JSON 负载归一化成内核事件。
-    fn adapt(&self, payload: &Value, ctx: &AdaptContext<'_>) -> Result<AdaptedEvent, String> {
+    fn adapt(&self, payload: &Value, ctx: &AdaptContext<'_>) -> Result<Option<AdaptedEvent>, String> {
         let session_id = string_field(payload, &["session_id", "sessionId", "conversation_id"])
             .ok_or_else(|| "hook payload has no session id".to_string())?;
         if session_id.len() > 256 {
@@ -55,7 +55,8 @@ impl HookAdapter for ClaudeAdapter {
             classify(&event, notification_type.as_deref())
         };
 
-        Ok(AdaptedEvent {
+        // Claude 的适配器每个事件都归一出结果（它的事件名表是完备的），不返回「忽略」。
+        Ok(Some(AdaptedEvent {
             session_id,
             kind,
             event,
@@ -65,11 +66,14 @@ impl HookAdapter for ClaudeAdapter {
             notification_type,
             base_url: provider_base_url(Provider::Claude, ctx.cwd),
             prompt,
+            // Claude 的「等人操作」由事件名决定（PermissionRequest / Elicitation），
+            // payload 里没有像 Codex 那样的自然语言理由，所以恒为空。
+            waiting_reason: None,
             transcript_path: transcript_path(payload),
             sequence: number_field(payload, &["sequence", "seq"]),
             occurred_at_ms: number_field(payload, &["occurred_at_ms", "timestamp_ms"])
                 .and_then(|value| i64::try_from(value).ok()),
-        })
+        }))
     }
 }
 
@@ -364,7 +368,8 @@ mod tests {
     fn light_for_payload(payload: Value, received_at_ms: i64) -> (SessionPhase, bool) {
         let adapted = ClaudeAdapter
             .adapt(&payload, &AdaptContext { cwd: None })
-            .expect("claude payload adapts");
+            .expect("claude payload adapts")
+            .expect("claude 每个事件都归一出结果");
         let event = adapted.into_event(EventEnvelope {
             provider: Provider::Claude,
             event_id: "e2e".to_string(),
@@ -436,7 +441,8 @@ mod tests {
         });
         let adapted = ClaudeAdapter
             .adapt(&payload, &AdaptContext { cwd: None })
-            .expect("adapts");
+            .expect("adapts")
+            .expect("claude 每个事件都归一出结果");
         assert_eq!(adapted.kind, AgentEventKind::Running);
         assert_eq!(adapted.event, "UserPromptSubmit");
         assert_eq!(adapted.prompt.as_deref(), Some("帮我看看这个 bug"));

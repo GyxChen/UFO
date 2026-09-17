@@ -792,6 +792,7 @@ mod tests {
             base_url: base_url.map(|value| value.to_string()),
             upstream_url: None,
             prompt: None,
+            waiting_reason: None,
             tokens: None,
             last_sequence: None,
             termination_confirmed: false,

@@ -1,227 +1,353 @@
-//! Codex 平台适配器。
+//! Codex 平台适配器：解析 **rollout**（Codex 自己写的会话日志），不依赖 hook。
 //!
-//! Codex（CLI / 桌面版）的 hook 机制与 Claude Code 同构：把命令配一次
-//! （`~/.codex/hooks.json` 或 `config.toml` 的 `[hooks]`，用 `/hooks` 信任后生效），
-//! 之后由 Codex 在生命周期事件发生时调用，stdin 传入 JSON。
+//! ## 为什么不用 hook
 //!
-//! 事件清单（实测自本机 codex.exe v0.155.0-alpha.2.6 的 `HOOK_EVENT_NAMES`）：
-//! `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PreCompact` / `PostCompact` /
-//! `SessionStart` / `SessionEnd` / `UserPromptSubmit` / `SubagentStart` / `SubagentStop` /
-//! `Stop` / `Interrupt`。
+//! Codex 确实有一套 hook（12 个事件），但实测**不足以支撑状态灯**：
+//! - **没有错误类事件**（Claude 有 `StopFailure`）：429/502 这类以 error 结束的轮次不触发任何 hook；
+//! - **中断路径也不触发**：从 Codex Desktop 的停止按钮取消一轮（app-server 的 `turn/interrupt`），
+//!   `turn_aborted` 已写进 rollout，hook 侧却一次调用都没有；
+//! - **会静默失效**：hooks 需要用户在设置页逐条信任（且按内容哈希记账，改一次要重新信任），
+//!   实测出现过「一段时间内一次都不触发、且四处日志无任何报错」的情况。
 //!
-//! 与 Claude 的差异（本文件必须自己处理的部分）：
-//! - **没有 `Notification` 事件**，也就没有 `notification_type` 分流。
-//! - `Interrupt`（用户 Esc / Ctrl-C 取消当前轮）是 Claude 没有的独立事件。
-//! - endpoint 写在 `~/.codex/config.toml`（TOML）里，不是 JSON 配置文件。
+//! rollout 则相反：它是 Codex 自己 resume 用的账本，**turn 级真相全在里面**
+//! （`task_started` / `task_complete` / `turn_aborted`），且零配置、永不静默失效。
+//!
+//! ## 唯一的例外：`PermissionRequest`
+//!
+//! rollout 里**没有**「正在等你授权」的任何记录（记录类型、item 字段、output 正文都查过），
+//! 所以这一个状态只能靠 hook 补 —— 实测 Codex 确实会触发 `PermissionRequest`，且 payload 里
+//! 带着 `tool_name` / `tool_input.command` / `tool_input.description`（给用户看的审批理由）。
+//!
+//! 因此 [`CodexPermissionAdapter`] **刻意极窄**：只认这一个事件，其余一律 `Ok(None)` 静默忽略。
+//! 两个来源同时驱动同一盏灯会互相顶（rollout 说绿、hook 说黄），窄口子才不会打架：
+//! 等审批期间 rollout 不写任何记录（实测），批准后命令一跑就有新记录 → 自然恢复绿灯。
+//!
+//! ## 本文件负责什么
+//!
+//! 把一行 rollout JSON 归一化成内核能消费的东西（见 [`CodexRecord`]）、归一化
+//! `PermissionRequest` 这一条 hook，以及解析 Codex 的配置/上游地址。
+//! **增量读文件、会话发现、去重、组装事件**在 `status::codex_rollout`。
+//!
+//! ⚠️ rollout 是 Codex 的内部格式（非公开 API），只按记录类型取需要的字段；
+//! 认不出的记录一律**不产出事件**（宁可少动灯，也不猜）。
 
 use std::{collections::BTreeMap, env, fs, path::{Path, PathBuf}};
 
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{
-    agent_id, base_url_env_names, fallback_kind, home_dir, is_user_prompt_submit,
-    normalize_base_url, normalize_event_name, payload_error, string_field, transcript_path,
-    truncate_prompt, AdaptContext, AdaptedEvent, HookAdapter,
-};
-use crate::status::model::{AgentEvent, AgentEventKind, Provider, SCHEMA_VERSION};
+use super::{base_url_env_names, home_dir, normalize_base_url, string_field};
+use crate::status::model::{AgentEventKind, Provider, TokenTotals};
 
-/// Codex 适配器单例；`compat::adapter_for(Provider::Codex)` 直接返回它。
-pub(crate) struct CodexAdapter;
+/// Codex 的 hook 适配器：**只认 `PermissionRequest`**，其余事件静默忽略。
+///
+/// 它是 rollout 之外唯一的补充来源，见模块文档「唯一的例外」。一个事件都不要多认 ——
+/// 多认一个，就多一处与 rollout 抢同一盏灯的地方。
+pub(crate) struct CodexPermissionAdapter;
 
-impl HookAdapter for CodexAdapter {
-    /// 把一次 Codex hook 的原始 JSON 负载归一化成内核事件。
-    fn adapt(&self, payload: &Value, ctx: &AdaptContext<'_>) -> Result<AdaptedEvent, String> {
-        let session_id = string_field(payload, &["session_id", "sessionId", "thread_id"])
-            .ok_or_else(|| "hook payload has no session id".to_string())?;
-        if session_id.len() > 256 {
-            return Err("session id is too long".to_string());
-        }
-
+impl super::HookAdapter for CodexPermissionAdapter {
+    fn adapt(
+        &self,
+        payload: &Value,
+        ctx: &super::AdaptContext<'_>,
+    ) -> Result<Option<super::AdaptedEvent>, String> {
         let event = string_field(
             payload,
-            &[
-                "hook_event_name",
-                "event",
-                "event_name",
-                "event_type",
-                "type",
-            ],
+            &["hook_event_name", "event", "event_name", "event_type", "type"],
         )
-        .unwrap_or_else(|| "unknown".to_string());
+        .unwrap_or_default();
+        // 其余 11 个事件一概不管（包括 PreToolUse 这种 rollout 已经覆盖的）：
+        // 返回 Ok(None) 让 hook 外壳静默跳过，既不算失败也不落盘。
+        if super::normalize_event_name(&event) != "permission_request" {
+            return Ok(None);
+        }
+        let session_id = string_field(payload, &["session_id", "sessionId", "thread_id"])
+            .ok_or_else(|| "hook payload has no session id".to_string())?;
 
-        // Codex 没有 error_code 字段；`reason` 只出现在 SessionEnd（当前恒为 "other"）。
-        // 仍按共用规则过一遍：将来 Codex 补上失败类字段时无需改这里。
-        let error_code = string_field(payload, &["error_code", "error"]);
-        let outcome = string_field(payload, &["reason", "outcome", "status"]);
-
-        let kind = if payload_error(error_code.as_deref(), outcome.as_deref()) {
-            AgentEventKind::Failed
-        } else {
-            classify(&event)
-        };
-
-        Ok(AdaptedEvent {
+        Ok(Some(super::AdaptedEvent {
             session_id,
-            kind,
-            event: event.clone(),
-            agent_id: agent_id(payload),
-            error_code,
-            outcome,
-            // Codex 没有 Notification 事件，该字段恒为空。
+            // 等人授权 → 黄灯不闪（与「用户中断」同一语义：都在等你，都不是错误）。
+            kind: AgentEventKind::WaitingForUser,
+            event,
+            agent_id: None,
+            error_code: None,
+            outcome: None,
             notification_type: None,
             base_url: codex_base_url(ctx.cwd),
-            prompt: user_prompt(&event, payload),
-            transcript_path: transcript_path(payload),
-            // Codex 的 hook payload 没有全局序号（rollout 里的 ordinal 不在 payload 中），
-            // 乱序保护对它不生效 —— 事件本身带 turn_id 但并非单调递增的会话序号。
+            // ⚠️ 审批理由走 `waiting_reason`，**不能**塞进 `prompt` —— 那是用户的提问，
+            // 塞进去会把 tooltip 的提问行覆盖掉。
+            waiting_reason: approval_reason(payload),
+            prompt: None,
+            transcript_path: super::transcript_path(payload),
             sequence: None,
             occurred_at_ms: None,
-        })
+        }))
     }
 }
 
-/// 把 Codex 的事件名归一化成内核事件种类。
+/// 审批理由的长度上限（字符）：tooltip 只有一行位置，够说清「要我批准什么」即可。
+const MAX_REASON_CHARS: usize = 160;
+
+/// 从 `PermissionRequest` payload 里取「给用户看的审批理由」。
 ///
-/// 灯色语义（与 CLAUDE.md 的指示灯约定一致）：
-/// 绿常亮 = 执行中；黄 = 等人操作；绿闪落黄 = 一轮正常结束；绿闪移除 = 会话结束。
-fn classify(event_name: &str) -> AgentEventKind {
-    let normalized = normalize_event_name(event_name);
-    match normalized.as_str() {
-        // ── 正在执行（绿常亮） ──
-        // 工具调用 / 压缩 / 子代理 / 会话启动 / 用户提交提问都表示「这条链路在跑」。
-        // ⚠️ 子代理事件（SubagentStart/SubagentStop，以及子代理内部触发的事件）带 agent_id，
-        // 由内核对**已存活**会话拦成「只刷存活时间」，因此不会把黄灯顶回绿。
-        "session_start" | "user_prompt_submit" | "pre_tool_use" | "post_tool_use"
-        | "pre_compact" | "post_compact" | "subagent_start" | "subagent_stop" => {
-            AgentEventKind::Running
-        }
-
-        // ── 等用户操作（黄灯，不闪） ──
-        // PermissionRequest：工具调用要你批准（如 shell 提权 / 网络授权）
-        // Interrupt：你按 Esc / Ctrl-C 取消了当前轮 —— 本轮到此为止、等你下一条指令。
-        //   刻意不落红灯：本项目的红灯语义是「接口/不可抗力错误」，而这是用户主动取消。
-        "permission_request" | "interrupt" => AgentEventKind::WaitingForUser,
-
-        // ── 一轮正常结束（先绿闪，retention 后落黄；对话未结束） ──
-        "stop" => AgentEventKind::TurnFinished,
-
-        // ── 对话结束（绿闪后移除） ──
-        "session_end" => AgentEventKind::SessionFinished,
-
-        _ => fallback_kind(&normalized),
-    }
-}
-
-/// 从 hook payload 中提取用户提交的提问（只认 `UserPromptSubmit`）。
-///
-/// Codex 的该事件带 `prompt` 字段，与 Claude 同名字段，因此采集逻辑共用。
-/// 与 Claude 的区别是**不做元标签剔除**：那些 `<system-reminder>` 之类是 Claude Code
-/// 自己注入的，Codex 不注入，也就没有可剥的东西 —— 只做去空白与超长截断。
-fn user_prompt(event_name: &str, payload: &Value) -> Option<String> {
-    if !is_user_prompt_submit(event_name) {
+/// 优先 `tool_input.description`（Codex 自己写的自然语言说明，如「是否允许我访问 …」），
+/// 退而用 `tool_input.command`（命令原文）。两者都没有就不显示理由。
+fn approval_reason(payload: &Value) -> Option<String> {
+    let tool_input = payload.get("tool_input");
+    let reason = tool_input
+        .and_then(|input| string_at(input, "description"))
+        .or_else(|| tool_input.and_then(|input| string_at(input, "command")))
+        .or_else(|| tool_input.and_then(|input| string_at(input, "cmd")))?;
+    let trimmed = reason.trim();
+    if trimmed.is_empty() {
         return None;
     }
-    string_field(payload, &["prompt", "user_prompt", "prompt_text"])
-        .and_then(|value| truncate_prompt(&value))
+    Some(trimmed.chars().take(MAX_REASON_CHARS).collect())
 }
 
-/// Codex rollout 里「一轮以错误结束」这一事实。
+/// 会话身份：只有 `session_meta`（文件首行）带。
 ///
-/// 它**不是 hook 事件**：Codex 的 12 个 hook 事件里没有错误类（Claude 有 `StopFailure`），
-/// 且实测「重试耗尽」这种 error 结束连 `Stop` 都不触发 —— 于是红灯在 Codex 上原本不可达。
-/// 这个结构承载从 rollout 里补读到的那份事实，由 `status::codex_rollout` 增量巡检产出。
-pub(crate) struct RolloutTurnError {
-    /// 去重键：同一轮只上报一次。
-    pub turn_id: String,
-    /// 错误正文（`error.message`），落进快照的 `error_code` 供排障。
-    pub message: String,
+/// 会话 id **不在这里** —— 它由 `codex_rollout` 从文件名末尾的 uuid 直接取
+/// （实测与 `session_meta.id` 同一个值），这样会话 key 在读到内容之前就确定了。
+pub(crate) struct CodexSessionMeta {
+    /// 会话工作目录：用来定位项目级配置、解析 endpoint。
+    pub cwd: Option<String>,
+}
+
+/// 一行 rollout 归一化后的结果。
+///
+/// 一次解析同时产出四类信息（一条记录通常只占其中一项）：灯态、会话身份、token 用量、提问。
+pub(crate) struct CodexRecord {
+    /// 该记录对应的灯态；`None` 表示这条记录不改变灯态（如 `token_count`）。
+    pub kind: Option<AgentEventKind>,
+    /// 记录名，写进事件的 `event` 字段供诊断。
+    pub name: &'static str,
+    /// turn 级记录带的轮 id（去重键）；非 turn 级记录为 None。
+    pub turn_id: Option<String>,
+    /// `task_complete` 的错误正文。
+    pub error_code: Option<String>,
+    /// `user_message` 的提问文本。
+    pub prompt: Option<String>,
+    /// `session_meta` 带来的会话身份。
+    pub session: Option<CodexSessionMeta>,
+    /// `token_count` 带来的会话级累计用量。
+    pub tokens: Option<TokenTotals>,
+}
+
+/// 字节级预筛：这一行是否**可能**是我们关心的记录。
+///
+/// 实测 97% 的字节落在不需要解析的大记录上（命令输出、消息正文、工具输出，单条可达 100 KB）。
+/// 这里只做一次子串扫描（`str::contains`，两级字节搜索），命中的少数小记录才做完整 JSON 解析。
+///
+/// 非 UTF-8 或认不出标记的行返回 false —— 由调用方按「文件在长 = 有活动」处理，
+/// 因此漏判只会退化成「当作活动」而不会丢状态。
+pub(crate) fn cares(line: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(line) else {
+        return false;
+    };
+    const MARKERS: [&str; 7] = [
+        "\"session_meta\"",
+        "\"task_started\"",
+        "\"task_complete\"",
+        "\"turn_aborted\"",
+        // CLI 写小写；**Desktop 只写 `item_completed` 里的 `UserMessage` item**（实测），
+        // 提问正文在 item.content[].text —— 少认这一个标记，桌面端的 tooltip 就没有提问。
+        "\"user_message\"",
+        "\"UserMessage\"",
+        "\"token_count\"",
+    ];
+    MARKERS.iter().any(|marker| text.contains(marker))
+}
+
+/// 把一行 rollout 记录归一化成 [`CodexRecord`]；认不出返回 None。
+///
+/// 灯态映射（与 CLAUDE.md 的指示灯约定一致）：
+/// - `session_meta` / `task_started` / `user_message` → 🟢 Running
+/// - `task_complete` 无 error → 🟢 绿闪 → 🟡 Waiting（一轮正常结束，对话未结束）
+/// - `task_complete` 带 error → 🔴 Failed
+/// - `turn_aborted` → 🟡 Waiting 不闪（用户中断，等你下一条）
+pub(crate) fn classify_rollout_line(line: &[u8]) -> Option<CodexRecord> {
+    if line.is_empty() {
+        return None;
+    }
+    let record: Value = serde_json::from_slice(line).ok()?;
+    let outer = record.get("type").and_then(Value::as_str)?;
+    let payload = record.get("payload");
+
+    if outer == "session_meta" {
+        let payload = payload?;
+        return Some(CodexRecord {
+            kind: Some(AgentEventKind::Running),
+            name: "session_meta",
+            turn_id: None,
+            error_code: None,
+            prompt: None,
+            session: Some(CodexSessionMeta {
+                cwd: string_at(payload, "cwd"),
+            }),
+            tokens: None,
+        });
+    }
+
+    if outer != "event_msg" {
+        return None;
+    }
+    let payload = payload?;
+    let inner = payload.get("type").and_then(Value::as_str)?;
+
+    let simple = |kind: AgentEventKind, name: &'static str| CodexRecord {
+        kind: Some(kind),
+        name,
+        turn_id: None,
+        error_code: None,
+        prompt: None,
+        session: None,
+        tokens: None,
+    };
+
+    match inner {
+        // 桌面端的提问走这里：`item_completed` 里包一个 `UserMessage` item，
+        // 正文是 `item.content[].text`（多个 text 段拼起来）。
+        "item_completed" => {
+            let item = payload.get("item")?;
+            if item.get("type").and_then(Value::as_str) != Some("UserMessage") {
+                return None;
+            }
+            let mut record = simple(AgentEventKind::Running, "user_message");
+            record.turn_id = string_at(payload, "turn_id");
+            record.prompt = item_prompt(item);
+            Some(record)
+        }
+        "task_started" => Some(simple(AgentEventKind::Running, "task_started")),
+        // CLI 路径：提问直接在 event_msg 的 `message` 字段里。
+        "user_message" => {
+            let mut record = simple(AgentEventKind::Running, "user_message");
+            record.turn_id = string_at(payload, "turn_id");
+            record.prompt = string_at(payload, "message").and_then(|text| super::truncate_prompt(&text));
+            Some(record)
+        }
+        "task_complete" => {
+            let error_code = payload
+                .get("error")
+                .filter(|error| !error.is_null())
+                .map(|error| {
+                    // 正文优先取 error.message；形态变了就退化成整块 JSON，总比丢掉强。
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| error.to_string())
+                        .chars()
+                        .take(MAX_ERROR_MESSAGE_CHARS)
+                        .collect::<String>()
+                });
+            let kind = if error_code.is_some() {
+                AgentEventKind::Failed
+            } else {
+                AgentEventKind::TurnFinished
+            };
+            let mut record = simple(kind, "task_complete");
+            record.turn_id = string_at(payload, "turn_id");
+            record.error_code = error_code;
+            Some(record)
+        }
+        // 用户中断（Esc / Desktop 的停止按钮）→ 黄灯不闪：本轮到此为止、等下一条指令。
+        // 刻意不落红灯：红灯的语义是「接口/不可抗力错误」，这是用户主动取消。
+        "turn_aborted" => {
+            let mut record = simple(AgentEventKind::WaitingForUser, "turn_aborted");
+            record.turn_id = string_at(payload, "turn_id");
+            Some(record)
+        }
+        // 用量：不改灯态，只出累计值（口径换算见下）。
+        "token_count" => {
+            let mut record = simple(AgentEventKind::Running, "token_count");
+            record.kind = None;
+            record.tokens = payload
+                .get("info")
+                .and_then(|info| info.get("total_token_usage"))
+                .map(token_totals);
+            Some(record)
+        }
+        _ => None,
+    }
 }
 
 /// 错误正文长度上限（字符）：够看清是什么错，又不至于撑大每轮广播的快照。
 const MAX_ERROR_MESSAGE_CHARS: usize = 300;
 
-/// 从一行 rollout 记录里识别「本轮以错误结束」。
+/// 从 `UserMessage` item 里取提问正文。
 ///
-/// 只认 `event_msg` / `task_complete` **带非空 `error`**：
-/// - 中间的重试失败不会写成 `task_complete`，所以不会把「重试后成功」误报成错误；
-/// - 正常完成的那条 `task_complete` 不带 `error` 字段。
-pub(crate) fn rollout_turn_error(line: &[u8]) -> Option<RolloutTurnError> {
-    if line.is_empty() {
-        return None;
-    }
-    let record: Value = serde_json::from_slice(line).ok()?;
-    if record.get("type").and_then(Value::as_str) != Some("event_msg") {
-        return None;
-    }
-    let payload = record.get("payload")?;
-    if payload.get("type").and_then(Value::as_str) != Some("task_complete") {
-        return None;
-    }
-    let error = payload.get("error").filter(|error| !error.is_null())?;
-
-    // 去重键优先 turn_id；个别记录没带时退化成文件内的 ordinal（同样唯一），都没有才放弃。
-    let turn_id = payload
-        .get("turn_id")
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-        .or_else(|| {
-            record
-                .get("ordinal")
-                .map(|ordinal| format!("ordinal-{ordinal}"))
-        })?;
-    // 正文优先取 error.message；形态变了就退化成整块 JSON，总比丢掉这条错误强。
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-        .unwrap_or_else(|| error.to_string());
-
-    Some(RolloutTurnError {
-        turn_id,
-        message: message.chars().take(MAX_ERROR_MESSAGE_CHARS).collect(),
-    })
-}
-
-impl RolloutTurnError {
-    /// 归一化成内核事件（红灯）。
-    ///
-    /// `event_id` 由轮 id 派生、**稳定不变**：内核按 `provider:session:event_id` 去重，
-    /// 万一同一条记录被重读（rollout 被截断重扫）也不会把红灯重复点亮。
-    pub(crate) fn into_event(&self, session_id: &str, received_at_ms: i64) -> AgentEvent {
-        AgentEvent {
-            schema_version: SCHEMA_VERSION,
-            event_id: format!("rollout-error-{}", self.turn_id),
-            provider: Provider::Codex,
-            session_id: session_id.to_string(),
-            kind: AgentEventKind::Failed,
-            // 诊断字段：标出这条不是 hook 事件，而是从 rollout 补出来的。
-            event: "task_complete(error)".to_string(),
-            sequence: None,
-            occurred_at_ms: None,
-            received_at_ms,
-            pid: None,
-            error_code: Some(self.message.clone()),
-            outcome: None,
-            notification_type: None,
-            base_url: None,
-            prompt: None,
-            transcript_path: None,
-            agent_id: None,
+/// 形态：`{"type":"UserMessage","content":[{"type":"text","text":"…"}]}` —— 把各 text 段拼起来，
+/// 再走共用的裁剪（去空白 + 超长截断）。
+fn item_prompt(item: &Value) -> Option<String> {
+    let parts = item.get("content")?.as_array()?;
+    let mut text = String::new();
+    for part in parts {
+        if let Some(segment) = part.get("text").and_then(Value::as_str) {
+            text.push_str(segment);
         }
     }
+    super::truncate_prompt(&text)
 }
 
-/// 读取 Codex 当前会话的 API endpoint。
+/// 取一个字符串字段；缺失 / 非字符串 / 空白都算没有。
+fn string_at(value: &Value, name: &str) -> Option<String> {
+    value
+        .get(name)?
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToString::to_string)
+}
+
+/// 把 Codex 的累计用量换算成 [`TokenTotals`]（Anthropic 口径）。
 ///
-/// 取值顺序：**配置文件优先，环境变量兜底**（与 Claude 适配器同一口径）。
+/// ⚠️ 两个平台口径**相反**，必须换算，否则前端 `tokenTotal()` 会把缓存算两遍：
+/// - OpenAI（Codex）：`input_tokens` 是 prompt **总量**，已含 cached / cache_write
+///   （实测 `total_tokens == input + output`，如 23729 + 6864 = 30593）；
+/// - Anthropic（Claude）：`input_tokens` **不含**缓存，两者并列相加。
+///
+/// 另外 `output_tokens` 已包含 `reasoning_output_tokens`（实测 6766 含 4864），不重复相加。
+fn token_totals(usage: &Value) -> TokenTotals {
+    let cached = u64_at(usage, "cached_input_tokens");
+    let cache_write = u64_at(usage, "cache_write_input_tokens");
+    TokenTotals {
+        input_tokens: u64_at(usage, "input_tokens").saturating_sub(cached + cache_write),
+        cache_creation_input_tokens: cache_write,
+        cache_read_input_tokens: cached,
+        output_tokens: u64_at(usage, "output_tokens"),
+    }
+}
+
+/// 读取一个非负整数字段；缺失或类型不符按 0 处理。
+fn u64_at(value: &Value, name: &str) -> u64 {
+    value.get(name).and_then(Value::as_u64).unwrap_or(0)
+}
+
+/// Codex 存放会话 rollout 的根目录（`$CODEX_HOME/sessions`，默认 `~/.codex/sessions`）。
+///
+/// 目录结构是 `<根>/<年>/<月>/<日>/rollout-<本地时间>-<会话 id>.jsonl`。
+pub(crate) fn codex_sessions_dir() -> Option<PathBuf> {
+    codex_home_dir().map(|home| home.join("sessions"))
+}
+
+/// Codex 的配置目录：`$CODEX_HOME` 优先（与 Codex 自身一致），否则 `~/.codex`。
+fn codex_home_dir() -> Option<PathBuf> {
+    env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".codex")))
+}
+
+/// 读取该会话当前使用的 API endpoint。
+///
+/// 取值顺序：**配置文件优先，环境变量兜底**（与 Claude 同口径）。
 /// - 配置文件：`$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`）→
 ///   `<cwd>/.codex/config.toml` 覆盖前者。取顶层 `model_provider` 指向的
 ///   `[model_providers.<name>].base_url`。
 /// - 环境变量：`OPENAI_BASE_URL` / `OPENAI_API_BASE`。
 ///
-/// 只读 `base_url` 一个 key：同文件里的 `auth.json` / api key 一律不读取、不缓存、不上报。
-fn codex_base_url(cwd: Option<&Path>) -> Option<String> {
+/// 只读 `base_url` 一个 key：同目录下的 `auth.json` / api key 一律不读取、不缓存、不上报。
+pub(crate) fn codex_base_url(cwd: Option<&Path>) -> Option<String> {
     read_config_base_url(&codex_config_paths(home_dir().as_deref(), cwd))
         .or_else(|| {
             base_url_env_names(Provider::Codex)
@@ -249,6 +375,43 @@ fn codex_config_paths(home: Option<&Path>, cwd: Option<&Path>) -> Vec<PathBuf> {
     paths
 }
 
+/// 把 `CODEX_HOME` 指向临时目录的测试守卫（Drop 时还原）。
+///
+/// `CODEX_HOME` 是**进程级**变量，多个测试并行改会互相打架 —— 守卫持有一把全局锁，
+/// 因此整个测试期间（而不只是设置的那一瞬间）都不会有别的用例改它。
+/// ⚠️ 必须让守卫活到测试结束（绑定到具名变量，别写 `let _ =` 立即 Drop）。
+#[cfg(test)]
+pub(crate) struct CodexHomeGuard {
+    /// 原值，Drop 时还原。
+    previous: Option<std::ffi::OsString>,
+    /// 全程持有的全局锁。
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl CodexHomeGuard {
+    pub(crate) fn new(dir: &Path) -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = env::var_os("CODEX_HOME");
+        env::set_var("CODEX_HOME", dir);
+        Self {
+            previous,
+            _lock: lock,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for CodexHomeGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => env::set_var("CODEX_HOME", value),
+            None => env::remove_var("CODEX_HOME"),
+        }
+    }
+}
+
 /// 依次读取配置文件，后面的覆盖前面的；返回最后一个命中的 base_url。
 fn read_config_base_url(paths: &[PathBuf]) -> Option<String> {
     let mut found = None;
@@ -258,6 +421,30 @@ fn read_config_base_url(paths: &[PathBuf]) -> Option<String> {
         }
     }
     found
+}
+
+/// 从单个 `config.toml` 里取「当前 model_provider 的 base_url」。
+///
+/// 文件缺失 / TOML 非法 / 结构不符一律返回 None（静默跳过）：读盘的一方是常驻 monitor
+/// 或短命 hook，都不能因为一个损坏的配置出错。
+fn base_url_from_config(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    base_url_from_config_text(&raw)
+}
+
+/// 从一段 Codex config TOML **文本**里取「当前 model_provider 的 base_url」。
+///
+/// 抽成独立函数是因为同一份 TOML 有**两种来源**：磁盘上的 `config.toml`（本模块用），
+/// 以及 cc-switch 数据库里 `settings_config.config` 字段内嵌的那份（代理解析器用，
+/// 见 `proxy::ccswitch`）。两处必须用同一套解析规则，否则「tooltip 显示的 endpoint」
+/// 与「代理解析器反查出的上游」会各说各话。
+///
+/// `model_provider` 缺省时 Codex 用的是内置 `openai`，而内置 provider 不写在
+/// `model_providers` 表里 → 返回 None，由调用方回落其它来源。
+pub(crate) fn base_url_from_config_text(raw: &str) -> Option<String> {
+    let config: CodexConfig = basic_toml::from_str(raw).ok()?;
+    let provider = config.model_provider.as_deref().unwrap_or("openai");
+    config.model_providers.get(provider)?.base_url.clone()
 }
 
 /// `config.toml` 里我们关心的两个键（其余字段一律忽略，不做全量解析）。
@@ -285,18 +472,6 @@ struct CodexProviderConfig {
     base_url: Option<String>,
 }
 
-/// 从单个 `config.toml` 里取「当前 model_provider 的 base_url」。
-///
-/// 文件缺失 / TOML 非法 / 结构不符一律返回 None（静默跳过）：hook 必须快速返回，
-/// 不能因为一个损坏的配置让状态上报失败。`model_provider` 缺省时 Codex 用的是内置
-/// `openai`，而内置 provider 不写在 `model_providers` 表里 → 自然回落环境变量。
-fn base_url_from_config(path: &Path) -> Option<String> {
-    let raw = fs::read_to_string(path).ok()?;
-    let config: CodexConfig = basic_toml::from_str(&raw).ok()?;
-    let provider = config.model_provider.as_deref().unwrap_or("openai");
-    config.model_providers.get(provider)?.base_url.clone()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,240 +480,238 @@ mod tests {
     use crate::status::test_support::TempDir;
     use crate::status::StatusRegistry;
 
-    // EventEnvelope 只在测试里构造事件用，故不提到 codex.rs 顶层（否则非测试构建会 unused）。
-    use super::super::EventEnvelope;
+    use super::super::{AdaptContext, EventEnvelope, HookAdapter};
 
-    /// 用一份真实形态的 payload 跑一遍适配器 + 内核，断言最终灯态。
-    fn light_for_payload(payload: Value, received_at_ms: i64) -> (SessionPhase, bool) {
-        let adapted = CodexAdapter
-            .adapt(&payload, &AdaptContext { cwd: None })
-            .expect("codex payload adapts");
-        let event = adapted.into_event(EventEnvelope {
-            provider: Provider::Codex,
-            event_id: "e2e".to_string(),
-            received_at_ms,
-            pid: None,
-        });
-        let mut registry = StatusRegistry::new();
-        registry.apply_event(event, 30_000);
-        let snapshot = registry.snapshot(received_at_ms);
-        let session = &snapshot.sessions[0];
-        (session.phase, session.is_flashing)
+    /// 造一行 rollout 记录。
+    fn line(value: serde_json::Value) -> Vec<u8> {
+        value.to_string().into_bytes()
     }
 
-    // ── 事件名表：Codex 事件名 → 种类 ──
+    // ── 灯态映射 ──
 
     #[test]
-    fn running_events_map_to_running() {
-        for name in [
-            "SessionStart",
-            "UserPromptSubmit",
-            "PreToolUse",
-            "PostToolUse",
-            "PreCompact",
-            "PostCompact",
-            "SubagentStart",
-            "SubagentStop",
-        ] {
-            assert_eq!(classify(name), AgentEventKind::Running, "{name}");
+    fn session_meta_carries_identity_and_starts_running() {
+        let raw = line(serde_json::json!({
+            "timestamp": "2026-09-18T00:23:51.761Z",
+            "type": "session_meta",
+            "payload": {"session_id": "thr-1", "id": "thr-1", "cwd": "E:\\proj", "originator": "Codex Desktop"},
+        }));
+        let record = classify_rollout_line(&raw).expect("session_meta 认得出");
+        assert_eq!(record.kind, Some(AgentEventKind::Running));
+        let session = record.session.expect("带会话身份");
+        assert_eq!(session.cwd.as_deref(), Some("E:\\proj"));
+    }
+
+    #[test]
+    fn task_started_and_user_message_are_running() {
+        for (inner, name) in [("task_started", "task_started"), ("user_message", "user_message")] {
+            let raw = line(serde_json::json!({
+                "type": "event_msg",
+                "payload": {"type": inner, "turn_id": "t1", "message": "帮我看看"},
+            }));
+            let record = classify_rollout_line(&raw).expect("认得出");
+            assert_eq!(record.kind, Some(AgentEventKind::Running), "{name}");
+            assert_eq!(record.name, name);
         }
     }
 
     #[test]
-    fn permission_request_means_waiting_for_user() {
-        assert_eq!(classify("PermissionRequest"), AgentEventKind::WaitingForUser);
+    fn user_message_carries_the_prompt() {
+        let raw = line(serde_json::json!({
+            "type": "event_msg",
+            "payload": {"type": "user_message", "turn_id": "t1", "message": "  跑一下测试  "},
+        }));
+        let record = classify_rollout_line(&raw).expect("认得出");
+        assert_eq!(record.prompt.as_deref(), Some("跑一下测试"));
     }
 
     #[test]
-    fn interrupt_means_waiting_for_user_without_flash() {
-        // 用户 Esc / Ctrl-C 取消本轮：黄灯（等你下一条），刻意不落红灯。
-        assert_eq!(classify("Interrupt"), AgentEventKind::WaitingForUser);
+    fn task_complete_without_error_finishes_the_turn() {
+        let raw = line(serde_json::json!({
+            "type": "event_msg",
+            "payload": {"type": "task_complete", "turn_id": "t1", "last_agent_message": "done"},
+        }));
+        let record = classify_rollout_line(&raw).expect("认得出");
+        assert_eq!(record.kind, Some(AgentEventKind::TurnFinished));
+        assert_eq!(record.error_code, None);
+        assert_eq!(record.turn_id.as_deref(), Some("t1"));
     }
 
     #[test]
-    fn stop_means_turn_finished() {
-        assert_eq!(classify("Stop"), AgentEventKind::TurnFinished);
+    fn task_complete_with_error_fails_the_turn() {
+        let raw = line(serde_json::json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete", "turn_id": "t1",
+                "error": {"message": "exceeded retry limit, last status: 429 Too Many Requests",
+                          "codex_error_info": {"http_status_code": 429}},
+            },
+        }));
+        let record = classify_rollout_line(&raw).expect("认得出");
+        assert_eq!(record.kind, Some(AgentEventKind::Failed));
+        assert!(record
+            .error_code
+            .as_deref()
+            .is_some_and(|code| code.contains("exceeded retry limit")));
     }
 
     #[test]
-    fn session_end_means_session_finished() {
-        assert_eq!(classify("SessionEnd"), AgentEventKind::SessionFinished);
+    fn turn_aborted_waits_for_the_user() {
+        let raw = line(serde_json::json!({
+            "type": "event_msg",
+            "payload": {"type": "turn_aborted", "turn_id": "t1", "reason": "interrupted"},
+        }));
+        let record = classify_rollout_line(&raw).expect("认得出");
+        // 用户中断 → 黄灯不闪（不是红灯：那是接口/不可抗力错误的语义）。
+        assert_eq!(record.kind, Some(AgentEventKind::WaitingForUser));
+        assert_eq!(record.turn_id.as_deref(), Some("t1"));
     }
 
     #[test]
-    fn unrecognized_event_name_falls_back_to_unknown() {
-        assert_eq!(classify("SomethingWeird"), AgentEventKind::Unknown);
+    fn token_count_carries_totals_without_moving_the_light() {
+        let raw = line(serde_json::json!({
+            "type": "event_msg",
+            "payload": {"type": "token_count", "info": {"total_token_usage": {
+                "input_tokens": 3000, "cached_input_tokens": 2900,
+                "cache_write_input_tokens": 20, "output_tokens": 50,
+                "reasoning_output_tokens": 999, "total_tokens": 3050}}},
+        }));
+        let record = classify_rollout_line(&raw).expect("认得出");
+        assert_eq!(record.kind, None, "用量不改灯态");
+        let totals = record.tokens.expect("带用量");
+        assert_eq!(totals.input_tokens, 80, "缓存要减出来");
+        assert_eq!(totals.cache_read_input_tokens, 2900);
+        assert_eq!(totals.cache_creation_input_tokens, 20);
+        assert_eq!(totals.output_tokens, 50);
+        // 四项之和 == Codex 自己的 total_tokens（input + output）
+        assert_eq!(
+            totals.input_tokens
+                + totals.cache_creation_input_tokens
+                + totals.cache_read_input_tokens
+                + totals.output_tokens,
+            3050
+        );
     }
 
     #[test]
-    fn classify_tolerates_snake_case_variants() {
-        // hook_event_name 的写法可能带分隔符差异，归一化后再查表。
-        assert_eq!(classify("pre_tool_use"), AgentEventKind::Running);
-        assert_eq!(classify("session-end"), AgentEventKind::SessionFinished);
+    fn unrelated_records_are_ignored() {
+        // 这些是「文件在长 = 有活动」的记录，不该产出灯态事件（由调用方按活动处理）。
+        for payload in [
+            serde_json::json!({"type": "agent_message", "message": "hi"}),
+            serde_json::json!({"type": "item_completed", "item": {"type": "CommandExecution"}}),
+        ] {
+            let raw = line(serde_json::json!({"type": "event_msg", "payload": payload}));
+            assert!(classify_rollout_line(&raw).is_none(), "{raw:?}");
+        }
+        let raw = line(serde_json::json!({"type": "response_item", "payload": {"type": "function_call"}}));
+        assert!(classify_rollout_line(&raw).is_none());
     }
 
-    // ── 端到端：payload → 灯态 ──
+    #[test]
+    fn broken_lines_are_not_an_error() {
+        assert!(classify_rollout_line(b"").is_none());
+        assert!(classify_rollout_line(b"not json").is_none());
+        // 半行（写到一半）也解析不出东西，但绝不能 panic。
+        assert!(classify_rollout_line(br#"{"type":"event_msg","payload":{"type":"task_com"#).is_none());
+    }
+
+    // ── 预筛（省掉 97% 字节的解析）──
 
     #[test]
-    fn stop_payload_drives_flashing_waiting() {
-        let payload = serde_json::json!({
-            "session_id": "thr_1",
-            "hook_event_name": "Stop",
-            "turn_id": "turn_1",
+    fn prefilter_accepts_lifecycle_records() {
+        for raw in [
+            line(serde_json::json!({"type": "session_meta", "payload": {}})),
+            line(serde_json::json!({"type": "event_msg", "payload": {"type": "task_complete"}})),
+            line(serde_json::json!({"type": "event_msg", "payload": {"type": "turn_aborted"}})),
+            line(serde_json::json!({"type": "event_msg", "payload": {"type": "token_count"}})),
+        ] {
+            assert!(cares(&raw), "{:?}", String::from_utf8_lossy(&raw));
+        }
+    }
+
+    #[test]
+    fn prefilter_rejects_bulky_irrelevant_records() {
+        // 一条 100 KB 的命令输出记录：不该被送进 JSON 解析。
+        let big = serde_json::json!({
+            "type": "event_msg",
+            "payload": {"type": "item_completed", "item": {"type": "CommandExecution",
+                        "aggregated_output": "x".repeat(100 * 1024)}},
         });
-        let (phase, flashing) = light_for_payload(payload, 100);
-        assert_eq!(phase, SessionPhase::Waiting);
-        assert!(flashing);
+        assert!(!cares(&big.to_string().into_bytes()));
+        // 非 UTF-8 行不预筛，交给调用方当活动处理。
+        assert!(!cares(&[0xff, 0xfe, 0x00]));
     }
 
+    /// 端到端：真实的 `PermissionRequest` payload → 内核 → 快照的**黄灯 + 理由**。
+    ///
+    /// payload 形态取自 2026-09-18 的探针实测（用 hook 抓的原文）。
     #[test]
-    fn interrupt_payload_drives_plain_waiting() {
+    fn permission_request_drives_a_yellow_light_with_reason() {
         let payload = serde_json::json!({
-            "session_id": "thr_1",
-            "hook_event_name": "Interrupt",
-            "turn_id": "turn_1",
-        });
-        let (phase, flashing) = light_for_payload(payload, 100);
-        assert_eq!(phase, SessionPhase::Waiting);
-        assert!(!flashing, "取消本轮不该闪绿（那是「正常完成」的信号）");
-    }
-
-    #[test]
-    fn permission_request_payload_drives_plain_waiting() {
-        let payload = serde_json::json!({
-            "session_id": "thr_1",
-            "hook_event_name": "PermissionRequest",
-            "tool_name": "Bash",
-            "tool_input": {"command": "rm -rf build"},
-        });
-        let (phase, flashing) = light_for_payload(payload, 100);
-        assert_eq!(phase, SessionPhase::Waiting);
-        assert!(!flashing);
-    }
-
-    #[test]
-    fn session_end_payload_drives_completed() {
-        let payload = serde_json::json!({
-            "session_id": "thr_1",
-            "hook_event_name": "SessionEnd",
-            "reason": "other",
-        });
-        let (phase, flashing) = light_for_payload(payload, 100);
-        assert_eq!(phase, SessionPhase::Completed);
-        assert!(flashing);
-    }
-
-    #[test]
-    fn pre_tool_use_payload_drives_running() {
-        let payload = serde_json::json!({
-            "session_id": "thr_1",
-            "hook_event_name": "PreToolUse",
-            "tool_name": "apply_patch",
-        });
-        let (phase, _) = light_for_payload(payload, 100);
-        assert_eq!(phase, SessionPhase::Running);
-    }
-
-    /// 子代理事件与主会话共用 session_id：内核靠 agent_id 拦住它，黄灯不被顶回绿。
-    #[test]
-    fn subagent_event_does_not_override_waiting_light() {
-        let mut registry = StatusRegistry::new();
-        let waiting = CodexAdapter
-            .adapt(
-                &serde_json::json!({
-                    "session_id": "thr_1",
-                    "hook_event_name": "PermissionRequest",
-                }),
-                &AdaptContext { cwd: None },
-            )
-            .expect("adapts")
-            .into_event(EventEnvelope {
-                provider: Provider::Codex,
-                event_id: "1".to_string(),
-                received_at_ms: 100,
-                pid: None,
-            });
-        registry.apply_event(waiting, 30_000);
-
-        let subagent = CodexAdapter
-            .adapt(
-                &serde_json::json!({
-                    "session_id": "thr_1",
-                    "hook_event_name": "PreToolUse",
-                    "agent_id": "child-thread-1",
-                    "agent_type": "explorer",
-                }),
-                &AdaptContext { cwd: None },
-            )
-            .expect("adapts")
-            .into_event(EventEnvelope {
-                provider: Provider::Codex,
-                event_id: "2".to_string(),
-                received_at_ms: 200,
-                pid: None,
-            });
-        assert_eq!(subagent.agent_id.as_deref(), Some("child-thread-1"));
-        registry.apply_event(subagent, 30_000);
-
-        let session = &registry.snapshot(200).sessions[0];
-        assert_eq!(session.phase, SessionPhase::Waiting, "子代理事件不得顶回绿灯");
-    }
-
-    // ── 字段提取 ──
-
-    #[test]
-    fn adapt_captures_prompt_transcript_and_agent_id() {
-        let payload = serde_json::json!({
-            "session_id": "thr_1",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "  修一下这个 bug  ",
-            "transcript_path": "/tmp/rollout.jsonl",
-            "agent_id": "child-1",
-            "agent_type": "explorer",
-        });
-        let adapted = CodexAdapter
-            .adapt(&payload, &AdaptContext { cwd: None })
-            .expect("adapts");
-        assert_eq!(adapted.kind, AgentEventKind::Running);
-        assert_eq!(adapted.event, "UserPromptSubmit");
-        assert_eq!(adapted.prompt.as_deref(), Some("修一下这个 bug"));
-        assert_eq!(adapted.transcript_path.as_deref(), Some("/tmp/rollout.jsonl"));
-        assert_eq!(adapted.agent_id.as_deref(), Some("child-1"));
-        // Codex 没有 Notification 事件，该字段恒为空。
-        assert_eq!(adapted.notification_type, None);
-    }
-
-    #[test]
-    fn prompt_is_only_taken_from_user_prompt_submit() {
-        let payload = serde_json::json!({"prompt": "不该被采集"});
-        assert_eq!(user_prompt("PreToolUse", &payload), None);
-        assert_eq!(user_prompt("SessionStart", &payload), None);
-        assert!(user_prompt("UserPromptSubmit", &payload).is_some());
-    }
-
-    #[test]
-    fn null_transcript_path_is_none() {
-        // Codex 的 /side 分叉会话 transcript_path 为 null。
-        let payload = serde_json::json!({
-            "session_id": "thr_1",
-            "hook_event_name": "SessionStart",
+            "session_id": "01a0b060-f0b3-7b91-a904-b62b609bb1bd",
+            "turn_id": "01a0b063-35b6-72f1-9fbc-1b1b7d2ffe4c",
             "transcript_path": null,
+            "cwd": "E:/proj",
+            "hook_event_name": "PermissionRequest",
+            "model": "deepseek-flash",
+            "permission_mode": "default",
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "curl.exe -L https://developers.openai.com/sitemap.xml",
+                "description": "是否允许我访问 OpenAI 官方网站，定位 Codex 沙盒配置说明",
+            },
         });
-        let adapted = CodexAdapter
+        let adapted = CodexPermissionAdapter
             .adapt(&payload, &AdaptContext { cwd: None })
-            .expect("adapts");
-        assert_eq!(adapted.transcript_path, None);
+            .expect("不报错")
+            .expect("接受 PermissionRequest");
+        let event = adapted.into_event(EventEnvelope {
+            provider: Provider::Codex,
+            event_id: "hook-1".to_string(),
+            received_at_ms: 100,
+            pid: None,
+        });
+
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(event, 30_000);
+        let session = &registry.snapshot(100).sessions[0];
+        // 黄灯**不闪**：等人授权不是「一轮跑完」，不该走绿闪。
+        assert_eq!(session.phase, SessionPhase::Waiting);
+        assert!(!session.is_flashing);
+        assert_eq!(
+            session.waiting_reason.as_deref(),
+            Some("是否允许我访问 OpenAI 官方网站，定位 Codex 沙盒配置说明")
+        );
     }
 
+    /// 理由退化：没有 `description` 时用命令原文（否则 tooltip 只有黄灯、说不清在等什么）。
     #[test]
-    fn adapt_missing_session_id_is_an_error() {
-        let payload = serde_json::json!({"hook_event_name": "Stop"});
-        assert!(CodexAdapter
+    fn approval_reason_falls_back_to_the_command() {
+        let payload = serde_json::json!({
+            "session_id": "s1",
+            "hook_event_name": "PermissionRequest",
+            "tool_input": {"command": "Get-Content config.toml"},
+        });
+        let adapted = CodexPermissionAdapter
             .adapt(&payload, &AdaptContext { cwd: None })
-            .is_err());
+            .expect("不报错")
+            .expect("接受");
+        assert!(adapted
+            .waiting_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("Get-Content")));
     }
 
     // ── endpoint：config.toml 解析 ──
+
+    /// 只解析该临时目录下的 `.codex/config.toml`。
+    ///
+    /// 刻意不走 `codex_config_paths`：那条路会读 `CODEX_HOME` / 用户真实的 `~/.codex`，
+    /// 测试结果就不只取决于本用例的输入了。
+    fn config_base_url(temp: &TempDir) -> Option<String> {
+        let path = temp.path().join(".codex").join("config.toml");
+        read_config_base_url(&[path]).and_then(|value| normalize_base_url(&value))
+    }
 
     #[test]
     fn reads_base_url_of_the_active_model_provider() {
@@ -555,9 +728,8 @@ base_url = "http://127.0.0.1:15721/v1"
 wire_api = "responses"
 "#,
         );
-        // 项目级配置覆盖用户级；测试只给 cwd，因此结果与用户真实 ~/.codex 无关。
         assert_eq!(
-            codex_base_url(Some(temp.path())).as_deref(),
+            config_base_url(&temp).as_deref(),
             Some("http://127.0.0.1:15721/v1")
         );
     }
@@ -577,39 +749,22 @@ base_url = "http://only-this/v1"
 base_url = "http://not-this/v1"
 "#,
         );
-        assert_eq!(
-            codex_config_base_url(&temp).as_deref(),
-            Some("http://only-this/v1")
-        );
-    }
-
-    /// 只解析该临时目录下的 `.codex/config.toml`。
-    ///
-    /// 刻意不走 `codex_config_paths`：那条路会读 `CODEX_HOME` / 用户真实的 `~/.codex`，
-    /// 测试结果就不只取决于本用例的输入了。
-    fn codex_config_base_url(temp: &TempDir) -> Option<String> {
-        let path = temp.path().join(".codex").join("config.toml");
-        read_config_base_url(&[path]).and_then(|value| normalize_base_url(&value))
+        assert_eq!(config_base_url(&temp).as_deref(), Some("http://only-this/v1"));
     }
 
     #[test]
     fn unknown_model_provider_yields_nothing() {
         let temp = TempDir::new("codex-config-unknown");
         // 指向未在 model_providers 里定义的内置 provider → 不产出 base_url（回落环境变量）。
-        temp.write(
-            ".codex/config.toml",
-            r#"
-model_provider = "openai"
-"#,
-        );
-        assert_eq!(codex_config_base_url(&temp), None);
+        temp.write(".codex/config.toml", "model_provider = \"openai\"\n");
+        assert_eq!(config_base_url(&temp), None);
     }
 
     #[test]
     fn broken_config_is_skipped_not_fatal() {
         let temp = TempDir::new("codex-config-broken");
         temp.write(".codex/config.toml", "this is not = = toml");
-        assert_eq!(codex_config_base_url(&temp), None);
+        assert_eq!(config_base_url(&temp), None);
     }
 
     #[test]
@@ -627,18 +782,66 @@ model_provider = "openai"
             temp.path().join("user").join("config.toml"),
             temp.path().join("proj").join(".codex").join("config.toml"),
         ];
-        assert_eq!(
-            read_config_base_url(&paths).as_deref(),
-            Some("http://project")
-        );
+        assert_eq!(read_config_base_url(&paths).as_deref(), Some("http://project"));
     }
 
     #[test]
     fn config_paths_prefer_project_scoped_file_last() {
         let paths = codex_config_paths(Some(Path::new("/home/u")), Some(Path::new("/proj")));
-        assert_eq!(paths.len(), 2);
-        assert!(paths[1].starts_with("/proj"));
+        // 用户级在前、项目级在后（后者覆盖前者）。断言顺序而不是长度：
+        // 其它用例可能把 CODEX_HOME 指向临时目录（多出/少掉一份用户级配置）。
+        assert!(paths.len() >= 2);
+        assert!(paths.last().is_some_and(|path| path.starts_with("/proj")));
         // 没有 home / cwd 时不报错，只是少读几个文件。
-        assert!(codex_config_paths(None, None).is_empty());
+        assert!(codex_config_paths(None, None)
+            .iter()
+            .all(|path| !path.starts_with("/home/u")));
+    }
+
+    /// 端到端：一份真实形态的 rollout 记录 → 灯态（内核只看 kind，这里断言语义映射）。
+    #[test]
+    fn rollout_records_map_to_expected_phases() {
+        let cases: [(serde_json::Value, SessionPhase, bool); 5] = [
+            (
+                serde_json::json!({"type": "event_msg", "payload": {"type": "task_started"}}),
+                SessionPhase::Running,
+                false,
+            ),
+            (
+                serde_json::json!({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "t"}}),
+                SessionPhase::Waiting,
+                true, // TurnFinished → 绿闪落黄
+            ),
+            (
+                serde_json::json!({"type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": "t"}}),
+                SessionPhase::Waiting,
+                false,
+            ),
+            (
+                serde_json::json!({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "t",
+                                  "error": {"message": "429"}}}),
+                SessionPhase::Error,
+                false,
+            ),
+            (
+                serde_json::json!({"type": "session_meta", "payload": {"id": "thr"}}),
+                SessionPhase::Running,
+                false,
+            ),
+        ];
+        for (value, phase, flashing) in cases {
+            let record = classify_rollout_line(&line(value.clone())).expect("认得出");
+            // 内核的 kind → 灯态策略表（与 kernel::light_for_kind 同一口径）。
+            let (got_phase, got_flash) = match record.kind.expect("有灯态") {
+                AgentEventKind::Running => (SessionPhase::Running, false),
+                AgentEventKind::TurnFinished => (SessionPhase::Waiting, true),
+                AgentEventKind::WaitingForUser => (SessionPhase::Waiting, false),
+                AgentEventKind::SessionFinished => (SessionPhase::Completed, false),
+                AgentEventKind::Failed => (SessionPhase::Error, false),
+                AgentEventKind::Unknown => (SessionPhase::Unknown, false),
+            };
+            assert_eq!(got_phase, phase, "{value:?}");
+            assert_eq!(got_flash, flashing, "{value:?}");
+        }
     }
 }

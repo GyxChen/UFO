@@ -412,6 +412,12 @@ html.is-tooltip-window #app {
   color: var(--ufo-accent);
 }
 
+/* head 行里的「等待理由」：占据中间剩余宽度，窄了用省略号，完整原文在 title 上。 */
+.tooltip-reason {
+  @apply min-w-0 flex-1 truncate text-[11px];
+  color: var(--ufo-muted);
+}
+
 .tooltip-provider-icon {
   @apply block h-3.5 w-3.5 shrink-0 object-contain;
 }

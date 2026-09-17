@@ -27,6 +27,7 @@ const session = (phase: SessionSnapshot['phase']): SessionSnapshot => ({
   base_url: null,
   upstream_url: null,
   prompt: null,
+  waiting_reason: null,
   tokens: null,
   last_sequence: null,
   termination_confirmed: phase === 'completed',
