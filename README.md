@@ -64,6 +64,7 @@ cd src-tauri && cargo upgrade
 ### Debugging
 
 - The `dev` command has by default `RUST_BACKTRACE=1` set which makes Rust output full backtraces to the console. (Remove it from the `package.json` command if you don't want it).
+- Webview devtools are opt-in per window (debug builds only). Set `UFO_DEVTOOLS=true` for all three windows, or `UFO_DEVTOOLS=floating,tooltip` to pick some — either in your shell or in the repo `.env` (rebuild needed for the latter). Default is none.
 - If you use VS Code, you can debug Rust code with the included `Debug Tauri` config.
 
 ### Building and releasing

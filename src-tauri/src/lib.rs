@@ -6,6 +6,10 @@ use tauri::{
     AppHandle, Manager, Runtime, WindowEvent,
 };
 
+// devtools 开关只服务于调试构建（`open_devtools` 本身也只在 debug_assertions 下存在），
+// release 里整个模块不参与编译，省掉一份没人用的解析代码。
+#[cfg(debug_assertions)]
+mod devtools;
 mod endpoint_profiles;
 mod flow;
 mod module_config;
@@ -30,7 +34,7 @@ pub use status::try_run_status_hook;
 use status::{get_proxy_resolvers, get_status_snapshot, now_ms, spawn_monitor, StatusState};
 
 const MAIN_WINDOW: &str = "main";
-/// 悬浮窗 label，仅调试构建下打开其 devtools 时使用，因此限定 cfg。
+/// 悬浮窗 label。除被 `UFO_DEVTOOLS` 点名开 devtools 外没有别处用到，故限定调试构建。
 #[cfg(debug_assertions)]
 const FLOATING_WINDOW: &str = "floating";
 const TOOLTIP_WINDOW: &str = "tooltip";
@@ -103,37 +107,40 @@ pub fn run() {
                 tray.set_menu(Some(menu))?;
             }
 
+            // 是否打开各窗口的 devtools 由环境变量 `UFO_DEVTOOLS` 决定（默认全关，见 devtools.rs）。
+            // 只在调试构建下有意义：`open_devtools` 本身仅在 debug_assertions 或开 `devtools`
+            // feature 时才存在，release 二进制里这段会被整个编译掉。
             #[cfg(debug_assertions)]
-            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-                window.open_devtools();
-            }
-            //悬浮窗的devtools,如果不用直接注释掉即可
+            let devtools_targets = devtools::DevtoolsTargets::from_env();
             #[cfg(debug_assertions)]
-            if let Some(window) = app.get_webview_window(FLOATING_WINDOW) {
-                window.open_devtools();
-            }
-            //提示窗的devtools,如果不用直接注释掉即可
-            #[cfg(debug_assertions)]
-            if let Some(window) = app.get_webview_window(TOOLTIP_WINDOW) {
-                window.open_devtools();
+            for label in [MAIN_WINDOW, FLOATING_WINDOW, TOOLTIP_WINDOW] {
+                if !devtools_targets.wants(label) {
+                    continue;
+                }
+                if let Some(window) = app.get_webview_window(label) {
+                    window.open_devtools();
+                }
             }
 
             // 信息提示窗只做展示：设为点击穿透，避免遮挡或拦截下方窗口的点击。
             // Rust 侧调用不经过 capability 校验，因此无需授予 set-ignore-cursor-events 权限。
             //
-            // 调试构建例外 —— 点击穿透（Win32 的 WS_EX_TRANSPARENT）会让页面收不到鼠标移动，
+            // 例外 —— 点击穿透（Win32 的 WS_EX_TRANSPARENT）会让页面收不到鼠标移动，
             // 配合配置里的 focusable:false（WS_EX_NOACTIVATE）窗口也无法激活，
             // 两者叠加会让 devtools 的元素检查选取器失效（悬停不高亮、点不中）。
-            // 因此 debug 下放开这两个限制、只保留 release 的穿透行为。
+            // 因此仅当 `UFO_DEVTOOLS` 点名了 tooltip 时才放开这两个限制去检查它，
+            // 其余情况（含调试构建但没给 tooltip 开 devtools）保持 release 的穿透行为。
             if let Some(window) = app.get_webview_window(TOOLTIP_WINDOW) {
                 #[cfg(debug_assertions)]
-                {
+                let inspecting_tooltip = devtools_targets.wants(TOOLTIP_WINDOW);
+                #[cfg(not(debug_assertions))]
+                let inspecting_tooltip = false;
+
+                if inspecting_tooltip {
                     if let Err(error) = window.set_focusable(true) {
                         eprintln!("failed to make tooltip window focusable: {error}");
                     }
-                }
-                #[cfg(not(debug_assertions))]
-                if let Err(error) = window.set_ignore_cursor_events(true) {
+                } else if let Err(error) = window.set_ignore_cursor_events(true) {
                     eprintln!("failed to make tooltip window click-through: {error}");
                 }
             }
