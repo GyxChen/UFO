@@ -39,6 +39,31 @@ pub enum SessionPhase {
     Completed,
 }
 
+/// 兼容层归一化后的「事件种类」：内核只认这些语义。
+///
+/// 平台（Claude / Codex / …）的原始事件名（`PreToolUse`、`TurnCompleted` …）在
+/// `status::compat` 里就被翻译成这里的取值，内核不解析任何平台词汇 —— 加平台只加适配器。
+///
+/// ⚠️ 它是**线协议字段**：缺省值必须是「无法识别」（老二进制写的事件没有 `kind`），
+/// 且只能新增取值、不得改语义，`SCHEMA_VERSION` 不因此递增。
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentEventKind {
+    /// 正在执行（工具调用、生成中、会话启动…）→ 绿灯常亮。
+    Running,
+    /// 一轮执行结束、等下一条用户输入（Claude 的 Stop）→ 绿闪后落黄。
+    TurnFinished,
+    /// 正在等用户授权 / 选择 / 输入（权限弹窗、elicitation）→ 直接黄灯，不闪。
+    WaitingForUser,
+    /// 会话确认结束（Claude 的 SessionEnd）→ 绿闪后移除。
+    SessionFinished,
+    /// 本轮或会话出错 → 红灯。
+    Failed,
+    /// 无法识别；内核保守处理（不构成转灯信号，见 `kernel::light_for_kind`）。
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StatusSource {
@@ -46,7 +71,7 @@ pub enum StatusSource {
     ProcessFallback,
 }
 
-/// Hook 归一化后的原始事件。
+/// 兼容层归一化后的原始事件。
 ///
 /// `outcome` 同时承载 SessionEnd 的 `reason` 以及其它结果字段别名；
 /// `notification_type` 单独存放 Notification 的类型，避免污染 outcome 判定。
@@ -60,7 +85,12 @@ pub struct AgentEvent {
     pub provider: Provider,
     /// 会话标识
     pub session_id: String,
-    /// 原始 hook 事件名（可被 normalize_event_name 归一化）
+    /// 兼容层归一化出的事件种类：**内核唯一据以转灯的语义**。
+    /// 旧事件缺此字段时反序列化为 `Unknown`（保守：不驱灯色）。
+    #[serde(default)]
+    pub kind: AgentEventKind,
+    /// 平台原始事件名（如 `PreToolUse`），**仅供诊断 / 排障**：
+    /// 内核不得据此转灯，否则平台词汇会重新漏回内核层。
     pub event: String,
     /// 可选序号，用于乱序过滤
     pub sequence: Option<u64>,
@@ -74,7 +104,8 @@ pub struct AgentEvent {
     pub error_code: Option<String>,
     /// 结果/退出原因（SessionEnd.reason 等）
     pub outcome: Option<String>,
-    /// Notification 的 notification_type，用于区分是否等人操作。
+    /// Notification 的 notification_type；**仅供诊断 / 排障**。
+    /// 「是否等人操作」的判定在兼容层（`compat::claude`）就做完并落成 `kind`，内核不再看它。
     /// 旧 inbox 事件可能缺此字段，缺省反序列化为 None。
     #[serde(default)]
     pub notification_type: Option<String>,
@@ -99,7 +130,7 @@ pub struct AgentEvent {
     ///
     /// ⚠️ 子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有本字段能区分。
     /// 若让子代理事件参与灯色迁移，主线程 Waiting（等用户作答/授权）会被仍在后台跑的子代理
-    /// 事件顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。因此 reducer
+    /// 事件顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。因此内核
     /// 用本字段把子代理事件限制为「只刷存活时间、不驱灯色」（见 `apply_event_with_seed`）。
     /// 旧事件缺此字段时反序列化为 None。
     #[serde(default)]
@@ -181,10 +212,10 @@ pub struct StatusCounts {
 }
 
 /// 会话存档的**回填摘要**：`session_id` 重新出现（跨重启 / 跨清理，如 `claude --resume`）时，
-/// reducer 用它把「跨重启仍有意义」的字段续上。
+/// 内核用它把「跨重启仍有意义」的字段续上。
 ///
 /// 只含回填需要的四项，是持久化行（`session_store::SessionRecord`）到领域类型的边界转换 ——
-/// reducer 因此不依赖存储层。灯色 / pid / sequence 等存活态字段刻意不在这里：
+/// 内核因此不依赖存储层。灯色 / pid / sequence 等存活态字段刻意不在这里：
 /// 它们必须由本次事件决定。
 #[derive(Debug, Clone)]
 pub struct StoredSeed {
@@ -259,7 +290,8 @@ mod tests {
             event_id: "test-event".to_string(),
             provider: Provider::Claude,
             session_id: "sess-123".to_string(),
-            event: "start".to_string(),
+            kind: AgentEventKind::TurnFinished,
+            event: "stop".to_string(),
             sequence: Some(42),
             occurred_at_ms: Some(1000),
             received_at_ms: 2000,
@@ -277,6 +309,7 @@ mod tests {
         assert_eq!(deserialized.event_id, "test-event");
         assert_eq!(deserialized.provider, Provider::Claude);
         assert_eq!(deserialized.session_id, "sess-123");
+        assert_eq!(deserialized.kind, AgentEventKind::TurnFinished);
         assert_eq!(deserialized.sequence, Some(42));
         assert_eq!(deserialized.pid, Some(1234));
         assert_eq!(
@@ -293,6 +326,40 @@ mod tests {
             Some("/tmp/sess-123.jsonl")
         );
         assert_eq!(deserialized.agent_id.as_deref(), Some("agent-abc"));
+    }
+
+    #[test]
+    fn agent_event_missing_kind_deserializes_as_unknown() {
+        // 老二进制写的事件没有 kind：必须兼容为 Unknown，而不是解析失败落 quarantine。
+        // 语义上「无法识别」= 不驱灯色，正是保守该有的行为。
+        let json = r#"{
+            "schema_version": 1,
+            "event_id": "legacy",
+            "provider": "claude",
+            "session_id": "s1",
+            "event": "Stop",
+            "sequence": null,
+            "occurred_at_ms": null,
+            "received_at_ms": 1,
+            "pid": null,
+            "error_code": null,
+            "outcome": null
+        }"#;
+        let deserialized: AgentEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.kind, AgentEventKind::Unknown);
+    }
+
+    #[test]
+    fn agent_event_kind_uses_snake_case_on_the_wire() {
+        // 取值名是线协议的一部分，改名会静默丢掉前端/旧进程的语义。
+        assert_eq!(
+            serde_json::to_string(&AgentEventKind::WaitingForUser).unwrap(),
+            "\"waiting_for_user\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentEventKind>("\"session_finished\"").unwrap(),
+            AgentEventKind::SessionFinished
+        );
     }
 
     #[test]

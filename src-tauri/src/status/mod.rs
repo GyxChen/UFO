@@ -1,6 +1,7 @@
+mod compat;
 mod hook;
+mod kernel;
 mod model;
-mod reducer;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod tokens;
@@ -18,8 +19,8 @@ use std::{
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 pub use hook::try_run_status_hook;
-// 供 proxy 子模块复用主目录探测（定位 ~/.cc-switch）。
-pub(crate) use hook::home_dir;
+// 供 proxy 子模块复用主目录探测（定位 ~/.cc-switch）；实现已随兼容层迁到 compat。
+pub(crate) use compat::home_dir;
 // flow 模块用 App 标识派生凭据 service 名，与 hook 定位 status 目录同一来源。
 pub(crate) use hook::APP_IDENTIFIER;
 // model 子模块本身私有，但这些类型是跨模块协议（session_store 存档回填、前端快照），
@@ -36,7 +37,7 @@ pub(crate) use model::StatusCounts;
 pub(crate) use model::SessionPhase;
 #[cfg(test)]
 pub(crate) use model::StatusSource;
-pub use reducer::StatusRegistry;
+pub use kernel::StatusRegistry;
 
 use tokens::TokenTracker;
 

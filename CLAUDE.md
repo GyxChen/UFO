@@ -102,7 +102,7 @@ UI设计请使用:ui-ux-pro-max-skill
 | `base_url` | **配置文件优先**：`~/.claude/settings.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json` 的 `env.ANTHROPIC_BASE_URL`（后者覆盖前者，`cwd` 取自 hook payload）；**环境变量兜底**：`ANTHROPIC_BASE_URL`。codex 只走环境变量 `OPENAI_BASE_URL` / `OPENAI_API_BASE` | 只按名字取该 key（`env` 块里的 token 绝不读取）；不脱敏，仅 trim；上限 4096 |
 | `prompt` | **仅** `UserPromptSubmit` payload 的 `prompt` 字段（`UserPromptExpansion` 的展开模板文本不认，否则会覆盖用户真正的提问） | trim + 截断；上限 4000 字符；同轮内后续事件继承，下次提交才覆盖 |
 
-- 同轮内后续事件继承这两个值，下次提交/新事件才覆盖（`reducer.rs` 用 `.or(previous_*)`）。
+- 同轮内后续事件继承这两个值，下次提交/新事件才覆盖（`kernel.rs` 用 `.or(previous_*)`）。
 - ⚠️ 二者**明文写入** `%APPDATA%/<identifier>/status/inbox/*.json`（约 500ms 内消费删除）。提问可能含密钥或私有代码，这是已知代价。
 
 ### 代理解析器（Endpoint 反查上游）
@@ -166,9 +166,23 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - ⚠️ **「清除全部」只删归档、不强清内存**：仍在运行的会话会在下一个 hook 事件后被重新记录（面板文案与详情都按此写明）。要连灯一起清是另一种语义（需 `registry.remove`），本轮按需求选择不这么做。
 - **存活标记在前端 join**：列表行的「灯亮着」按 `agentStatus.sessions` 现算，不给存档加存活态字段。
 - **Endpoint 展示 = `upstream_url ?? base_url`**（与 tooltip 的 `displayEndpoint` 同一口径）：`base_url` 是会话实际连的地址（用 cc-switch 时就是 `127.0.0.1:<port>`），`upstream_url` 是刷盘那一刻代理解析器反查出的上游。**两者都要存** —— 只存 base_url 会让面板一直显示 localhost；只存上游则丢失「经哪个本地代理转发」的副标注（`recordLocalNote` 用它）。前端读法是 `src/lib/session-records.ts` 的 `recordEndpoint` / `recordLocalNote`。
-- ⚠️ `upstream_url` 随 `SessionSnapshot` 一起落库，**不是**回填字段（`StoredSeed` 不含它）：reducer 的继承阶梯只用 `base_url`，上游由快照生成时按当前解析器现算。库内对应列由 `PRAGMA user_version` 2 迁移补上（v1 用 `ALTER TABLE ADD COLUMN`，老行取 NULL）。
+- ⚠️ `upstream_url` 随 `SessionSnapshot` 一起落库，**不是**回填字段（`StoredSeed` 不含它）：内核的继承阶梯只用 `base_url`，上游由快照生成时按当前解析器现算。库内对应列由 `PRAGMA user_version` 2 迁移补上（v1 用 `ALTER TABLE ADD COLUMN`，老行取 NULL）。
 - **新命令注册三处**：`#[tauri::command]` + `permissions/status.toml` 的 `[[permission]]` + capability 文件。`get_session_records` 给三窗口（`default.json`），`delete_session_record`/`clear_session_records` 只在 `main-module-settings.json` 授权（仅 main）。
 - ⚠️ 会话记录面板同样**不能用 `window.alert`/`confirm`**（`tauri-plugin-prevent-default`），删除/清除都走两步确认 + `role="status"`。
+
+### 平台兼容层 / 内核层
+
+平台（Claude / Codex / …）的 hook 数据先经「兼容层」归一化，再入「内核」维护灯态；内核不认识任何平台词汇：
+
+```
+平台 hook payload ─▸ compat（status/compat/，按 provider 选适配器）─▸ AgentEvent{ kind, … } ─▸ kernel（status/kernel.rs）
+```
+
+- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` 是 Claude 适配器，独占该平台的全部知识（字段别名、事件名表、base_url 来源、提问提取、元标签剔除、子代理 `agent_id`）。
+- **内核**：`status/kernel.rs` 只认 `AgentEventKind` 六种语义（Running / TurnFinished / WaitingForUser / SessionFinished / Failed / Unknown），`light_for_kind` 把 kind 映射成灯态 + 是否绿闪。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
+- **接入新平台** = 新增 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支；内核与前端零改动。
+- `AgentEvent.kind` 是 `#[serde(default)]` 新增字段，缺省 `Unknown`（**不得升 `SCHEMA_VERSION`**）；旧事件反序列化后为 Unknown = 不驱灯色，与「无法识别」一致。
+- 本轮只搭好 Claude 适配器 + 内核分层，**Codex 适配器尚未实现**（`adapter_for(Codex)` 返回 None，hook 侧报明确错误）。
 
 ### Agent 状态指示灯语义
 - 🟢 常亮 = Running（正在执行）
@@ -177,7 +191,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
   - `Stop`：一轮执行完成 → 先绿闪，retention 后落成黄常亮（对话未结束）
   - `SessionEnd`：对话结束 → 绿闪后移除
 - 🔴 = Error（StopFailure 等；红灯不粘，任何能映射出别的阶段的事件都可转灯，`Unknown` 事件除外）
-- ⚠️ **子代理（subagent）事件不得驱动灯色**：子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有 payload 里的 `agent_id` 能区分（主线程事件不带该字段）。带 `agent_id` 的事件对已存活会话**只刷新 `last_seen_at_ms`**，阶段 / `is_flashing` / `remove_at_ms` 全原样保留。否则主 agent 弹出提问框（`PermissionRequest`→黄）时，后台仍在跑的子代理事件会立刻把它顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。**改 reducer 的 `apply_event_with_seed` 时务必保住这条守卫。**
+- ⚠️ **子代理（subagent）事件不得驱动灯色**：子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有 payload 里的 `agent_id` 能区分（主线程事件不带该字段）。带 `agent_id` 的事件对已存活会话**只刷新 `last_seen_at_ms`**，阶段 / `is_flashing` / `remove_at_ms` 全原样保留。否则主 agent 弹出提问框（`PermissionRequest`→黄）时，后台仍在跑的子代理事件会立刻把它顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。**改内核（`kernel.rs`）的 `apply_event_with_seed` 时务必保住这条守卫。**
 - ⚠️ **`AskUserQuestion`（选择框提问）不走 `PreToolUse`**：它走 `PermissionRequest` + `Notification(permission_prompt)`，作答后发 `PostToolUse`。不需要按工具名特判。
 - ⚠️ `notification_type` 的「等人操作」清单必须与 Claude Code 枚举对齐（详见 `reference/doc/agent-status-hooks.md`），**漏列会退化成绿色**。
 - 详情见 `reference/doc/agent-status-hooks.md`

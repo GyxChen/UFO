@@ -1,8 +1,14 @@
+//! 内核层：消费兼容层归一化出的事件，维护状态灯。
+//!
+//! 这里唯一认的平台语义是 [`AgentEventKind`]（六种）—— 不解析任何平台的原始事件名
+//! （`event` / `notification_type` 只当诊断字段原样带着，**不得据此转灯**）。
+//! 平台词汇全都活在 `super::compat`，内核保持对平台无感。
+
 use std::collections::{HashMap, HashSet};
 
 use super::model::{
-    session_key, AgentEvent, SessionPhase, SessionSnapshot, StatusCounts, StatusSnapshot,
-    StatusSource, StoredSeed, TokenTotals, SCHEMA_VERSION,
+    session_key, AgentEvent, AgentEventKind, SessionPhase, SessionSnapshot, StatusCounts,
+    StatusSnapshot, StatusSource, StoredSeed, TokenTotals, SCHEMA_VERSION,
 };
 
 pub struct StatusRegistry {
@@ -155,11 +161,11 @@ impl StatusRegistry {
         }
 
         // 红灯不粘：事件映射出的阶段即最终阶段。
-        // 任何能转灯的事件（Stop→黄、SessionEnd→绿闪、工具事件→绿等）都允许把红灯带走；
-        // 唯一例外是 Unknown —— 无法识别的事件不构成转灯信号，保持原红灯。
-        let mapped_phase = phase_for_event(&event);
+        // 任何能转灯的事件（TurnFinished→黄、SessionFinished→绿闪、Running→绿等）都允许把
+        // 红灯带走；唯一例外是 Unknown —— 无法识别的事件不构成转灯信号，保持原红灯。
+        let (mapped_phase, flash_waiting) = light_for_kind(event.kind);
         let phase = if previous_phase == Some(SessionPhase::Error)
-            && mapped_phase == SessionPhase::Unknown
+            && event.kind == AgentEventKind::Unknown
         {
             SessionPhase::Error
         } else {
@@ -189,14 +195,12 @@ impl StatusRegistry {
             // （snapshot() 按 started_at_ms 升序排指示灯）。
             .or_else(|| seed.map(|seed| seed.started_at_ms))
             .unwrap_or(now);
-        let event_name = normalize_event_name(&event.event);
-        // Stop：一轮执行完成 → Waiting，但先绿闪，retention 后落成黄常亮。
-        // SessionEnd：Completed，绿闪后移除。
-        // 其它 Waiting（权限/Elicitation 等）：直接黄灯，不闪。
-        let is_stop_turn = event_name == "stop";
+        // TurnFinished（一轮执行完成）→ Waiting 但先绿闪，retention 后落成黄常亮；
+        // SessionFinished → Completed，绿闪后移除；其它 Waiting 直接黄灯不闪。
+        // 「是否绿闪」由 kind 决定，见 light_for_kind。
         let flash_deadline = if retention_ms > 0
             && (phase == SessionPhase::Completed
-                || (phase == SessionPhase::Waiting && is_stop_turn))
+                || (phase == SessionPhase::Waiting && flash_waiting))
         {
             Some(now.saturating_add(retention_ms.min(i64::MAX as u64) as i64))
         } else {
@@ -415,117 +419,26 @@ const DEFAULT_RUNNING_TIMEOUT_MS: i64 = 60 * 1000;
 /// when the next run starts, but this prevents leaks if no run ever starts.
 const WAITING_TIMEOUT_MS: i64 = 30 * 60 * 1000; // 30 minutes
 
-/// 将 hook 事件映射为会话阶段。
+/// 事件种类 → 灯态 + 是否「先闪烁的等待」。内核唯一的转灯策略表，不含平台词汇。
 ///
 /// 灯色语义：
 /// - Running → 绿常亮（正在执行）
 /// - Waiting → 黄灯（等待用户操作，对话未结束）
-///   - 其中 Stop 会额外先绿闪，retention 后落成黄常亮（见 apply_event / cleanup）
+///   - 其中 TurnFinished 会额外先绿闪，retention 后落成黄常亮（见 apply_event / cleanup）
 /// - Error → 红灯（接口/不可抗力错误）
 /// - Completed → 绿闪后移除（对话已完成，非错误结束）
-fn phase_for_event(event: &AgentEvent) -> SessionPhase {
-    // Error from payload fields takes priority regardless of event name.
-    // SessionEnd.reason（clear/resume/...）不是失败 outcome，不会命中这里。
-    if event.error_code.is_some()
-        || event.outcome.as_deref().is_some_and(|outcome| {
-            matches!(
-                outcome.to_ascii_lowercase().as_str(),
-                "error" | "failed" | "failure" | "cancelled" | "denied"
-            )
-        })
-    {
-        return SessionPhase::Error;
+fn light_for_kind(kind: AgentEventKind) -> (SessionPhase, bool) {
+    match kind {
+        AgentEventKind::Running => (SessionPhase::Running, false),
+        // 一轮回复结束，等下一条 prompt：先绿闪再落黄。
+        AgentEventKind::TurnFinished => (SessionPhase::Waiting, true),
+        // 权限弹窗 / elicitation：直接黄，不闪。
+        AgentEventKind::WaitingForUser => (SessionPhase::Waiting, false),
+        // 对话结束：绿闪后移除（移除计时由 apply_event 里的 flash_deadline 负责）。
+        AgentEventKind::SessionFinished => (SessionPhase::Completed, false),
+        AgentEventKind::Failed => (SessionPhase::Error, false),
+        AgentEventKind::Unknown => (SessionPhase::Unknown, false),
     }
-
-    let event_name = normalize_event_name(&event.event);
-    match event_name.as_str() {
-        // ── 正在执行（绿常亮） ──
-        "session_start" | "session_started" | "setup" | "user_prompt_submit"
-        | "user_prompt_expansion" | "pre_tool_use" | "post_tool_use" | "post_tool_use_failure"
-        | "post_tool_batch" | "subagent_start" | "subagent_stop" | "task_created"
-        | "message_display" | "pre_compact" | "post_compact" | "pre_model_switch"
-        | "post_model_switch" | "elicit_result" | "elicitation_result"
-        | "instructions_loaded" | "config_change" | "cwd_changed" | "directory_added"
-        | "file_changed" | "worktree_create" | "worktree_remove"
-        // 非「等人操作」信号，保持执行链路语义
-        | "permission_denied" | "task_completed" | "teammate_idle" => SessionPhase::Running,
-
-        // ── 等待用户操作（黄灯） ──
-        // Stop：一轮回复结束，等下一条 prompt
-        // PermissionRequest / Elicitation：弹窗等人选择或输入
-        "stop" | "permission_request" | "elicit" | "elicitation" => SessionPhase::Waiting,
-
-        // Notification：仅等待类 notification_type 进黄灯，其它保持 Running
-        "notification" => {
-            if is_waiting_notification(event.notification_type.as_deref()) {
-                SessionPhase::Waiting
-            } else {
-                SessionPhase::Running
-            }
-        }
-
-        // ── 对话结束（绿闪）；SessionEnd 只有 reason，不再按 success 分流 ──
-        "session_end" | "session_ended" | "session_completed" | "session_done" => {
-            SessionPhase::Completed
-        }
-
-        // ── 本轮 API/模型错误（红灯）；会话通常仍可继续 ──
-        "stop_failure" => SessionPhase::Error,
-
-        // ── Fallback for unknown events ──
-        _ => {
-            if event_name.contains("error") || event_name.contains("fail") {
-                return SessionPhase::Error;
-            }
-            if event_name.contains("start") || event_name.contains("tool") {
-                return SessionPhase::Running;
-            }
-            if event_name.contains("stop") || event_name.contains("wait") {
-                return SessionPhase::Waiting;
-            }
-            SessionPhase::Unknown
-        }
-    }
-}
-
-/// 判断 Notification 是否属于「等待用户操作」类型。
-///
-/// 枚举值与 Claude Code 的 `notification_type` 完整清单对照（从 CLI 2.1.270 二进制常量
-/// 提取，共 16 个）；这里只列**需要用户操作**的那几个。漏列的值会退化成 Running，
-/// 表现就是「该等用户了灯还是绿色」。
-fn is_waiting_notification(notification_type: Option<&str>) -> bool {
-    notification_type
-        .map(|value| value.to_ascii_lowercase())
-        .is_some_and(|value| {
-            matches!(
-                value.as_str(),
-                "idle_prompt"
-                    | "permission_prompt"
-                    | "elicitation_dialog"
-                    | "agent_needs_input"
-                    // MCP 弹链接让用户确认/选择，同样在等人操作。
-                    | "elicitation_url_dialog"
-                    // 团队成员请求权限（worker 会话需要主线程授权）。
-                    | "worker_permission_prompt"
-            )
-        })
-}
-
-pub(super) fn normalize_event_name(value: &str) -> String {
-    let mut normalized = String::with_capacity(value.len() + 4);
-    let mut prev = '\0';
-    for character in value.chars() {
-        if character.is_ascii_uppercase() && prev.is_ascii_lowercase() {
-            normalized.push('_');
-        }
-        if matches!(character, '-' | '.' | ':') {
-            normalized.push('_');
-        } else {
-            normalized.push(character.to_ascii_lowercase());
-        }
-        prev = character;
-    }
-    normalized
 }
 
 #[cfg(test)]
@@ -537,7 +450,7 @@ mod tests {
         id: &str,
         provider: Provider,
         session_id: &str,
-        name: &str,
+        kind: AgentEventKind,
         received: i64,
     ) -> AgentEvent {
         AgentEvent {
@@ -545,7 +458,9 @@ mod tests {
             event_id: id.to_string(),
             provider,
             session_id: session_id.to_string(),
-            event: name.to_string(),
+            kind,
+            // 内核不读原始事件名：这里填一个与 kind 无关的占位，顺便锁住「不据此转灯」。
+            event: String::new(),
             sequence: None,
             occurred_at_ms: None,
             received_at_ms: received,
@@ -568,31 +483,19 @@ mod tests {
         id: &str,
         provider: Provider,
         session_id: &str,
-        name: &str,
+        kind: AgentEventKind,
         received: i64,
     ) -> AgentEvent {
-        let mut event = event(id, provider, session_id, name, received);
+        let mut event = event(id, provider, session_id, kind, received);
         event.agent_id = Some("agent-abc".to_string());
-        event
-    }
-
-    /// 构造带 notification_type 的事件，用于 Notification 分流测试。
-    fn notification_event(
-        id: &str,
-        session_id: &str,
-        notification_type: Option<&str>,
-        received: i64,
-    ) -> AgentEvent {
-        let mut event = event(id, Provider::Claude, session_id, "Notification", received);
-        event.notification_type = notification_type.map(str::to_string);
         event
     }
 
     #[test]
     fn keeps_multiple_provider_sessions_separate() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(event("1", Provider::Claude, "same", "start", 1), 30_000);
-        registry.apply_event(event("2", Provider::Codex, "same", "start", 2), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "same", AgentEventKind::Running, 1), 30_000);
+        registry.apply_event(event("2", Provider::Codex, "same", AgentEventKind::Running, 2), 30_000);
 
         let snapshot = registry.snapshot(3);
         assert_eq!(snapshot.sessions.len(), 2);
@@ -605,12 +508,12 @@ mod tests {
     fn sessions_are_ordered_earliest_created_first() {
         let mut registry = StatusRegistry::new();
         // s1 最早创建，s3 最晚；但 s3 最近才活动（last_seen 最大）。
-        registry.apply_event(event("1", Provider::Claude, "s1", "start", 100), 30_000);
-        registry.apply_event(event("2", Provider::Claude, "s2", "start", 200), 30_000);
-        registry.apply_event(event("3", Provider::Claude, "s3", "start", 300), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "s1", AgentEventKind::Running, 100), 30_000);
+        registry.apply_event(event("2", Provider::Claude, "s2", AgentEventKind::Running, 200), 30_000);
+        registry.apply_event(event("3", Provider::Claude, "s3", AgentEventKind::Running, 300), 30_000);
         // s1 收到新事件：last_seen 最新，但仍应排在最前（按 started 而非 last_seen）。
         registry.apply_event(
-            event("4", Provider::Claude, "s1", "PreToolUse", 999),
+            event("4", Provider::Claude, "s1", AgentEventKind::Running, 999),
             30_000,
         );
 
@@ -628,7 +531,7 @@ mod tests {
     fn completed_sessions_flash_until_retention_expires() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "session_end", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::SessionFinished, 100),
             30_000,
         );
 
@@ -640,7 +543,7 @@ mod tests {
     #[test]
     fn dead_error_sessions_are_removed_by_liveness_check() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(event("1", Provider::Claude, "one", "error", 100), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::Failed, 100), 30_000);
 
         assert!(registry.cleanup(200, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(false)));
         assert!(registry.snapshot(200).sessions.is_empty());
@@ -649,7 +552,7 @@ mod tests {
     #[test]
     fn stop_means_waiting_with_green_flash_then_settles_yellow() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(event("1", Provider::Claude, "one", "Stop", 100), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::TurnFinished, 100), 30_000);
         let session = &registry.snapshot(100).sessions[0];
         // Stop 仍是 Waiting（对话未结束），但先绿闪。
         assert_eq!(session.phase, SessionPhase::Waiting);
@@ -672,7 +575,7 @@ mod tests {
     fn permission_waiting_does_not_flash() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "PermissionRequest", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::WaitingForUser, 100),
             30_000,
         );
         let session = &registry.snapshot(100).sessions[0];
@@ -681,133 +584,37 @@ mod tests {
         assert_eq!(session.remove_at_ms, None);
     }
 
+    /// 内核不读 `event` 原始名：一条带平台事件名、但 kind 为 Running 的事件必须照常转绿。
+    ///
+    /// 这正是分层要锁住的边界 —— 平台词汇（这里故意写 `Stop`）不得左右内核的灯态。
     #[test]
-    fn permission_request_and_elicitation_mean_waiting() {
+    fn kernel_ignores_raw_event_name() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(
-            event("1", Provider::Claude, "one", "PermissionRequest", 100),
-            30_000,
-        );
-        assert_eq!(
-            registry.snapshot(100).sessions[0].phase,
-            SessionPhase::Waiting
-        );
-
-        registry.apply_event(
-            event("2", Provider::Claude, "one", "Elicitation", 200),
-            30_000,
-        );
-        assert_eq!(
-            registry.snapshot(200).sessions[0].phase,
-            SessionPhase::Waiting
-        );
-    }
-
-    #[test]
-    fn waiting_notification_types_map_to_waiting() {
-        let mut registry = StatusRegistry::new();
-        for (idx, notification_type) in [
-            "idle_prompt",
-            "permission_prompt",
-            "elicitation_dialog",
-            "agent_needs_input",
-            // MCP 弹链接 / 团队成员请求权限：同属「等人操作」。
-            "elicitation_url_dialog",
-            "worker_permission_prompt",
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let received = 100 + idx as i64;
-            registry.apply_event(
-                notification_event(
-                    &format!("n-{idx}"),
-                    &format!("sess-{idx}"),
-                    Some(notification_type),
-                    received,
-                ),
-                30_000,
-            );
-            let session = registry
-                .snapshot(received)
-                .sessions
-                .into_iter()
-                .find(|session| session.session_id == format!("sess-{idx}"))
-                .expect("session present");
-            assert_eq!(session.phase, SessionPhase::Waiting);
-        }
-    }
-
-    #[test]
-    fn non_waiting_or_missing_notification_type_maps_to_running() {
-        let mut registry = StatusRegistry::new();
-        registry.apply_event(
-            notification_event("1", "one", Some("auth_success"), 100),
-            30_000,
-        );
+        let mut misleading = event("1", Provider::Claude, "one", AgentEventKind::Running, 100);
+        misleading.event = "Stop".to_string();
+        registry.apply_event(misleading, 30_000);
         assert_eq!(
             registry.snapshot(100).sessions[0].phase,
             SessionPhase::Running
         );
-
-        registry.apply_event(notification_event("2", "two", None, 200), 30_000);
-        assert_eq!(
-            registry.snapshot(200).sessions[0].phase,
-            SessionPhase::Running
-        );
-    }
-
-    #[test]
-    fn permission_denied_and_task_completed_stay_running() {
-        let mut registry = StatusRegistry::new();
-        registry.apply_event(
-            event("1", Provider::Claude, "one", "PermissionDenied", 100),
-            30_000,
-        );
-        assert_eq!(
-            registry.snapshot(100).sessions[0].phase,
-            SessionPhase::Running
-        );
-
-        registry.apply_event(
-            event("2", Provider::Claude, "one", "TaskCompleted", 200),
-            30_000,
-        );
-        assert_eq!(
-            registry.snapshot(200).sessions[0].phase,
-            SessionPhase::Running
-        );
-    }
-
-    #[test]
-    fn session_end_is_the_completed_signal_regardless_of_reason() {
-        let mut registry = StatusRegistry::new();
-        let mut end = event("1", Provider::Claude, "one", "SessionEnd", 100);
-        // SDK SessionEnd 只有 reason（如 clear），没有 success outcome。
-        end.outcome = Some("clear".to_string());
-        registry.apply_event(end, 30_000);
-        let session = &registry.snapshot(100).sessions[0];
-        assert_eq!(session.phase, SessionPhase::Completed);
-        assert!(session.is_flashing);
-        assert_eq!(session.remove_at_ms, Some(30_100));
     }
 
     #[test]
     fn event_ids_are_scoped_to_the_session() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(event("same", Provider::Claude, "one", "start", 1), 30_000);
-        registry.apply_event(event("same", Provider::Claude, "two", "start", 2), 30_000);
+        registry.apply_event(event("same", Provider::Claude, "one", AgentEventKind::Running, 1), 30_000);
+        registry.apply_event(event("same", Provider::Claude, "two", AgentEventKind::Running, 2), 30_000);
         assert_eq!(registry.snapshot(2).sessions.len(), 2);
     }
 
     #[test]
     fn stale_sequences_and_completed_sessions_are_ignored() {
         let mut registry = StatusRegistry::new();
-        let mut first = event("1", Provider::Claude, "one", "start", 100);
+        let mut first = event("1", Provider::Claude, "one", AgentEventKind::Running, 100);
         first.sequence = Some(2);
         registry.apply_event(first, 30_000);
 
-        let mut stale = event("2", Provider::Claude, "one", "error", 200);
+        let mut stale = event("2", Provider::Claude, "one", AgentEventKind::Failed, 200);
         stale.sequence = Some(1);
         assert!(!registry.apply_event(stale, 30_000));
         assert_eq!(
@@ -816,10 +623,10 @@ mod tests {
         );
 
         registry.apply_event(
-            event("3", Provider::Claude, "one", "session_end", 300),
+            event("3", Provider::Claude, "one", AgentEventKind::SessionFinished, 300),
             30_000,
         );
-        assert!(!registry.apply_event(event("4", Provider::Claude, "one", "start", 400), 30_000));
+        assert!(!registry.apply_event(event("4", Provider::Claude, "one", AgentEventKind::Running, 400), 30_000));
         assert_eq!(
             registry.snapshot(400).sessions[0].phase,
             SessionPhase::Completed
@@ -829,7 +636,7 @@ mod tests {
     #[test]
     fn duplicate_events_do_not_change_revision() {
         let mut registry = StatusRegistry::new();
-        let first = event("1", Provider::Claude, "one", "start", 100);
+        let first = event("1", Provider::Claude, "one", AgentEventKind::Running, 100);
         assert!(registry.apply_event(first.clone(), 30_000));
         assert!(!registry.apply_event(first, 30_000));
         assert_eq!(registry.snapshot(100).revision, 1);
@@ -838,7 +645,7 @@ mod tests {
     #[test]
     fn wrong_schema_version_is_rejected() {
         let mut registry = StatusRegistry::new();
-        let mut bad = event("1", Provider::Claude, "one", "start", 100);
+        let mut bad = event("1", Provider::Claude, "one", AgentEventKind::Running, 100);
         bad.schema_version = 99;
         assert!(!registry.apply_event(bad, 30_000));
         assert!(registry.snapshot(100).sessions.is_empty());
@@ -847,7 +654,7 @@ mod tests {
     #[test]
     fn empty_event_id_is_rejected() {
         let mut registry = StatusRegistry::new();
-        let bad = event("", Provider::Claude, "one", "start", 100);
+        let bad = event("", Provider::Claude, "one", AgentEventKind::Running, 100);
         assert!(!registry.apply_event(bad, 30_000));
         assert!(registry.snapshot(100).sessions.is_empty());
     }
@@ -855,7 +662,7 @@ mod tests {
     #[test]
     fn empty_session_id_is_rejected() {
         let mut registry = StatusRegistry::new();
-        let bad = event("1", Provider::Claude, "", "start", 100);
+        let bad = event("1", Provider::Claude, "", AgentEventKind::Running, 100);
         assert!(!registry.apply_event(bad, 30_000));
         assert!(registry.snapshot(100).sessions.is_empty());
     }
@@ -864,7 +671,7 @@ mod tests {
     fn custom_retention_affects_remove_at() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "session_end", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::SessionFinished, 100),
             60_000,
         );
         let session = &registry.snapshot(100).sessions[0];
@@ -875,7 +682,7 @@ mod tests {
     fn liveness_check_preserves_completed_green_lights() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "session_end", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::SessionFinished, 100),
             30_000,
         );
         // Even if process is dead, completed sessions are kept until remove_at_ms
@@ -892,7 +699,7 @@ mod tests {
         let mut registry = StatusRegistry::new();
         // Completed sessions have termination_confirmed=true, so they survive unknown liveness
         registry.apply_event(
-            event("1", Provider::Claude, "one", "session_end", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::SessionFinished, 100),
             30_000,
         );
         assert!(!registry.cleanup(200, DEFAULT_RUNNING_TIMEOUT_MS, |_| None));
@@ -902,7 +709,7 @@ mod tests {
     #[test]
     fn stale_error_sessions_are_removed_after_timeout() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(event("1", Provider::Claude, "one", "error", 100), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::Failed, 100), 30_000);
         // Error sessions are kept while within the timeout window.
         assert!(!registry.cleanup(200, DEFAULT_RUNNING_TIMEOUT_MS, |_| None));
         assert_eq!(registry.snapshot(200).sessions.len(), 1);
@@ -916,7 +723,7 @@ mod tests {
     fn running_sessions_use_configurable_timeout_not_error_60s() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "PreToolUse", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 100),
             30_000,
         );
         // 把 Running 超时拉到 3 分钟：超过 Error 的 60s 仍保留绿灯。
@@ -938,7 +745,7 @@ mod tests {
     #[test]
     fn non_error_events_clear_error_state() {
         let mut registry = StatusRegistry::new();
-        let mut failure = event("1", Provider::Claude, "one", "StopFailure", 100);
+        let mut failure = event("1", Provider::Claude, "one", AgentEventKind::Failed, 100);
         failure.error_code = Some("overloaded".to_string());
         registry.apply_event(failure, 30_000);
         assert_eq!(
@@ -948,7 +755,7 @@ mod tests {
 
         // 红灯不粘：后续执行事件可以把红灯带回绿灯，并清掉残留的错误码。
         registry.apply_event(
-            event("2", Provider::Claude, "one", "PreToolUse", 200),
+            event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
             30_000,
         );
         let session = &registry.snapshot(200).sessions[0];
@@ -960,7 +767,7 @@ mod tests {
     fn stop_after_error_turns_light_yellow() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "StopFailure", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::Failed, 100),
             30_000,
         );
         assert_eq!(
@@ -969,7 +776,7 @@ mod tests {
         );
 
         // 红灯期间收到 Stop：允许转灯 → Waiting 绿闪，随后落黄。
-        registry.apply_event(event("2", Provider::Claude, "one", "Stop", 200), 30_000);
+        registry.apply_event(event("2", Provider::Claude, "one", AgentEventKind::TurnFinished, 200), 30_000);
         let session = &registry.snapshot(200).sessions[0];
         assert_eq!(session.phase, SessionPhase::Waiting);
         assert!(session.is_flashing);
@@ -979,12 +786,12 @@ mod tests {
     fn session_end_after_error_completes_and_removes() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "StopFailure", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::Failed, 100),
             30_000,
         );
         // 红灯期间会话结束：允许转灯 → Completed 绿闪，retention 后移除。
         registry.apply_event(
-            event("2", Provider::Claude, "one", "SessionEnd", 200),
+            event("2", Provider::Claude, "one", AgentEventKind::SessionFinished, 200),
             30_000,
         );
         let session = &registry.snapshot(200).sessions[0];
@@ -996,10 +803,10 @@ mod tests {
     #[test]
     fn unknown_event_does_not_clear_error_state() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(event("1", Provider::Claude, "one", "error", 100), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::Failed, 100), 30_000);
         // 无法识别的事件不构成转灯信号，红灯保持。
         registry.apply_event(
-            event("2", Provider::Claude, "one", "SomethingWeird", 200),
+            event("2", Provider::Claude, "one", AgentEventKind::Unknown, 200),
             30_000,
         );
         assert_eq!(
@@ -1012,7 +819,7 @@ mod tests {
     fn user_prompt_submit_recovers_from_error() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "StopFailure", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::Failed, 100),
             30_000,
         );
         assert_eq!(
@@ -1022,7 +829,7 @@ mod tests {
 
         // StopFailure 后用户再发 prompt，应恢复 Running。
         registry.apply_event(
-            event("2", Provider::Claude, "one", "UserPromptSubmit", 200),
+            event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
             30_000,
         );
         assert_eq!(
@@ -1034,7 +841,7 @@ mod tests {
     #[test]
     fn base_url_is_kept_when_later_events_lack_it() {
         let mut registry = StatusRegistry::new();
-        let mut first = event("1", Provider::Claude, "one", "PreToolUse", 100);
+        let mut first = event("1", Provider::Claude, "one", AgentEventKind::Running, 100);
         first.base_url = Some("http://127.0.0.1:15721".to_string());
         registry.apply_event(first, 30_000);
         assert_eq!(
@@ -1044,7 +851,7 @@ mod tests {
 
         // 后续事件没带 base_url：应继承，而不是被抹成 null。
         registry.apply_event(
-            event("2", Provider::Claude, "one", "PostToolUse", 200),
+            event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
             30_000,
         );
         assert_eq!(
@@ -1056,11 +863,11 @@ mod tests {
     #[test]
     fn base_url_is_updated_when_a_new_value_arrives() {
         let mut registry = StatusRegistry::new();
-        let mut first = event("1", Provider::Claude, "one", "PreToolUse", 100);
+        let mut first = event("1", Provider::Claude, "one", AgentEventKind::Running, 100);
         first.base_url = Some("http://127.0.0.1:15721".to_string());
         registry.apply_event(first, 30_000);
 
-        let mut second = event("2", Provider::Claude, "one", "PostToolUse", 200);
+        let mut second = event("2", Provider::Claude, "one", AgentEventKind::Running, 200);
         second.base_url = Some("https://api.example.com".to_string());
         registry.apply_event(second, 30_000);
         assert_eq!(
@@ -1072,7 +879,7 @@ mod tests {
     #[test]
     fn prompt_is_kept_across_the_turn_and_replaced_on_next_submit() {
         let mut registry = StatusRegistry::new();
-        let mut submit = event("1", Provider::Claude, "one", "UserPromptSubmit", 100);
+        let mut submit = event("1", Provider::Claude, "one", AgentEventKind::Running, 100);
         submit.prompt = Some("第一个问题".to_string());
         registry.apply_event(submit, 30_000);
         assert_eq!(
@@ -1082,7 +889,7 @@ mod tests {
 
         // 同一轮的后续事件不带 prompt：应继承，直到下一次提交。
         registry.apply_event(
-            event("2", Provider::Claude, "one", "PreToolUse", 200),
+            event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
             30_000,
         );
         assert_eq!(
@@ -1091,7 +898,7 @@ mod tests {
         );
 
         // 下一次提交：覆盖为新提问。
-        let mut next = event("3", Provider::Claude, "one", "UserPromptSubmit", 300);
+        let mut next = event("3", Provider::Claude, "one", AgentEventKind::Running, 300);
         next.prompt = Some("第二个问题".to_string());
         registry.apply_event(next, 30_000);
         assert_eq!(
@@ -1110,28 +917,9 @@ mod tests {
     #[test]
     fn custom_retention_zero_disables_flashing() {
         let mut registry = StatusRegistry::new();
-        registry.apply_event(event("1", Provider::Claude, "one", "session_end", 100), 0);
+        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::SessionFinished, 100), 0);
         let session = &registry.snapshot(100).sessions[0];
         assert!(!session.is_flashing);
-    }
-
-    #[test]
-    fn normalize_event_name_handles_camel_case() {
-        assert_eq!(normalize_event_name("TurnCompleted"), "turn_completed");
-        assert_eq!(normalize_event_name("SessionEnd"), "session_end");
-    }
-
-    #[test]
-    fn normalize_event_name_handles_separators() {
-        assert_eq!(normalize_event_name("session-end"), "session_end");
-        assert_eq!(normalize_event_name("session.end"), "session_end");
-        assert_eq!(normalize_event_name("session:end"), "session_end");
-    }
-
-    #[test]
-    fn normalize_event_name_lowercases() {
-        assert_eq!(normalize_event_name("STOP"), "stop");
-        assert_eq!(normalize_event_name("Start"), "start");
     }
 
     #[test]
@@ -1143,7 +931,7 @@ mod tests {
                     &format!("{i}"),
                     Provider::Claude,
                     &format!("session-{i}"),
-                    "start",
+                    AgentEventKind::Running,
                     i as i64,
                 ),
                 30_000,
@@ -1158,10 +946,10 @@ mod tests {
         let mut registry = StatusRegistry::new();
         // Session 1: agent runs, then stops (Waiting).
         registry.apply_event(
-            event("1", Provider::Claude, "sess-1", "PreToolUse", 100),
+            event("1", Provider::Claude, "sess-1", AgentEventKind::Running, 100),
             30_000,
         );
-        registry.apply_event(event("2", Provider::Claude, "sess-1", "Stop", 200), 30_000);
+        registry.apply_event(event("2", Provider::Claude, "sess-1", AgentEventKind::TurnFinished, 200), 30_000);
         assert_eq!(registry.snapshot(200).sessions.len(), 1);
         assert_eq!(
             registry.snapshot(200).sessions[0].phase,
@@ -1170,7 +958,7 @@ mod tests {
 
         // Session 2 starts: old Waiting session should be cleared.
         registry.apply_event(
-            event("3", Provider::Claude, "sess-2", "UserPromptSubmit", 300),
+            event("3", Provider::Claude, "sess-2", AgentEventKind::Running, 300),
             30_000,
         );
         assert_eq!(registry.snapshot(300).sessions.len(), 1);
@@ -1185,11 +973,11 @@ mod tests {
     fn waiting_sessions_not_cleared_by_other_provider() {
         let mut registry = StatusRegistry::new();
         // Claude session stops (Waiting).
-        registry.apply_event(event("1", Provider::Claude, "c1", "Stop", 100), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "c1", AgentEventKind::TurnFinished, 100), 30_000);
         assert_eq!(registry.snapshot(100).sessions.len(), 1);
         // Codex session starts: should NOT clear Claude's Waiting session.
         registry.apply_event(
-            event("2", Provider::Codex, "x1", "UserPromptSubmit", 200),
+            event("2", Provider::Codex, "x1", AgentEventKind::Running, 200),
             30_000,
         );
         assert_eq!(registry.snapshot(200).sessions.len(), 2);
@@ -1204,7 +992,7 @@ mod tests {
         let mut registry = StatusRegistry::new();
         // 主线程弹出提问/授权框 → 黄灯（AskUserQuestion 实测走 PermissionRequest）。
         registry.apply_event(
-            event("1", Provider::Claude, "one", "PermissionRequest", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::WaitingForUser, 100),
             30_000,
         );
         assert_eq!(
@@ -1215,15 +1003,15 @@ mod tests {
         // 后台子代理仍在跑：它的工具事件与主会话共用 session_id。
         // 修复前这些事件会把 Waiting 顶回 Running（灯一直绿）。
         registry.apply_event(
-            subagent_event("2", Provider::Claude, "one", "PreToolUse", 200),
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
             30_000,
         );
         registry.apply_event(
-            subagent_event("3", Provider::Claude, "one", "PostToolUse", 300),
+            subagent_event("3", Provider::Claude, "one", AgentEventKind::Running, 300),
             30_000,
         );
         registry.apply_event(
-            subagent_event("4", Provider::Claude, "one", "SubagentStart", 400),
+            subagent_event("4", Provider::Claude, "one", AgentEventKind::Running, 400),
             30_000,
         );
 
@@ -1237,13 +1025,13 @@ mod tests {
     fn subagent_events_do_not_settle_stop_flash_early() {
         let mut registry = StatusRegistry::new();
         // Stop：Waiting + 绿闪，retention 后落黄常亮。
-        registry.apply_event(event("1", Provider::Claude, "one", "Stop", 100), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::TurnFinished, 100), 30_000);
         let remove_at = registry.snapshot(100).sessions[0].remove_at_ms;
         assert_eq!(remove_at, Some(30_100));
 
         // 子代理事件不得抹掉绿闪计时（若只改 phase 而重算 flash_deadline 就会丢）。
         registry.apply_event(
-            subagent_event("2", Provider::Claude, "one", "PreToolUse", 200),
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
             30_000,
         );
         let session = &registry.snapshot(200).sessions[0];
@@ -1260,7 +1048,7 @@ mod tests {
     fn subagent_events_preserve_completed_removal_timer() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "SessionEnd", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::SessionFinished, 100),
             30_000,
         );
         assert_eq!(
@@ -1270,7 +1058,7 @@ mod tests {
 
         // Completed 绿闪期间来子代理事件：移除计时必须保留，否则灯永远不消失。
         registry.apply_event(
-            subagent_event("2", Provider::Claude, "one", "PostToolUse", 200),
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
             30_000,
         );
         let session = &registry.snapshot(200).sessions[0];
@@ -1285,12 +1073,12 @@ mod tests {
     fn subagent_events_refresh_liveness_without_changing_phase() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "PreToolUse", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 100),
             30_000,
         );
         // 子代理事件推进 last_seen：把 Running 超时窗口内本应到期的会话续住。
         registry.apply_event(
-            subagent_event("2", Provider::Claude, "one", "PostToolUse", 50_000),
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::Running, 50_000),
             30_000,
         );
         let session = &registry.snapshot(50_000).sessions[0];
@@ -1308,7 +1096,7 @@ mod tests {
         let mut registry = StatusRegistry::new();
         // UFO 中途启动：只先收到子代理事件，也要把灯建出来（否则长时间没有灯）。
         registry.apply_event(
-            subagent_event("1", Provider::Claude, "one", "PreToolUse", 100),
+            subagent_event("1", Provider::Claude, "one", AgentEventKind::Running, 100),
             30_000,
         );
         let session = &registry.snapshot(100).sessions[0];
@@ -1319,10 +1107,10 @@ mod tests {
     fn subagent_events_do_not_clear_other_waiting_sessions() {
         let mut registry = StatusRegistry::new();
         // 会话 A 进入 Waiting。
-        registry.apply_event(event("1", Provider::Claude, "a", "Stop", 100), 30_000);
+        registry.apply_event(event("1", Provider::Claude, "a", AgentEventKind::TurnFinished, 100), 30_000);
         // 会话 B 上只有子代理事件（UFO 中途启动的建档路径）：不得清掉 A 的黄灯。
         registry.apply_event(
-            subagent_event("2", Provider::Claude, "b", "PreToolUse", 200),
+            subagent_event("2", Provider::Claude, "b", AgentEventKind::Running, 200),
             30_000,
         );
         let snapshot = registry.snapshot(200);
@@ -1349,7 +1137,7 @@ mod tests {
         let mut registry = StatusRegistry::new();
         // 本次运行第一次见到该会话（如 --resume）：PreToolUse 不带 prompt/base_url。
         let applied = registry.apply_event_with_seed(
-            event("1", Provider::Claude, "one", "PreToolUse", 500),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 500),
             30_000,
             Some(&seed(100, Some("旧提问"), Some("http://127.0.0.1:15721"))),
         );
@@ -1369,12 +1157,12 @@ mod tests {
         let mut registry = StatusRegistry::new();
         // 会话已在内存中（存活），回填不得覆盖新鲜值。
         registry.apply_event(
-            event("1", Provider::Claude, "one", "UserPromptSubmit", 500),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 500),
             30_000,
         );
         registry.apply_event_with_seed(
             {
-                let mut e = event("2", Provider::Claude, "one", "PreToolUse", 600);
+                let mut e = event("2", Provider::Claude, "one", AgentEventKind::Running, 600);
                 e.prompt = None;
                 e
             },
@@ -1392,12 +1180,12 @@ mod tests {
     fn user_prompt_submit_overrides_restored_prompt() {
         let mut registry = StatusRegistry::new();
         registry.apply_event_with_seed(
-            event("1", Provider::Claude, "one", "PreToolUse", 500),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 500),
             30_000,
             Some(&seed(100, Some("旧提问"), None)),
         );
         // 新一次提交：覆盖回填来的旧提问（阶梯「事件 > 前驱 > 回填」）。
-        let mut submit = event("2", Provider::Claude, "one", "UserPromptSubmit", 600);
+        let mut submit = event("2", Provider::Claude, "one", AgentEventKind::Running, 600);
         submit.prompt = Some("新提问".to_string());
         registry.apply_event_with_seed(submit, 30_000, None);
         assert_eq!(
@@ -1417,7 +1205,7 @@ mod tests {
             output_tokens: 200,
         };
         registry.apply_event_with_seed(
-            event("1", Provider::Claude, "one", "PreToolUse", 500),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 500),
             30_000,
             Some(&historic),
         );
@@ -1433,7 +1221,7 @@ mod tests {
         let mut registry = StatusRegistry::new();
         // 全零的历史 token 不应被灌进 totals —— 否则会把「未统计到」的 None 变成 Some(0)。
         registry.apply_event_with_seed(
-            event("1", Provider::Claude, "one", "PreToolUse", 500),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 500),
             30_000,
             Some(&seed(100, None, None)),
         );
@@ -1444,7 +1232,7 @@ mod tests {
     fn set_tokens_creates_entry_when_absent() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "PreToolUse", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 100),
             30_000,
         );
         let totals = TokenTotals {
@@ -1464,7 +1252,7 @@ mod tests {
     fn set_tokens_never_regresses_below_the_floor() {
         let mut registry = StatusRegistry::new();
         registry.apply_event(
-            event("1", Provider::Claude, "one", "PreToolUse", 100),
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 100),
             30_000,
         );
         registry.set_tokens(
@@ -1516,18 +1304,5 @@ mod tests {
                 ..Default::default()
             }
         ));
-    }
-
-    #[test]
-    fn stop_failure_maps_to_error() {
-        let mut registry = StatusRegistry::new();
-        registry.apply_event(
-            event("1", Provider::Claude, "one", "StopFailure", 100),
-            30_000,
-        );
-        assert_eq!(
-            registry.snapshot(100).sessions[0].phase,
-            SessionPhase::Error
-        );
     }
 }

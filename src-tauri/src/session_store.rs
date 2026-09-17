@@ -56,7 +56,7 @@ pub const SESSION_RECORDS_EVENT: &str = "session-records";
 /// `error_code` / `last_sequence` / `source` / `confidence` —— 都是存活态字段，
 /// 灯色必须由本次事件决定；旧 `pid` 回填进来会让存活检查立刻判死。
 ///
-/// reducer 只看到 [`StoredSeed`]（回填所需四字段），不依赖本存储类型 —— 这里是持久化行
+/// 内核只看到 [`StoredSeed`]（回填所需四字段），不依赖本存储类型 —— 这里是持久化行
 /// 到领域边界的转换点。
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SessionRecord {
@@ -70,7 +70,7 @@ pub struct SessionRecord {
     pub prompt: Option<String>,
     /// 会话实际使用的 API endpoint。存 `base_url`（通常是本地代理监听地址）。
     ///
-    /// ⚠️ 回填（[`StoredSeed`]）用的是本字段：reducer 的继承阶梯把 `base_url` 当作
+    /// ⚠️ 回填（[`StoredSeed`]）用的是本字段：内核的继承阶梯把 `base_url` 当作
     /// 「会话原本的端点」，上游是快照生成时按当前解析器现算的，不进回填。
     pub base_url: Option<String>,
     /// `base_url` 经代理解析器反查出的**上游 endpoint**（如 cc-switch 后的 `https://api.b.ai`）。
@@ -225,7 +225,7 @@ impl SessionStoreState {
     ///
     /// **必须在 registry 锁之外调用**，返回值直接喂给 `apply_event_with_seed`。
     /// 这里做一次 `SessionRecord → StoredSeed` 的字段裁剪（clone 两个 Option<String>），
-    /// 让存储类型不外泄给 reducer —— 事件频率很低，这点拷贝可忽略。
+    /// 让存储类型不外泄给内核 —— 事件频率很低，这点拷贝可忽略。
     pub fn seed_for(&self, key: &str) -> Option<StoredSeed> {
         let record = self.seeds.lock().ok()?.get(key).cloned()?;
         Some(StoredSeed {
@@ -472,7 +472,7 @@ fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 /// 写一行（存在则更新）。除 `started_at_ms` 取 MIN 外一律用 `excluded.*` 覆盖 ——
-/// 传进来的值已由 reducer 算完继承与 token 下限，SQL 里再算一遍会出现两套会漂移的合并规则。
+/// 传进来的值已由内核算完继承与 token 下限，SQL 里再算一遍会出现两套会漂移的合并规则。
 /// `started_at_ms` 是「这轮对话最早的时刻」，任何情况都不该变晚，MIN 兜住写入路径顺序颠倒。
 const UPSERT_SQL: &str = r#"
 INSERT INTO session_records

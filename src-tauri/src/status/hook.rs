@@ -1,3 +1,9 @@
+//! Hook 外壳：只做与平台无关的收发包，平台知识全在 `super::compat`。
+//!
+//! 本文件对应 `ufo --status-hook` 的短命进程路径：读 stdin 的 hook payload →
+//! 交给按 `--provider` 选出的兼容适配器归一化成内核事件 → 原子写进状态目录 inbox。
+//! 它不解析平台字段、不读平台配置，也必须快进快出。
+
 use std::{
     env,
     fs::{self, File},
@@ -9,9 +15,10 @@ use std::{
 
 use serde_json::Value;
 
-use super::model::{now_ms, AgentEvent, Provider, SCHEMA_VERSION};
-use super::reducer::normalize_event_name;
+use super::compat;
+use super::model::{now_ms, Provider};
 
+/// 单次 hook payload 的读取上限，防止异常输入拖慢短命进程。
 const MAX_HOOK_INPUT: u64 = 64 * 1024;
 /// App 标识（与 `tauri.conf.json` 的 `identifier` 保持一致）：既用于定位 AppData 下的
 /// status 目录，也被 flow 模块用作凭据 service 前缀 —— 统一从这里导出，避免两处各写一份。
@@ -24,7 +31,7 @@ pub fn try_run_status_hook(args: &[String]) -> Option<i32> {
 
     // Debug: log that hook was invoked
     let debug_path = default_status_dir().join("hook-debug.log");
-    let _ = fs::create_dir_all(debug_path.parent().unwrap_or(Path::new(".")));
+    let _ = fs::create_dir_all(debug_path.parent().unwrap_or(std::path::Path::new(".")));
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&debug_path) {
         let _ = writeln!(f, "[{}] hook invoked, args: {:?}", chrono_local_now(), args);
     }
@@ -46,7 +53,6 @@ pub fn try_run_status_hook(args: &[String]) -> Option<i32> {
 }
 
 fn chrono_local_now() -> String {
-    use std::time::SystemTime;
     let dur = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
@@ -75,64 +81,48 @@ fn run_status_hook(args: &[String]) -> Result<(), String> {
     if input.len() as u64 > MAX_HOOK_INPUT {
         return Err("hook input is too large".to_string());
     }
-
     let payload: Value =
         serde_json::from_slice(&input).map_err(|error| format!("invalid hook JSON: {error}"))?;
-    let session_id = string_field(&payload, &["session_id", "sessionId", "conversation_id"])
-        .ok_or_else(|| "hook payload has no session id".to_string())?;
-    if session_id.len() > 256 {
-        return Err("session id is too long".to_string());
-    }
-    let event = string_field(
-        &payload,
-        &[
-            "hook_event_name",
-            "event",
-            "event_name",
-            "event_type",
-            "type",
-        ],
-    )
-    .unwrap_or_else(|| "unknown".to_string());
-    let pid = string_field(&payload, &["pid", "process_id"])
-        .and_then(|value| value.parse::<u32>().ok())
-        .or_else(|| env::var("UFO_AGENT_PID").ok()?.parse::<u32>().ok());
-    let event_id = string_field(&payload, &["event_id", "eventId", "id"])
+
+    process_payload(provider, &status_dir, &payload)
+}
+
+/// 把一次 hook 的 payload 走完「兼容层归一化 → 补信封 → 落盘」整条链路。
+///
+/// 从 `run_status_hook` 拆出来单独成函数：stdin 喂不进单测，但这条核心链路必须能在
+/// 没有真实 hook 进程的情况下验证（见下方 `process_payload_writes_canonical_event`）。
+fn process_payload(provider: Provider, status_dir: &Path, payload: &Value) -> Result<(), String> {
+    // ── 兼容层：按 provider 取适配器，把平台 payload 归一化成内核事件 ──
+    let adapter = compat::adapter_for(provider)
+        .ok_or_else(|| format!("no hook adapter for {provider:?}"))?;
+    // 项目级配置以会话的 cwd 为基准；payload 未带 cwd 时适配器只读用户级配置。
+    let cwd = compat::string_field(payload, &["cwd"]).map(PathBuf::from);
+    let adapted = adapter.adapt(
+        payload,
+        &compat::AdaptContext { cwd: cwd.as_deref() },
+    )?;
+
+    // ── 信封字段（与平台无关）：事件去重 id、进程 id、接收时刻 ──
+    // 事件名 / 字段别名是通用约定，平台特有字段一律由适配器处理。
+    let event_id = compat::string_field(payload, &["event_id", "eventId", "id"])
         .filter(|value| !value.is_empty() && value.len() <= 256)
         .unwrap_or_else(unique_event_id);
-
-    // 项目级 Claude 配置以会话的 cwd 为基准；payload 未带 cwd 时只读用户级配置。
-    let cwd = string_field(&payload, &["cwd"]).map(PathBuf::from);
-    // 只认用户手输的提问：展开后的模板文本不能覆盖它。
-    let prompt = user_prompt(&event, &payload);
-
-    // outcome 同时承接 SessionEnd.reason 等结果别名；
-    // notification_type 单独提取，避免与 outcome 混用污染状态判定。
-    let normalized = AgentEvent {
-        schema_version: SCHEMA_VERSION,
-        event_id,
+    let pid = compat::string_field(payload, &["pid", "process_id"])
+        .and_then(|value| value.parse::<u32>().ok())
+        .or_else(|| env::var("UFO_AGENT_PID").ok()?.parse::<u32>().ok());
+    let event = adapted.into_event(compat::EventEnvelope {
         provider,
-        session_id,
-        event,
-        sequence: number_field(&payload, &["sequence", "seq"]),
-        occurred_at_ms: number_field(&payload, &["occurred_at_ms", "timestamp_ms"])
-            .and_then(|value| i64::try_from(value).ok()),
+        event_id,
         received_at_ms: now_ms(),
         pid,
-        error_code: string_field(&payload, &["error_code", "error", "failure_reason"]),
-        outcome: string_field(&payload, &["outcome", "reason", "status", "stop_reason"]),
-        notification_type: string_field(&payload, &["notification_type", "notificationType"]),
-        base_url: provider_base_url(provider, cwd.as_deref()),
-        prompt,
-        transcript_path: transcript_path(&payload),
-        agent_id: agent_id(&payload),
-    };
+    });
 
+    // 原子写盘：先写临时文件再 rename，避免 monitor 读到半截 JSON。
     let inbox = status_dir.join("inbox");
     fs::create_dir_all(&inbox).map_err(|error| format!("cannot create status inbox: {error}"))?;
     let final_path = inbox.join(format!("{}.json", unique_event_id()));
     let temporary_path = inbox.join(format!(".{}.tmp", unique_event_id()));
-    let encoded = serde_json::to_vec(&normalized).map_err(|error| error.to_string())?;
+    let encoded = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
     let mut file = File::create(&temporary_path)
         .map_err(|error| format!("cannot create status event: {error}"))?;
     file.write_all(&encoded)
@@ -158,311 +148,6 @@ fn argument_value(args: &[String], name: &str) -> Option<String> {
         .filter(|value| !value.starts_with('-'))
 }
 
-fn string_field(payload: &Value, names: &[&str]) -> Option<String> {
-    names.iter().find_map(|name| {
-        payload
-            .get(*name)
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-    })
-}
-
-fn number_field(payload: &Value, names: &[&str]) -> Option<u64> {
-    names
-        .iter()
-        .find_map(|name| payload.get(*name).and_then(Value::as_u64))
-}
-
-/// Claude 的 base_url 变量名。
-///
-/// 既用于 settings.json 的 `env` 块 key，也是进程环境变量名 —— 两者同一个名字。
-const CLAUDE_BASE_URL_KEY: &str = "ANTHROPIC_BASE_URL";
-
-/// 读取当前 provider 的 API endpoint。
-///
-/// 取值顺序：**Claude Code 配置文件优先，环境变量兜底**。
-/// - 配置文件：解析 Claude Code 的 settings.json（Codex 的配置是 TOML，格式不同，暂不解析）。
-/// - 环境变量：hook 由 agent 进程派生、继承其环境，能反映该会话实际的启动环境。
-///
-/// 只读 endpoint 类变量，绝不读取 token / api key 类变量。
-/// 按需求不做脱敏：原样上报（含 userinfo / query），仅去掉首尾空白。
-fn provider_base_url(provider: Provider, cwd: Option<&Path>) -> Option<String> {
-    let from_settings = match provider {
-        Provider::Claude => read_settings_base_url(
-            &claude_settings_paths(home_dir().as_deref(), cwd),
-            CLAUDE_BASE_URL_KEY,
-        ),
-        Provider::Codex => None,
-    };
-
-    from_settings
-        .or_else(|| {
-            base_url_env_names(provider)
-                .iter()
-                .find_map(|name| env::var(name).ok())
-        })
-        .and_then(|value| normalize_base_url(&value))
-}
-
-/// 各 provider 对应的 base_url 环境变量名，按优先级排列。
-fn base_url_env_names(provider: Provider) -> &'static [&'static str] {
-    match provider {
-        Provider::Claude => &[CLAUDE_BASE_URL_KEY],
-        Provider::Codex => &["OPENAI_BASE_URL", "OPENAI_API_BASE"],
-    }
-}
-
-/// Claude Code 配置文件路径，按优先级**从低到高**排列（后者覆盖前者）。
-///
-/// 与 Claude Code 自身的优先级一致：用户级 < 项目级 < 项目本地。
-/// home / cwd 缺失时对应路径直接跳过，不报错。
-fn claude_settings_paths(home: Option<&Path>, cwd: Option<&Path>) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if let Some(home) = home {
-        paths.push(home.join(".claude").join("settings.json"));
-    }
-    if let Some(cwd) = cwd {
-        paths.push(cwd.join(".claude").join("settings.json"));
-        paths.push(cwd.join(".claude").join("settings.local.json"));
-    }
-    paths
-}
-
-/// 从 settings JSON 的 `env` 块中读取一个变量。
-///
-/// 只按名字取单个 key —— settings.json 的 env 块通常同时存放 token，
-/// 绝不能整块读取或上报。缺失 / 非字符串 / 空白一律视为未设置。
-fn env_from_settings(settings: &Value, key: &str) -> Option<String> {
-    settings
-        .get("env")?
-        .get(key)?
-        .as_str()
-        .filter(|value| !value.trim().is_empty())
-        .map(ToString::to_string)
-}
-
-/// 依次读取配置文件，后面的文件覆盖前面的（用户级 → 项目级 → 项目本地）。
-///
-/// 文件缺失、JSON 非法、env 块缺失都静默跳过：hook 必须快速返回，
-/// 也不能因为一个损坏的配置文件让整个状态上报失败。
-fn read_settings_base_url(paths: &[PathBuf], key: &str) -> Option<String> {
-    let mut found = None;
-    for path in paths {
-        let Ok(raw) = fs::read_to_string(path) else {
-            continue;
-        };
-        let Ok(settings) = serde_json::from_str::<Value>(&raw) else {
-            continue;
-        };
-        if let Some(value) = env_from_settings(&settings, key) {
-            found = Some(value);
-        }
-    }
-    found
-}
-
-/// 解析用户主目录，用于定位用户级 Claude 配置。
-///
-/// 与 default_status_dir 一样直接读环境变量，不引入 dirs 依赖。
-/// 也对代理解析器复用（定位 `~/.cc-switch`），因此标为 `pub(crate)`。
-pub(crate) fn home_dir() -> Option<PathBuf> {
-    if cfg!(target_os = "windows") {
-        env::var_os("USERPROFILE").map(PathBuf::from).or_else(|| {
-            // 少数环境下只有 HOMEDRIVE + HOMEPATH（如 C: + \Users\me）。
-            let mut combined = env::var_os("HOMEDRIVE")?;
-            combined.push(env::var_os("HOMEPATH")?);
-            Some(PathBuf::from(combined))
-        })
-    } else {
-        env::var_os("HOME").map(PathBuf::from)
-    }
-}
-
-/// base_url 长度上限。
-///
-/// 这不是脱敏，只是防止异常环境变量把超大字符串写进事件文件（事件整体有 64KiB 上限）。
-const MAX_BASE_URL_LEN: usize = 4096;
-
-/// 归一化 base_url：仅去掉首尾空白。
-///
-/// 不剥离 userinfo / query —— 按需求保留原值，便于排查实际使用的 endpoint。
-fn normalize_base_url(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.len() > MAX_BASE_URL_LEN {
-        return None;
-    }
-    Some(trimmed.to_string())
-}
-
-/// 从 hook payload 中提取「用户手输」的提问。
-///
-/// 只认 `UserPromptSubmit`。`UserPromptExpansion` 紧随其后触发、同样携带 `prompt`，
-/// 但那是斜杠命令展开后的模板文本，不是用户输入 —— 放行它会把用户真正的提问覆盖掉。
-/// 其余事件本就不带 `prompt`，返回 None 后由 reducer 继承上一次的值。
-fn user_prompt(event_name: &str, payload: &Value) -> Option<String> {
-    if normalize_event_name(event_name) != "user_prompt_submit" {
-        return None;
-    }
-    string_field(payload, &["prompt", "user_prompt", "prompt_text"])
-        .and_then(|value| normalize_prompt(&value))
-}
-
-/// 路径长度上限，防止异常 payload 把超长字符串写进事件文件。
-const MAX_TRANSCRIPT_PATH_LEN: usize = 4096;
-
-/// 提取该会话 transcript 的路径，供 monitor 增量统计 token。
-///
-/// 这里**只透传路径**，不读文件：hook 每次事件启动一次、必须快速返回，
-/// 而 transcript 会增长到 MB 级，解析必须放在常驻的 monitor 线程里做。
-fn transcript_path(payload: &Value) -> Option<String> {
-    string_field(payload, &["transcript_path", "transcriptPath"])
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && value.len() <= MAX_TRANSCRIPT_PATH_LEN)
-}
-
-/// 提取子代理事件的来源标识。主线程事件不带此字段，返回 None。
-///
-/// ⚠️ 子代理事件与主会话共用同一个 `session_id`（实测确认），只有本字段能把两者分开。
-/// reducer 靠它把子代理事件限制为「只刷存活时间、不驱灯色」，否则主线程 Waiting
-/// 会被仍在后台跑的子代理顶回 Running（灯一直绿）。
-///
-/// 只透传标识，不做任何语义解释。
-fn agent_id(payload: &Value) -> Option<String> {
-    string_field(payload, &["agent_id", "agentId"])
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && value.len() <= MAX_AGENT_ID_LEN)
-}
-
-/// 子代理标识的长度上限：只防异常 payload 撑大事件文件，不做语义校验。
-const MAX_AGENT_ID_LEN: usize = 256;
-
-/// 提问内容长度上限（字符数）。
-///
-/// 仅防止超大 prompt 撑爆事件文件（事件整体有 64KiB 上限），超出部分截断并加省略号。
-const MAX_PROMPT_CHARS: usize = 4000;
-
-/// 编译期由 `build.rs` 从仓库根 `.env` 注入的排除标签列表（逗号分隔）。
-///
-/// hook 是独立短命进程、cwd 为被监测 agent 的项目目录，运行时读不到 UFO 仓库的 `.env`，
-/// 因此列表在构建期注入；改 `.env` 需重新构建才生效。未注入时为 None。
-const STRIP_TAGS_FROM_ENV: Option<&str> = option_env!("UFO_STRIP_TAGS");
-
-/// `.env` 缺失 / 未配置时的兜底列表，与 `.env` 中的默认值保持一致。
-const DEFAULT_STRIP_TAGS: &str = "ide_opened_file,system-reminder,local-command,bash_input,bash_output,cli-message,command-message,command-name,command-args,allowed-prompts,env,permission_mode";
-
-/// 解析逗号分隔的标签名列表：去空白、丢空项、去掉误写的尖括号。
-///
-/// 用户在 `.env` 里习惯写 `<ide_opened_file>`，因此 `<` / `>` 都当作分隔噪声剥掉，
-/// 只保留标签名本体；大小写原样保留（标签匹配本身大小写敏感）。
-fn parse_tag_names(raw: &str) -> Vec<String> {
-    raw.split(',')
-        .map(|item| item.trim().trim_matches(|c| c == '<' || c == '>').trim())
-        .filter(|item| !item.is_empty())
-        .map(ToString::to_string)
-        .collect()
-}
-
-/// 生效的排除标签列表：`.env`（构建期注入）优先，缺失或为空时回落到内置默认。
-fn tag_names() -> Vec<String> {
-    let from_env = STRIP_TAGS_FROM_ENV.map(parse_tag_names).unwrap_or_default();
-    if !from_env.is_empty() {
-        return from_env;
-    }
-    parse_tag_names(DEFAULT_STRIP_TAGS)
-}
-
-/// 判断 `rest`（以 `<` 开头的字节切片）是否为 `name` 的开始标签。
-///
-/// 命中条件：`<` 之后正好是 `name`，再后面紧跟 `>`、`/`（自闭合）或空白（属性位）。
-/// 这样 `<environment>` 不会被列表里的 `env` 误命中（`env` 后是 `i` 而非边界字符）。
-/// 返回 `name` 之后的字节偏移，未命中返回 None。
-fn matches_open_tag(rest: &str, name: &str) -> Option<usize> {
-    // 用 get 而非切片索引：`<` 后可能是多字节字符，按字节切会落在非字符边界上 panic。
-    let body = rest.get(1..1 + name.len())?;
-    if body != name {
-        return None;
-    }
-    let after_name = rest.get(1 + name.len()..)?;
-    let boundary = after_name.chars().next();
-    if matches!(boundary, Some('>') | Some('/')) || boundary.is_some_and(char::is_whitespace) {
-        Some(1 + name.len())
-    } else {
-        None
-    }
-}
-
-/// 计算从 `<`（`rest` 起点）开始要整段跳过的字节数，使标签及其包裹内容一并移除。
-///
-/// `after_open` 为 `<name` 之后的字节偏移（见 `matches_open_tag`）。
-/// - 优先找显式闭合 `</name>`，连同其 `>` 一起跳过 → 标签 + 内容全删。
-/// - 找不到闭合时退化为「只跳过 `<name...>` 这个起始标记」：
-///   覆盖自闭合 `<tag/>`，也避免把后面无法确认归属的正文吞掉。
-fn tag_skip_len(rest: &str, name: &str, after_open: usize) -> usize {
-    // ASCII 模式在 UTF-8 里做字节搜索是安全的：续字节恒 >= 0x80，不会误配。
-    let from = &rest[after_open..];
-    if let Some(rel) = from.find(&format!("</{name}")) {
-        let close_start = after_open + rel;
-        // 跳过 </name ...> —— 找到闭合标记后的第一个 `>`。
-        if let Some(gt) = rest[close_start..].find('>') {
-            return close_start + gt + 1;
-        }
-        return close_start;
-    }
-    // 无显式闭合：吃掉起始标记到第一个 `>`（含自闭合的 `/>`）。
-    match rest[after_open..].find('>') {
-        Some(gt) => after_open + gt + 1,
-        None => rest.len(),
-    }
-}
-
-/// 剔除 prompt 中所有「排除标签」及其包裹的整段内容（含标签内文字）。
-///
-/// 这些标签是 Claude Code 自己注入的元信息（IDE 打开的文件、系统提醒、环境说明等），
-/// 不是用户输入，会淹没真正的提问。单趟扫描：命中任一标签名即整段（标签+内容）跳过。
-/// 只处理列表中的名字，其它尖括号内容（代码里的 `<T>`、`<div>` 等）原样保留。
-fn strip_excluded_tags(text: &str, names: &[String]) -> String {
-    if text.is_empty() || names.is_empty() {
-        return text.to_string();
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while !rest.is_empty() {
-        // 找到下一个 `<` 处、且能匹配某个标签名的位置。
-        let found = rest
-            .match_indices('<')
-            .find_map(|(byte, _)| {
-                names
-                    .iter()
-                    .find_map(|name| matches_open_tag(&rest[byte..], name).map(|at| (byte, name.as_str(), at)))
-            });
-        let Some((open_at, name, after_open)) = found else {
-            out.push_str(rest);
-            break;
-        };
-        out.push_str(&rest[..open_at]);
-        let skip = tag_skip_len(&rest[open_at..], name, after_open);
-        rest = &rest[open_at + skip..];
-    }
-    out
-}
-
-/// 归一化提问内容：先剔除排除标签及其内容，再去首尾空白，超长截断。
-///
-/// 注意：提问内容会以明文写入状态目录的 inbox 事件文件（消费后删除）。
-/// 这是「展示当前提问」功能的必要代价，已在文档中标注。
-fn normalize_prompt(raw: &str) -> Option<String> {
-    let stripped = strip_excluded_tags(raw, &tag_names());
-    let trimmed = stripped.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if trimmed.chars().count() <= MAX_PROMPT_CHARS {
-        return Some(trimmed.to_string());
-    }
-    let truncated: String = trimmed.chars().take(MAX_PROMPT_CHARS).collect();
-    Some(format!("{truncated}…"))
-}
-
 fn unique_event_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -482,7 +167,7 @@ pub fn default_status_dir() -> PathBuf {
             .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
     };
 
-    base.unwrap_or_else(|| Path::new(".").to_path_buf())
+    base.unwrap_or_else(|| std::path::Path::new(".").to_path_buf())
         .join(APP_IDENTIFIER)
         .join("status")
 }
@@ -491,6 +176,7 @@ pub fn default_status_dir() -> PathBuf {
 mod tests {
     use super::*;
 
+    use crate::status::model::{AgentEvent, AgentEventKind};
     use crate::status::test_support::TempDir;
 
     fn s(value: &str) -> String {
@@ -522,34 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn string_field_reads_first_matching_name() {
-        let payload: Value = serde_json::json!({"session_id": "abc", "sessionId": "def"});
-        assert_eq!(string_field(&payload, &["session_id"]), Some(s("abc")));
-        assert_eq!(
-            string_field(&payload, &["sessionId", "session_id"]),
-            Some(s("def"))
-        );
-    }
-
-    #[test]
-    fn string_field_returns_none_for_missing() {
-        let payload: Value = serde_json::json!({});
-        assert_eq!(string_field(&payload, &["missing"]), None);
-    }
-
-    #[test]
-    fn number_field_reads_u64_value() {
-        let payload: Value = serde_json::json!({"sequence": 42});
-        assert_eq!(number_field(&payload, &["sequence"]), Some(42));
-    }
-
-    #[test]
-    fn number_field_returns_none_for_missing() {
-        let payload: Value = serde_json::json!({});
-        assert_eq!(number_field(&payload, &["seq"]), None);
-    }
-
-    #[test]
     fn try_run_status_hook_returns_none_without_flag() {
         assert!(try_run_status_hook(&[s("ufo")]).is_none());
     }
@@ -569,390 +227,30 @@ mod tests {
         assert_ne!(id1, id2);
     }
 
+    /// hook 边缘链路：一份 Claude payload 落盘后，inbox 里的规范事件带正确的 kind。
+    ///
+    /// 这是「平台 payload → 兼容层 → 内核事件」整条缝的端到端验证（不含 stdin/args，
+    /// 那两处由 `argument_value_*` 与 `try_run_status_hook_returns_none_without_flag` 覆盖）。
     #[test]
-    fn base_url_env_names_are_provider_specific() {
-        assert_eq!(base_url_env_names(Provider::Claude), &[CLAUDE_BASE_URL_KEY]);
-        // Codex 先试 OPENAI_BASE_URL，再退 OPENAI_API_BASE。
-        assert_eq!(
-            base_url_env_names(Provider::Codex),
-            &["OPENAI_BASE_URL", "OPENAI_API_BASE"]
-        );
-    }
+    fn process_payload_writes_canonical_event_with_kind() {
+        let temp = TempDir::new("hook-shell");
+        let payload = serde_json::json!({"session_id": "s1", "hook_event_name": "Stop"});
+        process_payload(Provider::Claude, temp.path(), &payload).expect("hook writes event");
 
-    #[test]
-    fn claude_settings_paths_orders_user_then_project_then_local() {
-        let home = Path::new("/home/u");
-        let project = Path::new("/proj");
-        // 顺序即优先级：后面的文件覆盖前面的。
-        assert_eq!(
-            claude_settings_paths(Some(home), Some(project)),
-            vec![
-                home.join(".claude").join("settings.json"),
-                project.join(".claude").join("settings.json"),
-                project.join(".claude").join("settings.local.json"),
-            ]
-        );
-    }
+        let inbox = temp.path().join("inbox");
+        let mut entries: Vec<_> = fs::read_dir(&inbox)
+            .expect("inbox exists")
+            .map(|entry| entry.expect("readable").path())
+            .collect();
+        assert_eq!(entries.len(), 1, "一次 hook 恰好落一个事件文件");
+        let event: AgentEvent =
+            serde_json::from_slice(&fs::read(&entries.pop().unwrap()).unwrap()).unwrap();
 
-    #[test]
-    fn claude_settings_paths_skips_missing_base_dirs() {
-        // 没有 home / cwd 时不应报错，只是少读几个文件。
-        assert!(claude_settings_paths(None, None).is_empty());
-        assert_eq!(
-            claude_settings_paths(None, Some(Path::new("/proj"))).len(),
-            2
-        );
-    }
-
-    #[test]
-    fn env_from_settings_reads_env_block() {
-        let settings: Value =
-            serde_json::json!({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"}});
-        assert_eq!(
-            env_from_settings(&settings, CLAUDE_BASE_URL_KEY).as_deref(),
-            Some("http://127.0.0.1:15721")
-        );
-    }
-
-    #[test]
-    fn env_from_settings_rejects_missing_non_string_and_blank() {
-        let settings: Value = serde_json::json!({
-            "env": {"NUM": 1, "BLANK": "   ", "NULL": null}
-        });
-        assert_eq!(env_from_settings(&settings, "NUM"), None);
-        assert_eq!(env_from_settings(&settings, "BLANK"), None);
-        assert_eq!(env_from_settings(&settings, "NULL"), None);
-        assert_eq!(env_from_settings(&settings, "MISSING"), None);
-        // 完全没有 env 块
-        assert_eq!(
-            env_from_settings(&serde_json::json!({}), CLAUDE_BASE_URL_KEY),
-            None
-        );
-    }
-
-    #[test]
-    fn env_from_settings_only_reads_the_named_key() {
-        // settings.json 的 env 块常同时存放 token，只能按名字取 endpoint。
-        let settings: Value = serde_json::json!({
-            "env": {
-                "ANTHROPIC_AUTH_TOKEN": "secret",
-                "ANTHROPIC_BASE_URL": "http://only-this",
-            }
-        });
-        assert_eq!(
-            env_from_settings(&settings, CLAUDE_BASE_URL_KEY).as_deref(),
-            Some("http://only-this")
-        );
-        assert_eq!(env_from_settings(&settings, "ANTHROPIC_API_KEY"), None);
-    }
-
-    #[test]
-    fn read_settings_base_url_later_file_overrides_earlier() {
-        let temp = TempDir::new("override");
-        let user = temp.write(
-            ".claude/settings.json",
-            r#"{"env":{"ANTHROPIC_BASE_URL":"http://user"}}"#,
-        );
-        let project = temp.write(
-            "proj/.claude/settings.json",
-            r#"{"env":{"ANTHROPIC_BASE_URL":"http://project"}}"#,
-        );
-        let local = temp.write(
-            "proj/.claude/settings.local.json",
-            r#"{"env":{"ANTHROPIC_BASE_URL":"http://local"}}"#,
-        );
-
-        assert_eq!(
-            read_settings_base_url(&[user.clone()], CLAUDE_BASE_URL_KEY).as_deref(),
-            Some("http://user")
-        );
-        // 项目级覆盖用户级
-        assert_eq!(
-            read_settings_base_url(&[user.clone(), project.clone()], CLAUDE_BASE_URL_KEY).as_deref(),
-            Some("http://project")
-        );
-        // 项目本地覆盖项目级
-        assert_eq!(
-            read_settings_base_url(&[user, project, local], CLAUDE_BASE_URL_KEY).as_deref(),
-            Some("http://local")
-        );
-    }
-
-    #[test]
-    fn read_settings_base_url_skips_missing_and_invalid_files() {
-        let temp = TempDir::new("invalid");
-        let missing = temp.path().join("nope").join("settings.json");
-        let invalid = temp.write("bad/.claude/settings.json", "{ this is not json");
-        let valid = temp.write(
-            "ok/.claude/settings.json",
-            r#"{"env":{"ANTHROPIC_BASE_URL":"http://ok"}}"#,
-        );
-
-        // 缺失与损坏的文件静默跳过，不影响后续文件生效。
-        assert_eq!(
-            read_settings_base_url(&[missing, invalid, valid], CLAUDE_BASE_URL_KEY).as_deref(),
-            Some("http://ok")
-        );
-    }
-
-    #[test]
-    fn provider_base_url_prefers_settings_over_env() {
-        let temp = TempDir::new("prefer");
-        let project = temp.path().join("proj");
-        temp.write(
-            "proj/.claude/settings.json",
-            r#"{"env":{"ANTHROPIC_BASE_URL":"http://from-settings"}}"#,
-        );
-
-        // 配置表命中时不再看环境变量，因此结果与测试进程的环境无关。
-        assert_eq!(
-            provider_base_url(Provider::Claude, Some(&project)).as_deref(),
-            Some("http://from-settings")
-        );
-    }
-
-    #[test]
-    fn provider_base_url_ignores_claude_settings_for_codex() {
-        let temp = TempDir::new("codex");
-        let project = temp.path().join("proj");
-        temp.write(
-            "proj/.claude/settings.json",
-            r#"{"env":{"ANTHROPIC_BASE_URL":"http://from-settings"}}"#,
-        );
-
-        // Codex 的配置是 TOML，不走 Claude 的 settings.json；
-        // 结果只取决于环境变量，因此这里只断言不会误取 Claude 的值。
-        assert_ne!(
-            provider_base_url(Provider::Codex, Some(&project)).as_deref(),
-            Some("http://from-settings")
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_keeps_value_verbatim() {
-        // 按需求不做脱敏：userinfo / query / fragment 原样保留。
-        assert_eq!(
-            normalize_base_url("http://127.0.0.1:15721").as_deref(),
-            Some("http://127.0.0.1:15721")
-        );
-        assert_eq!(
-            normalize_base_url("https://user:pass@api.example.com/v1?token=abc").as_deref(),
-            Some("https://user:pass@api.example.com/v1?token=abc")
-        );
-        assert_eq!(
-            normalize_base_url("https://api.example.com/").as_deref(),
-            Some("https://api.example.com/")
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_trims_whitespace() {
-        assert_eq!(
-            normalize_base_url("  http://127.0.0.1:15721  ").as_deref(),
-            Some("http://127.0.0.1:15721")
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_rejects_empty_and_oversized() {
-        assert_eq!(normalize_base_url(""), None);
-        assert_eq!(normalize_base_url("   "), None);
-        // 超长仍然丢弃：事件整体有 64KiB 上限，避免异常环境变量撑爆事件文件。
-        let long = format!("http://example.com/{}", "a".repeat(MAX_BASE_URL_LEN));
-        assert_eq!(normalize_base_url(&long), None);
-    }
-
-    #[test]
-    fn normalize_prompt_trims_and_keeps_content() {
-        assert_eq!(normalize_prompt("  帮我看看这个 bug  ").as_deref(), Some("帮我看看这个 bug"));
-        assert_eq!(normalize_prompt("hello").as_deref(), Some("hello"));
-    }
-
-    #[test]
-    fn normalize_prompt_rejects_empty() {
-        assert_eq!(normalize_prompt(""), None);
-        assert_eq!(normalize_prompt("   \n\t "), None);
-    }
-
-    #[test]
-    fn normalize_prompt_truncates_oversized_input() {
-        let long = "字".repeat(MAX_PROMPT_CHARS + 500);
-        let result = normalize_prompt(&long).expect("prompt kept");
-        // 截断到上限并追加省略号。
-        assert_eq!(result.chars().count(), MAX_PROMPT_CHARS + 1);
-        assert!(result.ends_with('…'));
-    }
-
-    #[test]
-    fn normalize_prompt_counts_characters_not_bytes() {
-        // 多字节字符按「字符」计数，避免把 UTF-8 序列从中间截断。
-        let long = "汉".repeat(MAX_PROMPT_CHARS);
-        let result = normalize_prompt(&long).expect("prompt kept");
-        assert_eq!(result.chars().count(), MAX_PROMPT_CHARS);
-        assert!(!result.ends_with('…'));
-    }
-
-    #[test]
-    fn parse_tag_names_strips_brackets_and_whitespace() {
-        // .env 里通常写 <name>，尖括号与空白都要被剥掉，只留标签名。
-        let names = parse_tag_names(" <ide_opened_file> , system-reminder ,, <env> ");
-        assert_eq!(names, vec![s("ide_opened_file"), s("system-reminder"), s("env")]);
-    }
-
-    #[test]
-    fn parse_tag_names_empty_yields_nothing() {
-        assert!(parse_tag_names("").is_empty());
-        assert!(parse_tag_names("  ,,  ").is_empty());
-    }
-
-    #[test]
-    fn strip_removes_tag_and_its_wrapped_content() {
-        let names = vec![s("ide_opened_file"), s("system-reminder")];
-        let raw = "<ide_opened_file>The user opened the file hook.rs</ide_opened_file>\n请帮我排序";
-        assert_eq!(strip_excluded_tags(raw, &names), "\n请帮我排序");
-    }
-
-    #[test]
-    fn strip_handles_multiple_and_interleaved_tags() {
-        let names = vec![s("ide_opened_file"), s("system-reminder"), s("env")];
-        let raw = "A<system-reminder>x</system-reminder>B<env>y</env>C<ide_opened_file>z</ide_opened_file>D";
-        assert_eq!(strip_excluded_tags(raw, &names), "ABCD");
-    }
-
-    #[test]
-    fn strip_leaves_unlisted_tags_intact() {
-        // 代码里常见的 <T>、<div> 不在列表中，绝不能被吞掉。
-        let names = vec![s("env")];
-        let raw = "泛型 <T> 和 <div class=\"x\"> 原样保留";
-        assert_eq!(strip_excluded_tags(raw, &names), raw);
-    }
-
-    #[test]
-    fn strip_requires_boundary_so_prefix_does_not_over_match() {
-        // 列表里有 env，但 <environment> 不是 env 标签：前缀不能误命中。
-        let names = vec![s("env")];
-        let raw = "看 <environment> 这段";
-        assert_eq!(strip_excluded_tags(raw, &names), raw);
-    }
-
-    #[test]
-    fn strip_handles_self_closing_and_unclosed_open_tag() {
-        let names = vec![s("tag")];
-        // 自闭合：整段标记吃掉，其后的文字保留。
-        assert_eq!(strip_excluded_tags("<tag/>keep", &names), "keep");
-        // 带属性的起始标记。
-        assert_eq!(strip_excluded_tags("<tag a=1>keep", &names), "keep");
-        // 未闭合（prompt 被截断）：只吃起始标记，不吞正文。
-        assert_eq!(strip_excluded_tags("<tag>keep me", &names), "keep me");
-    }
-
-    #[test]
-    fn strip_is_safe_on_multibyte_content() {
-        // `<` 后紧跟多字节字符时不能 panic（按字节切片需落在字符边界）。
-        let names = vec![s("env")];
-        let raw = "中文 <漢> 更多 <env>drop</env> tail";
-        assert_eq!(strip_excluded_tags(raw, &names), "中文 <漢> 更多  tail");
-    }
-
-    #[test]
-    fn normalize_prompt_drops_meta_tags() {
-        // 端到端：混进 prompt 的元标签连同内容一起被剔除，只剩用户真正输入。
-        let raw = "<ide_opened_file>file.rs</ide_opened_file> 按时间排序 agent";
-        let result = normalize_prompt(raw).expect("prompt kept");
-        assert_eq!(result, "按时间排序 agent");
-    }
-
-    #[test]
-    fn normalize_prompt_returns_none_when_only_tags_remain() {
-        // 整段都是被剔除的内容时视为「无有效提问」，交给 reducer 继承上一次的值。
-        let raw = "<system-reminder>nothing here</system-reminder>";
-        assert_eq!(normalize_prompt(raw), None);
-    }
-
-    #[test]
-    fn user_prompt_accepts_only_user_prompt_submit() {
-        let payload: Value = serde_json::json!({"prompt": "帮我看看这个 bug"});
-        // 用户手输：认
-        assert_eq!(
-            user_prompt("UserPromptSubmit", &payload).as_deref(),
-            Some("帮我看看这个 bug")
-        );
-        // 下划线写法同样认
-        assert_eq!(
-            user_prompt("user_prompt_submit", &payload).as_deref(),
-            Some("帮我看看这个 bug")
-        );
-        // 展开后的模板文本：不认，否则会覆盖用户真正的提问
-        assert_eq!(user_prompt("UserPromptExpansion", &payload), None);
-        // 其它事件即使带 prompt 也不认
-        assert_eq!(user_prompt("PreToolUse", &payload), None);
-        assert_eq!(user_prompt("Stop", &payload), None);
-    }
-
-    #[test]
-    fn user_prompt_returns_none_without_a_usable_prompt() {
-        let missing: Value = serde_json::json!({"session_id": "s1"});
-        assert_eq!(user_prompt("UserPromptSubmit", &missing), None);
-        // 空 / 空白同样视为未提供，交给 reducer 继承上一次的值
-        let blank: Value = serde_json::json!({"prompt": "   "});
-        assert_eq!(user_prompt("UserPromptSubmit", &blank), None);
-    }
-
-    #[test]
-    fn user_prompt_accepts_alternate_field_names() {
-        let payload: Value = serde_json::json!({"user_prompt": "换个字段名"});
-        assert_eq!(
-            user_prompt("UserPromptSubmit", &payload).as_deref(),
-            Some("换个字段名")
-        );
-    }
-
-    #[test]
-    fn transcript_path_reads_and_trims() {
-        let payload: Value = serde_json::json!({"transcript_path": "  C:\\x\\sess.jsonl  "});
-        assert_eq!(
-            transcript_path(&payload).as_deref(),
-            Some("C:\\x\\sess.jsonl")
-        );
-        // 驼峰别名同样认
-        let camel: Value = serde_json::json!({"transcriptPath": "/tmp/sess.jsonl"});
-        assert_eq!(transcript_path(&camel).as_deref(), Some("/tmp/sess.jsonl"));
-    }
-
-    #[test]
-    fn agent_id_reads_and_trims() {
-        let payload: Value = serde_json::json!({"agent_id": "  ac8ff3b71756050d1  "});
-        assert_eq!(agent_id(&payload).as_deref(), Some("ac8ff3b71756050d1"));
-        // 驼峰别名同样认
-        let camel: Value = serde_json::json!({"agentId": "agent-abc"});
-        assert_eq!(agent_id(&camel).as_deref(), Some("agent-abc"));
-    }
-
-    #[test]
-    fn agent_id_is_none_for_main_thread_events() {
-        // 主线程事件不带 agent_id（实测为字段缺省，不是空串）。
-        assert_eq!(agent_id(&serde_json::json!({})), None);
-        assert_eq!(agent_id(&serde_json::json!({"agent_id": null})), None);
-        assert_eq!(agent_id(&serde_json::json!({"agent_id": ""})), None);
-        assert_eq!(agent_id(&serde_json::json!({"agent_id": "   "})), None);
-    }
-
-    #[test]
-    fn agent_id_rejects_oversized_value() {
-        // 超长标识丢弃 → 视为主线程事件（map 失效也是唯一可能的语义）。
-        let huge = "a".repeat(MAX_AGENT_ID_LEN + 1);
-        assert_eq!(agent_id(&serde_json::json!({ "agent_id": huge })), None);
-    }
-
-    #[test]
-    fn transcript_path_rejects_missing_blank_and_oversized() {        assert_eq!(transcript_path(&serde_json::json!({})), None);
-        assert_eq!(transcript_path(&serde_json::json!({"transcript_path": "   "})), None);
-        assert_eq!(transcript_path(&serde_json::json!({"transcript_path": ""})), None);
-        // 超长路径丢弃，避免撑大事件文件
-        let huge = "a".repeat(MAX_TRANSCRIPT_PATH_LEN + 1);
-        assert_eq!(
-            transcript_path(&serde_json::json!({ "transcript_path": huge })),
-            None
-        );
+        assert_eq!(event.provider, Provider::Claude);
+        assert_eq!(event.session_id, "s1");
+        // 兼容层把 Claude 的 Stop 归一成 TurnFinished；内核据此绿闪落黄。
+        assert_eq!(event.kind, AgentEventKind::TurnFinished);
+        // 原始事件名作为诊断字段原样保留。
+        assert_eq!(event.event, "Stop");
     }
 }
