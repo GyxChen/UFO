@@ -1,56 +1,62 @@
 //! 会话 token 消耗统计。
 //!
-//! 数据来自 Claude Code 的 transcript（JSONL）：每条 assistant 记录的
-//! `message.usage` 就是该次请求的 token 明细。
+//! 数据来自两个平台的 transcript（都是 JSONL），解析方式按 provider 分流：
 //!
-//! 两个关键约束：
-//! 1. **必须按 `message.id` 去重** —— 同一条 API 响应会在 transcript 里写成多条
-//!    assistant 记录，每条都带同一份 usage，不去重总量会翻 2–3 倍（实测确认）。
-//! 2. **增量读取** —— transcript 会增长到 MB 级，每次只读上次之后的追加字节。
+//! - **Claude**：每条 assistant 记录的 `message.usage` 是该次请求的明细。
+//!   **必须按 `message.id` 去重** —— 同一条 API 响应会写成多条 assistant 记录、
+//!   每条带同一份 usage，不去重总量会翻 2–3 倍（实测确认）。因此是「按请求累加」。
+//! - **Codex**：rollout JSONL 里的 `event_msg`/`token_count` 事件带
+//!   `info.total_token_usage`，那是**会话级累计值**（不是增量），所以只能取最新/最大，
+//!   不能相加；一个文件对应一个累计值。
+//!
+//! 共同约束：**增量读取** —— transcript 会增长到 MB 级，每次只读上次之后的追加字节。
 //!
 //! 本模块由常驻的 monitor 线程独占持有，因此内部不加锁。
 
 use std::{
     collections::{HashMap, HashSet},
-    fs::File,
-    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
 use serde_json::Value;
 
-use super::model::TokenTotals;
+use super::lines::LineCursor;
+use super::model::{Provider, TokenTotals};
 
-/// transcript 里我们只关心 assistant 记录。
+/// Claude transcript 里我们只关心 assistant 记录。
 const ASSISTANT_RECORD: &str = "assistant";
+/// Codex rollout 里承载 token 的事件记录类型（外层 `type`）。
+const CODEX_EVENT_MSG: &str = "event_msg";
+/// Codex token 事件的内层 `payload.type`。
+const CODEX_TOKEN_COUNT: &str = "token_count";
 
-/// 单个文件的读取游标。
+/// 单个文件的读取状态。
 struct FileCursor {
-    /// 已消费到的字节偏移。
-    offset: u64,
-    /// 上次读取剩下的半行（未以换行结尾），留待下次拼接。
-    ///
-    /// 按字节保存而非 String：文件正在被追加，末尾可能停在 UTF-8 序列中间，
-    /// 提前转成字符串会破坏字符。
-    pending: Vec<u8>,
+    /// 增量行读取（`lines.rs`，与 Codex 补漏共用同一套游标语义）。
+    lines: LineCursor,
+    /// **仅 Codex 用**：本文件里见过的最大累计值（`total_token_usage` 是累计的，
+    /// 不能相加，只能取最新/最大）。会话总量由各文件的这一列求和得出。
+    codex_total: Option<TokenTotals>,
 }
 
 impl FileCursor {
     fn new() -> Self {
         Self {
-            offset: 0,
-            pending: Vec::new(),
+            lines: LineCursor::new(),
+            codex_total: None,
         }
     }
 }
 
 /// 一个会话的 token 统计状态。
 struct SessionTokens {
+    /// 该会话的 provider —— 决定 transcript 用哪套解析器。
+    provider: Provider,
     /// 主 transcript 路径，用于推导子代理目录。
     main_path: Option<PathBuf>,
     /// 已登记要增量读取的文件（主 transcript + 各子代理 transcript）。
     files: HashMap<PathBuf, FileCursor>,
-    /// 已计入的 `message.id` —— 去重的关键。
+    /// 已计入的 `message.id` —— Claude 去重的关键（Codex 不走这里）。
     seen_messages: HashSet<String>,
     /// 累计值。
     totals: TokenTotals,
@@ -61,8 +67,9 @@ struct SessionTokens {
 }
 
 impl SessionTokens {
-    fn new() -> Self {
+    fn new(provider: Provider) -> Self {
         Self {
+            provider,
             main_path: None,
             files: HashMap::new(),
             seen_messages: HashSet::new(),
@@ -86,11 +93,12 @@ impl TokenTracker {
     /// 登记一个会话的 transcript 路径。
     ///
     /// 由 monitor 在消费 hook 事件时调用；重复登记同一路径是幂等的。
-    pub fn observe(&mut self, session_key: &str, transcript_path: &Path) {
+    /// `provider` 只在首次登记时决定解析方式（同一 key 不可能换 provider）。
+    pub fn observe(&mut self, session_key: &str, provider: Provider, transcript_path: &Path) {
         let session = self
             .sessions
             .entry(session_key.to_string())
-            .or_insert_with(SessionTokens::new);
+            .or_insert_with(|| SessionTokens::new(provider));
         if session.main_path.is_none() {
             session.main_path = Some(transcript_path.to_path_buf());
         }
@@ -134,16 +142,48 @@ impl TokenTracker {
 
         // 先收集路径，避免同时可变借用 files 与其它字段。
         let paths: Vec<PathBuf> = session.files.keys().cloned().collect();
-        for path in &paths {
-            let Some(cursor) = session.files.get_mut(path) else {
-                continue;
-            };
-            read_appended(
-                path,
-                cursor,
-                &mut session.seen_messages,
-                &mut session.totals,
-            );
+        match session.provider {
+            Provider::Claude => {
+                for path in &paths {
+                    let Some(cursor) = session.files.get_mut(path) else {
+                        continue;
+                    };
+                    let (seen, totals) = (&mut session.seen_messages, &mut session.totals);
+                    cursor
+                        .lines
+                        .read_appended(path, |line| consume_line(line, seen, totals));
+                }
+            }
+            Provider::Codex => {
+                for path in &paths {
+                    let Some(cursor) = session.files.get_mut(path) else {
+                        continue;
+                    };
+                    // 先收进局部变量再回写：闭包只捕获局部，避免与 cursor 抢可变借用。
+                    let mut latest: Option<TokenTotals> = None;
+                    cursor.lines.read_appended(path, |line| {
+                        if let Some(total) = codex_total_of_line(line) {
+                            latest = Some(match latest {
+                                Some(previous) => max_totals(previous, total),
+                                None => total,
+                            });
+                        }
+                    });
+                    if let Some(total) = latest {
+                        cursor.codex_total = Some(match cursor.codex_total {
+                            Some(previous) => max_totals(previous, total),
+                            None => total,
+                        });
+                    }
+                }
+                // Codex 的总量 = 各文件（同一会话可能有多个 rollout，如子代理线程各自的
+                // 那份）**各自的累计值之和**。同一文件内取最大，保证重扫/回退时不缩水。
+                session.totals = session
+                    .files
+                    .values()
+                    .filter_map(|cursor| cursor.codex_total)
+                    .fold(TokenTotals::default(), add_totals);
+            }
         }
 
         session.totals != before
@@ -173,53 +213,65 @@ fn subagent_transcripts(main: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 从上次的偏移读到底，把新增的完整行交给 `consume_line`。
-fn read_appended(
-    path: &Path,
-    cursor: &mut FileCursor,
-    seen: &mut HashSet<String>,
-    totals: &mut TokenTotals,
-) {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return;
-    };
-    let length = metadata.len();
+/// 解析一行 Codex rollout：只认 `event_msg` / `token_count`，取出会话级累计用量。
+///
+/// 任何解析失败都静默跳过 —— rollout 的格式不是稳定 API，格式变了最多是统计不到，
+/// 绝不能让 monitor 线程出错。
+fn codex_total_of_line(line: &[u8]) -> Option<TokenTotals> {
+    if line.is_empty() {
+        return None;
+    }
+    let record: Value = serde_json::from_slice(line).ok()?;
+    if record.get("type").and_then(Value::as_str) != Some(CODEX_EVENT_MSG) {
+        return None;
+    }
+    let payload = record.get("payload")?;
+    if payload.get("type").and_then(Value::as_str) != Some(CODEX_TOKEN_COUNT) {
+        return None;
+    }
+    let usage = payload.get("info")?.get("total_token_usage")?;
+    let cached = u64_field(usage, "cached_input_tokens");
+    let cache_write = u64_field(usage, "cache_write_input_tokens");
+    Some(TokenTotals {
+        // ⚠️ 两个平台的口径**相反**，必须换算，否则前端 `tokenTotal()` 会把缓存算两遍：
+        // - OpenAI（Codex）：`input_tokens` 是 prompt **总量**，已含 cached / cache_write
+        //   两部分（实测 total_tokens == input + output，如 23729 + 6864 = 30593）。
+        // - Anthropic（Claude）：`input_tokens` **不含**缓存，两者并列相加。
+        // 本结构沿用 Anthropic 口径，因此这里把缓存从 input 里减掉（saturating：异常数据不减成负数）。
+        input_tokens: u64_field(usage, "input_tokens").saturating_sub(cached + cache_write),
+        // Codex 的 cache_write_input_tokens ≈ Claude 的 cache_creation_input_tokens
+        cache_creation_input_tokens: cache_write,
+        // Codex 的 cached_input_tokens ≈ Claude 的 cache_read_input_tokens
+        cache_read_input_tokens: cached,
+        // output_tokens 已包含 reasoning_output_tokens（实测 6766 含 4864），
+        // 不能重复相加 —— 与 Claude 侧「output 已含 thinking」同一取舍。
+        output_tokens: u64_field(usage, "output_tokens"),
+    })
+}
 
-    // 文件被截断或整体替换（长度回退）：从头重读。
-    // 已累计的值保留 —— 宁可少算也不要把用户已经看到的数字抹掉。
-    if length < cursor.offset {
-        cursor.offset = 0;
-        cursor.pending.clear();
+/// 逐字段相加（用于把同一会话多个 rollout 的累计值合并）。
+fn add_totals(left: TokenTotals, right: TokenTotals) -> TokenTotals {
+    TokenTotals {
+        input_tokens: left.input_tokens + right.input_tokens,
+        cache_creation_input_tokens: left.cache_creation_input_tokens
+            + right.cache_creation_input_tokens,
+        cache_read_input_tokens: left.cache_read_input_tokens + right.cache_read_input_tokens,
+        output_tokens: left.output_tokens + right.output_tokens,
     }
-    if length == cursor.offset {
-        return;
-    }
+}
 
-    let Ok(mut file) = File::open(path) else {
-        return;
-    };
-    if file.seek(SeekFrom::Start(cursor.offset)).is_err() {
-        return;
+/// 逐字段取最大（累计值只增不减）。
+fn max_totals(left: TokenTotals, right: TokenTotals) -> TokenTotals {
+    TokenTotals {
+        input_tokens: left.input_tokens.max(right.input_tokens),
+        cache_creation_input_tokens: left
+            .cache_creation_input_tokens
+            .max(right.cache_creation_input_tokens),
+        cache_read_input_tokens: left
+            .cache_read_input_tokens
+            .max(right.cache_read_input_tokens),
+        output_tokens: left.output_tokens.max(right.output_tokens),
     }
-    let mut appended = Vec::new();
-    if file.read_to_end(&mut appended).is_err() {
-        return;
-    }
-    cursor.offset += appended.len() as u64;
-
-    // 与上次残留的半行拼接后再切分。
-    let mut data = std::mem::take(&mut cursor.pending);
-    data.extend_from_slice(&appended);
-
-    let mut start = 0usize;
-    for index in 0..data.len() {
-        if data[index] == b'\n' {
-            consume_line(&data[start..index], seen, totals);
-            start = index + 1;
-        }
-    }
-    // 末尾没有换行的部分可能是一行写到一半，留到下次。
-    cursor.pending = data[start..].to_vec();
 }
 
 /// 解析一行 transcript 记录：只认 assistant 记录的 `message.usage`，按 id 去重。
@@ -295,7 +347,7 @@ mod tests {
         let temp = TempDir::new("tokens");
         let path = temp.write("session.jsonl", contents);
         let mut tracker = TokenTracker::new();
-        tracker.observe("claude:s1", &path);
+        tracker.observe("claude:s1", Provider::Claude, &path);
         (tracker, path, temp)
     }
 
@@ -391,7 +443,7 @@ mod tests {
         let temp = TempDir::new("tokens-incremental");
         let path = temp.write("session.jsonl", "");
         let mut tracker = TokenTracker::new();
-        tracker.observe("claude:s1", &path);
+        tracker.observe("claude:s1", Provider::Claude, &path);
 
         append(&path, &format!("{}\n", assistant_record("msg_1", 10, 0, 0)));
         assert_eq!(totals_of(&mut tracker).total(), 10);
@@ -409,7 +461,7 @@ mod tests {
         let temp = TempDir::new("tokens-partial");
         let path = temp.write("session.jsonl", "");
         let mut tracker = TokenTracker::new();
-        tracker.observe("claude:s1", &path);
+        tracker.observe("claude:s1", Provider::Claude, &path);
 
         // 写到一半（没有换行）：还不能计入。
         let record = assistant_record("msg_1", 10, 0, 0);
@@ -427,7 +479,7 @@ mod tests {
         let temp = TempDir::new("tokens-truncated");
         let path = temp.write("session.jsonl", "");
         let mut tracker = TokenTracker::new();
-        tracker.observe("claude:s1", &path);
+        tracker.observe("claude:s1", Provider::Claude, &path);
 
         append(&path, &format!("{}\n", assistant_record("msg_1", 10, 0, 0)));
         assert_eq!(totals_of(&mut tracker).total(), 10);
@@ -450,7 +502,7 @@ mod tests {
         let sub = temp.write("proj/sess-1/subagents/agent-abc.jsonl", "");
 
         let mut tracker = TokenTracker::new();
-        tracker.observe("claude:sess-1", &main);
+        tracker.observe("claude:sess-1", Provider::Claude, &main);
         append(
             &main,
             &format!("{}\n", assistant_record("msg_main", 10, 0, 0)),
@@ -472,7 +524,7 @@ mod tests {
     fn missing_transcript_is_not_an_error() {
         let temp = TempDir::new("tokens-missing");
         let mut tracker = TokenTracker::new();
-        tracker.observe("claude:s1", &temp.path().join("nope.jsonl"));
+        tracker.observe("claude:s1", Provider::Claude, &temp.path().join("nope.jsonl"));
         // 文件还不存在：不 panic，也不产生统计。
         assert!(tracker.refresh_all().is_empty());
     }
@@ -482,12 +534,147 @@ mod tests {
         let temp = TempDir::new("tokens-retain");
         let path = temp.write("session.jsonl", "");
         let mut tracker = TokenTracker::new();
-        tracker.observe("claude:s1", &path);
-        tracker.observe("claude:s2", &temp.write("other.jsonl", ""));
+        tracker.observe("claude:s1", Provider::Claude, &path);
+        tracker.observe("claude:s2", Provider::Claude, &temp.write("other.jsonl", ""));
 
         tracker.retain(|key| key == "claude:s1");
         assert_eq!(tracker.sessions.len(), 1);
         assert!(tracker.sessions.contains_key("claude:s1"));
+    }
+
+    // ── Codex：按 rollout 的累计值统计 ──
+
+    /// 构造一条 Codex 的 token_count 事件（累计值）。
+    ///
+    /// 字段口径照抄真实 rollout：`input_tokens` 是 prompt 总量、**已含** cached 与
+    /// cache_write，`total_tokens` 就是 `input + output`（实测 23729 + 6864 = 30593）。
+    fn codex_token_count(input: u64, cached: u64, cache_write: u64, output: u64) -> String {
+        serde_json::json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": cached,
+                        "cache_write_input_tokens": cache_write,
+                        "output_tokens": output,
+                        // 是 output_tokens 的细分，不应被重复相加。
+                        "reasoning_output_tokens": 999,
+                        "total_tokens": input + output,
+                    }
+                }
+            }
+        })
+        .to_string()
+    }
+
+    /// 建一个 Codex 会话并返回 (tracker, rollout 路径, 临时目录)。
+    fn tracked_codex(contents: &str) -> (TokenTracker, PathBuf, TempDir) {
+        let temp = TempDir::new("tokens-codex");
+        let path = temp.write("rollout.jsonl", contents);
+        let mut tracker = TokenTracker::new();
+        tracker.observe("codex:thr-1", Provider::Codex, &path);
+        (tracker, path, temp)
+    }
+
+    #[test]
+    fn codex_counts_cumulative_token_usage() {
+        // prompt 总量 3000（其中 2900 命中缓存、20 写缓存）+ 输出 50。
+        let contents = format!("{}\n", codex_token_count(3000, 2900, 20, 50));
+        let (mut tracker, _path, _temp) = tracked_codex(&contents);
+        let totals = totals_of_key(&mut tracker, "codex:thr-1");
+        // 缓存已含在 input_tokens 里，必须减出来 —— 否则总量会把缓存算两遍。
+        assert_eq!(totals.input_tokens, 80);
+        assert_eq!(totals.cache_creation_input_tokens, 20);
+        assert_eq!(totals.cache_read_input_tokens, 2900);
+        assert_eq!(totals.output_tokens, 50);
+        // 关键口径：四项之和必须等于 Codex 自己的 total_tokens（input + output）。
+        assert_eq!(totals.total(), 3050, "不得把 cached 重复计入");
+    }
+
+    #[test]
+    fn codex_total_matches_codex_own_accounting() {
+        // 真实 rollout 的一条记录：input 23729（含 cached 11072）+ output 6864，
+        // Codex 自己的 total_tokens = 30593。
+        let contents = format!("{}\n", codex_token_count(23729, 11072, 0, 6864));
+        let (mut tracker, _path, _temp) = tracked_codex(&contents);
+        let totals = totals_of_key(&mut tracker, "codex:thr-1");
+        assert_eq!(totals.total(), 30593);
+        assert_eq!(totals.cache_read_input_tokens, 11072);
+    }
+
+    #[test]
+    fn codex_subtraction_saturates_on_inconsistent_data() {
+        // 异常数据（cached 大于 input）只应让 input 归零，不能下溢成天文数字。
+        let contents = format!("{}\n", codex_token_count(100, 3000, 0, 10));
+        let (mut tracker, _path, _temp) = tracked_codex(&contents);
+        let totals = totals_of_key(&mut tracker, "codex:thr-1");
+        assert_eq!(totals.input_tokens, 0);
+        assert_eq!(totals.output_tokens, 10);
+    }
+
+    #[test]
+    fn codex_cumulative_events_are_not_summed() {
+        // token_count 是会话累计值，不是增量：连续两条必须取后者，相加会翻倍。
+        let contents = format!(
+            "{}\n{}\n",
+            codex_token_count(100, 0, 0, 10),
+            codex_token_count(250, 0, 0, 40)
+        );
+        let (mut tracker, _path, _temp) = tracked_codex(&contents);
+        let totals = totals_of_key(&mut tracker, "codex:thr-1");
+        assert_eq!(totals.input_tokens, 250);
+        assert_eq!(totals.output_tokens, 40);
+    }
+
+    #[test]
+    fn codex_totals_never_regress_on_rescan() {
+        let contents = format!("{}\n", codex_token_count(500, 0, 0, 100));
+        let (mut tracker, path, _temp) = tracked_codex(&contents);
+        assert_eq!(totals_of_key(&mut tracker, "codex:thr-1").total(), 600);
+
+        // 文件被截断（长度回退）后从头重读：累计值只增不减，已显示的 600 不能被改写。
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(totals_of_key(&mut tracker, "codex:thr-1").total(), 600);
+    }
+
+    #[test]
+    fn codex_sums_separate_rollouts_of_the_same_session() {
+        // 同一会话可能有多个 rollout（如子代理线程各自一份），各文件累计值相加。
+        let temp = TempDir::new("tokens-codex-multi");
+        let main = temp.write("main.jsonl", &format!("{}\n", codex_token_count(10, 0, 0, 1)));
+        let sub = temp.write("sub.jsonl", &format!("{}\n", codex_token_count(0, 0, 0, 90)));
+
+        let mut tracker = TokenTracker::new();
+        tracker.observe("codex:thr-1", Provider::Codex, &main);
+        tracker.observe("codex:thr-1", Provider::Codex, &sub);
+
+        let totals = totals_of_key(&mut tracker, "codex:thr-1");
+        assert_eq!(totals.input_tokens, 10);
+        assert_eq!(totals.output_tokens, 91);
+    }
+
+    #[test]
+    fn codex_ignores_other_record_types() {
+        // rollout 里还有 message / function_call 等记录，都不该被当成用量。
+        let noise = serde_json::json!({
+            "type": "response_item",
+            "payload": {"type": "message", "content": []}
+        })
+        .to_string();
+        let contents = format!("{noise}\n{}\n", codex_token_count(7, 0, 0, 3));
+        let (mut tracker, _path, _temp) = tracked_codex(&contents);
+        assert_eq!(totals_of_key(&mut tracker, "codex:thr-1").total(), 10);
+    }
+
+    #[test]
+    fn codex_missing_transcript_is_not_an_error() {
+        let temp = TempDir::new("tokens-codex-missing");
+        let mut tracker = TokenTracker::new();
+        tracker.observe("codex:thr-1", Provider::Codex, &temp.path().join("nope.jsonl"));
+        // transcript_path 可能为 null / 文件尚未落盘：不 panic，也不产生统计。
+        assert!(tracker.refresh_all().is_empty());
     }
 
     /// 以追加方式写入，模拟 transcript 的增长。

@@ -178,11 +178,22 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 平台 hook payload ─▸ compat（status/compat/，按 provider 选适配器）─▸ AgentEvent{ kind, … } ─▸ kernel（status/kernel.rs）
 ```
 
-- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` 是 Claude 适配器，独占该平台的全部知识（字段别名、事件名表、base_url 来源、提问提取、元标签剔除、子代理 `agent_id`）。
+- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` 各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取、子代理 `agent_id`）。跨平台共用的（字段多别名取值、事件名归一化、提问裁剪、`agent_id` 判定…）放 `compat/mod.rs`。
 - **内核**：`status/kernel.rs` 只认 `AgentEventKind` 六种语义（Running / TurnFinished / WaitingForUser / SessionFinished / Failed / Unknown），`light_for_kind` 把 kind 映射成灯态 + 是否绿闪。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
 - **接入新平台** = 新增 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支；内核与前端零改动。
+- **事件源目前有两个**：hook（inbox 里的规范 JSON）与 Codex rollout 补漏（`codex_rollout.rs` 合成 `Failed`）。两者都产出 `AgentEvent`，在 monitor 里走**同一条入口** `apply_status_event`（广播调试事件 → 登记 transcript → 取存档回填 → 进内核）。加第三个源时照着接这个函数，别绕开它。
 - `AgentEvent.kind` 是 `#[serde(default)]` 新增字段，缺省 `Unknown`（**不得升 `SCHEMA_VERSION`**）；旧事件反序列化后为 Unknown = 不驱灯色，与「无法识别」一致。
-- 本轮只搭好 Claude 适配器 + 内核分层，**Codex 适配器尚未实现**（`adapter_for(Codex)` 返回 None，hook 侧报明确错误）。
+- **hook 输入上限 4 MiB**：Codex 的工具事件会把 `tool_input`（apply_patch 补丁等）原样带上，卡 64 KiB 会丢掉有效生命周期事件。落盘的 inbox 事件仍只带提取字段。
+
+### Codex（已接入）
+
+- 12 个事件：`PreToolUse` / `PermissionRequest` / `PostToolUse` / `PreCompact` / `PostCompact` / `SessionStart` / `SessionEnd` / `UserPromptSubmit` / `SubagentStart` / `SubagentStop` / `Stop` / `Interrupt`（实测自 codex.exe v0.155 的 `HOOK_EVENT_NAMES`）。
+- 与 Claude 的差异：**没有 `Notification` 事件**（无 `notification_type` 分流）；`Interrupt`（用户 Esc / Ctrl-C 取消当前轮）是 Codex 独有，映射为 **WaitingForUser（黄灯不闪）**——红灯在本项目专指接口/不可抗力错误，用户主动取消不是。`Stop` 仍映射 TurnFinished（绿闪落黄）。
+- **子代理同构**：Codex 子代理事件也带 `agent_id`（+`agent_type`）、主线程不带，共用 `session_id` → 内核那条「子代理不驱灯」的守卫对两个平台同样生效。
+- **Endpoint**：读 `$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`）→ `<cwd>/.codex/config.toml` 覆盖，取顶层 `model_provider` 指向的 `[model_providers.<name>].base_url`；环境变量 `OPENAI_BASE_URL` / `OPENAI_API_BASE` 兜底。只读这一个 key，api key（`auth.json`）一律不碰。用 TOML 解析依赖 `basic-toml`（**只读**，刻意不用官方 `toml`，避免连带 toml_edit 序列化链）。
+- **token**：rollout JSONL 里 `event_msg`/`token_count` 的 `info.total_token_usage` 是**会话级累计值**（不是增量），同一文件内取 max；同一会话的多个 rollout 各文件累计值相加。⚠️ **口径与 Anthropic 相反**：Codex 的 `input_tokens` 是 prompt 总量、**已含** `cached_input_tokens` / `cache_write_input_tokens`（实测 `total_tokens == input + output`），而 `TokenTotals` 沿用 Anthropic 口径（input 不含缓存）—— 所以映射时必须把缓存从 input 里减出去，否则前端 `tokenTotal()` 会把缓存算两遍（实测缓存占比可达 1/3）。`output_tokens` 已含 `reasoning_output_tokens`，不重复加。
+- ⚠️ **红灯在 Codex 上靠 rollout 补漏，不是 hook**：Codex 的 12 个 hook 事件里**没有错误类事件**（Claude 有 `StopFailure`），实测「重试耗尽」（429）这类以 error 结束的轮次**连 `Stop` 都不触发** —— 只用 hook 的话红灯永远不可达，灯会停在绿灯直到超时被清。因此 `status/codex_rollout.rs` 增量巡检 rollout：读到 `event_msg`/`task_complete` 带非空 `error` 就合成一条 `Failed` 事件（`error_code` 带错误正文）走同一条内核入口。它**只巡检已登记会话**（hook 的 `transcript_path` 带过的），agent 全停即零 I/O；按 `turn_id` 去重（`event_id` 也由轮 id 派生，吃内核那层去重）。⚠️ 已知时序窗口：rollout 落盘比真实发生晚最多一个巡检周期（~500ms），若用户在这窗口内已发下一条 prompt，红灯可能短暂盖住新绿灯，下一条 hook 事件会纠正。
+- ⚠️ **`tokens.rs` 的解析必须按 provider 分流**（`observe()` 要传 provider）：Claude 是「按请求累加 + 按 `message.id` 去重」，Codex 是「取累计值」，混用会让数字翻倍或归零。
 
 ### Agent 状态指示灯语义
 - 🟢 常亮 = Running（正在执行）

@@ -51,11 +51,13 @@ pub enum SessionPhase {
 pub enum AgentEventKind {
     /// 正在执行（工具调用、生成中、会话启动…）→ 绿灯常亮。
     Running,
-    /// 一轮执行结束、等下一条用户输入（Claude 的 Stop）→ 绿闪后落黄。
+    /// 一轮执行**正常**结束、等下一条用户输入（Claude / Codex 的 `Stop`）→ 绿闪后落黄。
     TurnFinished,
-    /// 正在等用户授权 / 选择 / 输入（权限弹窗、elicitation）→ 直接黄灯，不闪。
+    /// 正在等用户操作（权限弹窗 / elicitation / 用户取消本轮后等下一条指令）→ 直接黄灯，不闪。
+    ///
+    /// 刻意不闪：绿闪在本项目里是「这一轮顺利跑完」的信号，权限等待与 Esc 取消都不属于它。
     WaitingForUser,
-    /// 会话确认结束（Claude 的 SessionEnd）→ 绿闪后移除。
+    /// 会话确认结束（Claude / Codex 的 `SessionEnd`）→ 绿闪后移除。
     SessionFinished,
     /// 本轮或会话出错 → 红灯。
     Failed,

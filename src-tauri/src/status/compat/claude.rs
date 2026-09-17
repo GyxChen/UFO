@@ -8,8 +8,10 @@ use std::{env, fs, path::{Path, PathBuf}};
 use serde_json::Value;
 
 use super::{
-    base_url_env_names, fallback_kind, home_dir, normalize_event_name, number_field,
-    payload_error, string_field, AdaptContext, AdaptedEvent, HookAdapter, CLAUDE_BASE_URL_KEY,
+    agent_id, base_url_env_names, fallback_kind, home_dir, is_user_prompt_submit,
+    normalize_base_url, normalize_event_name, number_field, payload_error, string_field,
+    transcript_path, truncate_prompt, AdaptContext, AdaptedEvent, HookAdapter,
+    CLAUDE_BASE_URL_KEY,
 };
 use crate::status::model::{AgentEventKind, Provider};
 
@@ -215,68 +217,18 @@ fn read_settings_base_url(paths: &[PathBuf], key: &str) -> Option<String> {
     found
 }
 
-/// base_url 长度上限。
-///
-/// 这不是脱敏，只是防止异常环境变量把超大字符串写进事件文件（事件整体有 64KiB 上限）。
-const MAX_BASE_URL_LEN: usize = 4096;
-
-/// 归一化 base_url：仅去掉首尾空白。
-///
-/// 不剥离 userinfo / query —— 按需求保留原值，便于排查实际使用的 endpoint。
-fn normalize_base_url(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.len() > MAX_BASE_URL_LEN {
-        return None;
-    }
-    Some(trimmed.to_string())
-}
-
 /// 从 hook payload 中提取「用户手输」的提问。
 ///
 /// 只认 `UserPromptSubmit`。`UserPromptExpansion` 紧随其后触发、同样携带 `prompt`，
 /// 但那是斜杠命令展开后的模板文本，不是用户输入 —— 放行它会把用户真正的提问覆盖掉。
 /// 其余事件本就不带 `prompt`，返回 None 后由内核继承上一次的值。
 fn user_prompt(event_name: &str, payload: &Value) -> Option<String> {
-    if normalize_event_name(event_name) != "user_prompt_submit" {
+    if !is_user_prompt_submit(event_name) {
         return None;
     }
     string_field(payload, &["prompt", "user_prompt", "prompt_text"])
         .and_then(|value| normalize_prompt(&value))
 }
-
-/// 路径长度上限，防止异常 payload 把超长字符串写进事件文件。
-const MAX_TRANSCRIPT_PATH_LEN: usize = 4096;
-
-/// 提取该会话 transcript 的路径，供 monitor 增量统计 token。
-///
-/// 这里**只透传路径**，不读文件：hook 每次事件启动一次、必须快速返回，
-/// 而 transcript 会增长到 MB 级，解析必须放在常驻的 monitor 线程里做。
-fn transcript_path(payload: &Value) -> Option<String> {
-    string_field(payload, &["transcript_path", "transcriptPath"])
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && value.len() <= MAX_TRANSCRIPT_PATH_LEN)
-}
-
-/// 提取子代理事件的来源标识。主线程事件不带此字段，返回 None。
-///
-/// ⚠️ 子代理事件与主会话共用同一个 `session_id`（实测确认），只有本字段能把两者分开。
-/// 内核靠它把子代理事件限制为「只刷存活时间、不驱灯色」，否则主线程 Waiting
-/// 会被仍在后台跑的子代理顶回 Running（灯一直绿）。
-///
-/// 只透传标识，不做任何语义解释。
-fn agent_id(payload: &Value) -> Option<String> {
-    string_field(payload, &["agent_id", "agentId"])
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && value.len() <= MAX_AGENT_ID_LEN)
-}
-
-/// 子代理标识的长度上限：只防异常 payload 撑大事件文件，不做语义校验。
-const MAX_AGENT_ID_LEN: usize = 256;
-
-/// 提问内容长度上限（字符数）。
-///
-/// 仅防止超大 prompt 撑爆事件文件（事件整体有 64KiB 上限），超出部分截断并加省略号。
-const MAX_PROMPT_CHARS: usize = 4000;
 
 /// 编译期由 `build.rs` 从仓库根 `.env` 注入的排除标签列表（逗号分隔）。
 ///
@@ -383,21 +335,10 @@ fn strip_excluded_tags(text: &str, names: &[String]) -> String {
     out
 }
 
-/// 归一化提问内容：先剔除排除标签及其内容，再去首尾空白，超长截断。
-///
-/// 注意：提问内容会以明文写入状态目录的 inbox 事件文件（消费后删除）。
-/// 这是「展示当前提问」功能的必要代价，已在文档中标注。
+/// 归一化提问内容：先剔除排除标签及其内容，再交给共用的裁剪（去空白 + 超长截断）。
 fn normalize_prompt(raw: &str) -> Option<String> {
     let stripped = strip_excluded_tags(raw, &tag_names());
-    let trimmed = stripped.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if trimmed.chars().count() <= MAX_PROMPT_CHARS {
-        return Some(trimmed.to_string());
-    }
-    let truncated: String = trimmed.chars().take(MAX_PROMPT_CHARS).collect();
-    Some(format!("{truncated}…"))
+    truncate_prompt(&stripped)
 }
 
 #[cfg(test)]
@@ -408,8 +349,12 @@ mod tests {
     use crate::status::test_support::TempDir;
     use crate::status::StatusRegistry;
 
-    // EventEnvelope 只在测试里构造事件用，故不提到 claude.rs 顶层（否则非测试构建会 unused）。
-    use super::super::EventEnvelope;
+    // 只在测试里用到的共享项（EventEnvelope 只在测试里构造事件；长度上限只被断言引用），
+    // 故不提到 claude.rs 顶层 —— 否则非测试构建会 unused。
+    use super::super::{
+        EventEnvelope, MAX_AGENT_ID_LEN, MAX_BASE_URL_LEN, MAX_PROMPT_CHARS,
+        MAX_TRANSCRIPT_PATH_LEN,
+    };
 
     fn s(value: &str) -> String {
         value.to_string()

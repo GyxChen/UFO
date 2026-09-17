@@ -19,7 +19,12 @@ use super::compat;
 use super::model::{now_ms, Provider};
 
 /// 单次 hook payload 的读取上限，防止异常输入拖慢短命进程。
-const MAX_HOOK_INPUT: u64 = 64 * 1024;
+///
+/// 放到 4 MiB 是因为 **Codex 的工具事件会把 `tool_input` 原样带上**：`apply_patch` 的补丁、
+/// 长命令、MCP 调用的参数都能轻松超过 64 KiB，卡在 64 KiB 会把有效生命周期事件整个丢掉
+/// （表现为灯卡住不动）。读的是管道、只解析一次，这点量对短命进程无压力；
+/// 真正落盘的 inbox 事件只带提取后的字段，仍然是 KB 级。
+const MAX_HOOK_INPUT: u64 = 4 * 1024 * 1024;
 /// App 标识（与 `tauri.conf.json` 的 `identifier` 保持一致）：既用于定位 AppData 下的
 /// status 目录，也被 flow 模块用作凭据 service 前缀 —— 统一从这里导出，避免两处各写一份。
 pub(crate) const APP_IDENTIFIER: &str = "com.tauri-app.my";
@@ -252,5 +257,32 @@ mod tests {
         assert_eq!(event.kind, AgentEventKind::TurnFinished);
         // 原始事件名作为诊断字段原样保留。
         assert_eq!(event.event, "Stop");
+    }
+
+    /// 同一条链路走 Codex：证明 `--provider codex` 能选到适配器（注册表接线）。
+    #[test]
+    fn process_payload_writes_canonical_event_for_codex() {
+        let temp = TempDir::new("hook-shell-codex");
+        let payload = serde_json::json!({
+            "session_id": "thr_1",
+            "hook_event_name": "Interrupt",
+            "turn_id": "turn_1",
+        });
+        process_payload(Provider::Codex, temp.path(), &payload).expect("hook writes event");
+
+        let inbox = temp.path().join("inbox");
+        let path = fs::read_dir(&inbox)
+            .expect("inbox exists")
+            .next()
+            .expect("one event")
+            .expect("readable")
+            .path();
+        let event: AgentEvent =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+
+        assert_eq!(event.provider, Provider::Codex);
+        // 用户 Esc 取消本轮 → 黄灯（不闪），见 compat::codex::classify。
+        assert_eq!(event.kind, AgentEventKind::WaitingForUser);
+        assert_eq!(event.event, "Interrupt");
     }
 }

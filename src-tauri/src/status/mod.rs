@@ -1,6 +1,8 @@
 mod compat;
+mod codex_rollout;
 mod hook;
 mod kernel;
+mod lines;
 mod model;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -39,6 +41,7 @@ pub(crate) use model::SessionPhase;
 pub(crate) use model::StatusSource;
 pub use kernel::StatusRegistry;
 
+use codex_rollout::CodexRolloutWatcher;
 use tokens::TokenTracker;
 
 use crate::endpoint_profiles::EndpointProfileState;
@@ -186,12 +189,26 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
     let mut next_cleanup = now_ms();
     // token 统计器由 monitor 线程独占，无需加锁。
     let mut tokens = TokenTracker::new();
+    // Codex rollout 补漏巡检器（hook 没有错误类事件），同样由 monitor 独占。
+    let mut codex_rollout = CodexRolloutWatcher::new();
     // 上一轮快照的「上游签名」：会话 key → 解析出的 upstream_url。
     // 用于在 cc-switch 里手动切了 provider（无新 hook 事件）时，也能把新上游推到前端。
     let mut last_upstream_sig: Vec<(String, Option<String>)> = Vec::new();
 
     loop {
-        let mut changed = consume_inbox(&app, &inbox, &quarantine, &state, &mut tokens);
+        let mut changed = consume_inbox(
+            &app,
+            &inbox,
+            &quarantine,
+            &state,
+            &mut tokens,
+            &mut codex_rollout,
+        );
+
+        // Codex rollout 补漏：hook 覆盖不到的错误态，合成 Failed 事件走同一条内核入口。
+        for event in codex_rollout.poll() {
+            changed |= apply_status_event(&app, &state, &mut tokens, &mut codex_rollout, event);
+        }
 
         // 增量读取各会话的 transcript；只有数值真的变了才推快照。
         for (key, totals) in tokens.refresh_all() {
@@ -246,10 +263,11 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
                 .unwrap_or(false);
             changed |= cleanup_changed;
             if cleanup_changed {
-                // 会话被移除后同步丢弃其 token 记录，避免统计器无限增长。
+                // 会话被移除后同步丢弃其 token 记录与 rollout 巡检状态，避免无限增长。
                 if let Ok(registry) = state.registry.lock() {
                     let live: HashSet<String> = registry.live_keys();
                     tokens.retain(|key| live.contains(key));
+                    codex_rollout.retain(|key| live.contains(key));
                 }
             }
             next_cleanup = now.saturating_add(10_000);
@@ -278,6 +296,7 @@ fn consume_inbox<R: Runtime>(
     quarantine: &Path,
     state: &StatusState,
     tokens: &mut TokenTracker,
+    codex_rollout: &mut CodexRolloutWatcher,
 ) -> bool {
     let Ok(entries) = fs::read_dir(inbox) else {
         return false;
@@ -294,29 +313,8 @@ fn consume_inbox<R: Runtime>(
             .and_then(|bytes| serde_json::from_slice::<AgentEvent>(&bytes).ok());
         match parsed {
             Some(event) => {
-                let _ = app.emit("status-hook-event", &event);
-                // 先记下 key：`event` 随后会被 `apply_event_with_seed` 移走。
-                let key = session_key(event.provider, &event.session_id);
-                // 只登记路径：真正的解析在 monitor 线程里增量做，
-                // hook 进程每次事件都要快速返回，不能去读 MB 级的 transcript。
-                if let Some(transcript) = event.transcript_path.as_deref() {
-                    tokens.observe(&key, Path::new(transcript));
-                }
                 let _ = fs::remove_file(&path);
-                // 回填摘要在 **registry 锁之外**取：内部只查一张内存 HashMap，不做 I/O。
-                let seed = state.store.seed_for(&key);
-                let retention = state
-                    .retention_ms
-                    .lock()
-                    .map(|value| *value)
-                    .unwrap_or(30_000);
-                changed |= state
-                    .registry
-                    .lock()
-                    .map(|mut registry| {
-                        registry.apply_event_with_seed(event, retention, seed.as_ref())
-                    })
-                    .unwrap_or(false);
+                changed |= apply_status_event(app, state, tokens, codex_rollout, event);
             }
             None => {
                 let _ = fs::create_dir_all(quarantine);
@@ -333,6 +331,45 @@ fn consume_inbox<R: Runtime>(
         }
     }
     changed
+}
+
+/// 把一条**规范事件**送进内核 —— 所有事件源的唯一入口。
+///
+/// 事件源目前有两个：hook（inbox 里的 JSON，兼容层已归一化）与 Codex rollout 补漏
+/// （`codex_rollout.rs` 合成）。两者都产出 `AgentEvent`，因此后续处理完全共用：
+/// 广播给前端调试、登记 transcript、取存档回填、进内核。
+fn apply_status_event<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &StatusState,
+    tokens: &mut TokenTracker,
+    codex_rollout: &mut CodexRolloutWatcher,
+    event: AgentEvent,
+) -> bool {
+    let _ = app.emit("status-hook-event", &event);
+    // 先记下 key 与会话 id：`event` 随后会被 `apply_event_with_seed` 移走。
+    let key = session_key(event.provider, &event.session_id);
+    // 只登记路径：真正的解析在 monitor 线程里增量做，
+    // hook 进程每次事件都要快速返回，不能去读 MB 级的 transcript。
+    if let Some(transcript) = event.transcript_path.as_deref() {
+        let path = Path::new(transcript);
+        tokens.observe(&key, event.provider, path);
+        // Codex 的错误态只能从 rollout 里补读（hook 没有错误类事件），见 codex_rollout.rs。
+        if event.provider == Provider::Codex {
+            codex_rollout.observe(&key, &event.session_id, path);
+        }
+    }
+    // 回填摘要在 **registry 锁之外**取：内部只查一张内存 HashMap，不做 I/O。
+    let seed = state.store.seed_for(&key);
+    let retention = state
+        .retention_ms
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(30_000);
+    state
+        .registry
+        .lock()
+        .map(|mut registry| registry.apply_event_with_seed(event, retention, seed.as_ref()))
+        .unwrap_or(false)
 }
 
 fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, state: &StatusState) {

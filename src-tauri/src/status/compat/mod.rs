@@ -16,6 +16,7 @@
 //! hook 外壳（`super::hook`）只做与平台无关的信封活：读 stdin、补事件 id / pid / 接收时刻、落盘。
 
 pub(crate) mod claude;
+pub(crate) mod codex;
 
 use std::{env, path::PathBuf};
 
@@ -109,8 +110,7 @@ pub(crate) trait HookAdapter: Sync {
 pub(crate) fn adapter_for(provider: Provider) -> Option<&'static dyn HookAdapter> {
     match provider {
         Provider::Claude => Some(&claude::ClaudeAdapter),
-        // TODO: Codex 适配器（见 feat/agent 上 6e9973c 的 kernel.rs 里那份事件名表，可作起点）。
-        Provider::Codex => None,
+        Provider::Codex => Some(&codex::CodexAdapter),
     }
 }
 
@@ -177,6 +177,82 @@ pub(crate) fn payload_error(error_code: Option<&str>, outcome: Option<&str>) -> 
                 "error" | "failed" | "failure" | "cancelled" | "denied"
             )
         })
+}
+
+/// 该事件是否为「用户提交了提问」。
+///
+/// 两个平台的提问都**只**在这一刻采集：后续事件（工具调用等）本就不带提问字段，
+/// 由内核继承上一次的值。Claude 另有 `UserPromptExpansion`（斜杠命令展开的模板文本），
+/// 刻意不认；Codex 没有该事件。
+pub(crate) fn is_user_prompt_submit(event_name: &str) -> bool {
+    normalize_event_name(event_name) == "user_prompt_submit"
+}
+
+/// 提问内容长度上限（字符数）。
+///
+/// 仅防止超大 prompt 撑爆事件文件（事件整体有 64KiB 上限），超出部分截断并加省略号。
+pub(crate) const MAX_PROMPT_CHARS: usize = 4000;
+
+/// 归一化提问内容：去首尾空白，超长按**字符**截断并追加省略号；空白内容视为未提供。
+///
+/// 注意：提问内容会以明文写入状态目录的 inbox 事件文件（消费后删除）。
+/// 这是「展示当前提问」功能的必要代价，已在文档中标注。
+pub(crate) fn truncate_prompt(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().count() <= MAX_PROMPT_CHARS {
+        return Some(trimmed.to_string());
+    }
+    let truncated: String = trimmed.chars().take(MAX_PROMPT_CHARS).collect();
+    Some(format!("{truncated}…"))
+}
+
+/// base_url 长度上限。
+///
+/// 这不是脱敏，只是防止异常环境变量把超大字符串写进事件文件（事件整体有 64KiB 上限）。
+pub(crate) const MAX_BASE_URL_LEN: usize = 4096;
+
+/// 归一化 base_url：仅去掉首尾空白。
+///
+/// 不剥离 userinfo / query —— 按需求保留原值，便于排查实际使用的 endpoint。
+pub(crate) fn normalize_base_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_BASE_URL_LEN {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+/// 子代理标识的长度上限：只防异常 payload 撑大事件文件，不做语义校验。
+pub(crate) const MAX_AGENT_ID_LEN: usize = 256;
+
+/// 提取子代理事件的来源标识。主线程事件不带此字段，返回 None。
+///
+/// ⚠️ 两个平台都确认：子代理事件与主会话**共用同一个 `session_id`**，只有本字段能把两者
+/// 分开（Claude 与 Codex 均为主线程不带、子代理事件带 `agent_id`）。内核靠它把子代理事件
+/// 限制为「只刷存活时间、不驱灯色」，否则主线程 Waiting 会被仍在后台跑的子代理顶回
+/// Running（灯一直绿）。只透传标识，不做任何语义解释。
+pub(crate) fn agent_id(payload: &Value) -> Option<String> {
+    string_field(payload, &["agent_id", "agentId"])
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.len() <= MAX_AGENT_ID_LEN)
+}
+
+/// 路径长度上限，防止异常 payload 把超长字符串写进事件文件。
+pub(crate) const MAX_TRANSCRIPT_PATH_LEN: usize = 4096;
+
+/// 提取该会话 transcript 的路径，供 monitor 增量统计 token。
+///
+/// 这里**只透传路径**，不读文件：hook 每次事件启动一次、必须快速返回，
+/// 而 transcript 会增长到 MB 级，解析必须放在常驻的 monitor 线程里做。
+///
+/// 两个平台的字段名一致（`transcript_path`）；Codex 侧可能为 null → None。
+pub(crate) fn transcript_path(payload: &Value) -> Option<String> {
+    string_field(payload, &["transcript_path", "transcriptPath"])
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.len() <= MAX_TRANSCRIPT_PATH_LEN)
 }
 
 /// 各平台对应的 base_url 环境变量名，按优先级排列。
@@ -252,6 +328,18 @@ mod tests {
     fn normalize_event_name_lowercases() {
         assert_eq!(normalize_event_name("STOP"), "stop");
         assert_eq!(normalize_event_name("Start"), "start");
+    }
+
+    /// 每个 provider 都必须有适配器 —— 少一个就是 `--provider X` 的 hook 静默失效。
+    #[test]
+    fn every_known_provider_has_an_adapter() {
+        for provider in [Provider::Claude, Provider::Codex] {
+            assert!(
+                adapter_for(provider).is_some(),
+                "{} 缺少适配器",
+                provider.as_str()
+            );
+        }
     }
 
     #[test]

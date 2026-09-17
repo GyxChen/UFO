@@ -35,6 +35,9 @@ rquickjs = { version = "0.13", default-features = false, features = ["std", "par
 ureq = "3"
 # 脚本要用的第三方 API key 存 OS 凭据管理器（Windows = Credential Manager），不落盘。
 keyring = "4"
+# Codex 适配器要读 ~/.codex/config.toml 取 base_url（TOML 格式，Claude 的 JSON 解析器用不上）。
+# 选 basic-toml 而非官方 toml：只需要「读」，后者会连带 toml_edit 一整条序列化链。
+basic-toml = "0.1"
 
 # 悬浮窗贴边：轮询物理鼠标左键状态（GetAsyncKeyState），绕开 Windows 原生拖拽吞 pointerup 的问题。
 [target.'cfg(windows)'.dependencies]

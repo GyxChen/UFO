@@ -141,7 +141,7 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 | `claude` | `ANTHROPIC_BASE_URL` |
 | `codex` | `OPENAI_BASE_URL`、`OPENAI_API_BASE` |
 
-`codex` 的配置是 `~/.codex/config.toml`（TOML 格式，与 settings.json 不同），当前不解析，只走环境变量。
+`codex` 的配置文件是 `$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`），TOML 格式，与 settings.json 不同，因此单独解析：按顶层 `model_provider` 取 `[model_providers.<name>].base_url`，`<cwd>/.codex/config.toml` 覆盖用户级。只读这一个 key，api key（`~/.codex/auth.json`）不读取。
 
 只读 endpoint 类变量，不读取 token / api key。**按需求不做脱敏**：原样保留（含 userinfo / query），仅去首尾空白；长度上限 4096 字节。
 
@@ -230,7 +230,84 @@ Claude Code 2.1.270 共 16 个（从 CLI 二进制常量提取），UFO 只把�
 
 ## Codex
 
-如果已安装的 Codex CLI 提供了兼容的 hook 或通知回调，使用相同的命令格式并传入 `--provider codex`。启用前需验证 provider 的实际 payload 和生命周期语义；无法确认的生命周期状态显示为黄色/未知，不会猜测为绿色。
+Codex（CLI / 桌面版）的 hook 与 Claude Code 同构：命令配一次、由 Codex 在生命周期事件发生时自动调用，**不需要手动运行**。事件清单与字段已对本机 `codex.exe` v0.155.0-alpha.2.6 实测确认。
+
+命令格式与 Claude 完全一致，只是 provider 换成 `codex`：
+
+```text
+ufo --status-hook --provider codex
+```
+
+### 配置 hook
+
+Codex 从 `$CODEX_HOME/hooks.json`（默认 `~/.codex/hooks.json`）、`~/.codex/config.toml` 的 `[hooks]` 表、以及 `<repo>/.codex/` 下的同名文件里发现 hooks（多层**叠加**，不互相覆盖）。把下面内容写进 `~/.codex/hooks.json`，**再去信任它** —— 未信任的 hook 不会执行：
+
+- **Codex Desktop**：`设置 → Hooks`。该页按来源分组列出已发现的 hook（我们这份会标 `From Config`），未信任的条目显示 `Disabled until hook is trusted` / `New hook`，点条目上的 **Trust**，或顶部 **Trust all** 一次全信任。页面顶部还有一行汇总计数（**`N needs review`**），看到它没归零就说明还有没信任的 hook。页面里另有 **Open config file** 可直接打开 `hooks.json`。
+- **Codex CLI（TUI）**：用 `/hooks` 查看并信任。
+
+⚠️ 信任是**按 hook 内容哈希**记账的：改过 `hooks.json` 之后会显示 `Hook changed since last trusted`，**需要重新 Trust**（改一次要再点一次）。
+
+```json
+{
+  "hooks": {
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "PreToolUse":       [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "PermissionRequest":[{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "PreCompact":       [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "PostCompact":      [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "SubagentStart":    [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "SubagentStop":     [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "Interrupt":        [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider codex", "async": true, "timeout": 3 }] }]
+  }
+}
+```
+
+若 `ufo` 不在 PATH，`command` 需写绝对路径；Windows 的 JSON 里反斜杠要双写：
+
+```json
+"command": "\"D:\\path\\to\\ufo.exe\" --status-hook --provider codex"
+```
+
+**信任机制的绕过（仅在确有需要时用）**：Codex 提供 `BYPASS_HOOK_TRUST` 环境变量与 `--dangerously-bypass-hook-trust` 命令行开关，含义是「本次调用不要求 hook 已被信任」。官方措辞是 DANGEROUS、只给「已经自己审查过 hook 来源」的自动化用 —— 常规做法仍然是在设置页点一次 Trust，**不建议**为此长期设环境变量。
+
+### 事件与灯色
+
+共同 stdin 字段：`session_id`、`transcript_path`（可为 null）、`cwd`、`hook_event_name`、`model`（+ 轮内的 `turn_id` / `permission_mode`）。
+
+| 事件 | 灯态 | 说明 |
+|---|---|---|
+| `SessionStart` | 🟢 Running | 会话开始 |
+| `UserPromptSubmit` | 🟢 Running | 提交提问（payload 的 `prompt` 进 tooltip） |
+| `PreToolUse` / `PostToolUse` | 🟢 Running | 工具调用前后 |
+| `PreCompact` / `PostCompact` | 🟢 Running | 上下文压缩前后 |
+| `SubagentStart` / `SubagentStop` | 🟢 Running | 子代理起止 |
+| `PermissionRequest` | 🟡 Waiting | 工具调用要你批准 |
+| `Interrupt` | 🟡 Waiting | 你按 Esc / Ctrl-C 取消本轮；**刻意不落红灯**（红灯专指接口/不可抗力错误） |
+| `Stop` | 🟢 闪烁 → 🟡 | 一轮正常跑完 |
+| `SessionEnd` | 🟢 闪烁 → 移除 | 会话结束（归档 / 关闭 / 空闲 30 分钟） |
+
+⚠️ **子代理事件带 `agent_id`（+`agent_type`）、主线程不带，且与主会话共用 `session_id`** —— 与 Claude 同理，内核会把已存活会话的子代理事件拦成「只刷存活时间、不驱灯色」，避免黄灯被顶回绿。
+
+### 错误态（红灯）来自 rollout，不是 hook
+
+⚠️ Codex 的 12 个 hook 事件里**没有错误类事件**（Claude 有 `StopFailure`），而且实测：**「重试耗尽」这类以 error 结束的轮次连 `Stop` 都不触发**（公开 issue [#22858](https://github.com/openai/codex/issues/22858) 描述的历史行为，v0.150 补的 `Interrupt` 只覆盖用户 Esc 主动取消）。也就是说，只靠 hook 的话 Codex 会话的红灯**永远不可达** —— 灯会停在绿灯，直到「执行中超时」把它清掉，看起来就是「绿着绿着消失了」。
+
+UFO 因此对 Codex 额外巡检它自己写的 rollout：读到 `event_msg` / `task_complete` **带非空 `error`** 就补一条红灯事件（`error_code` 里带错误正文，如 `exceeded retry limit, last status: 429`）。
+
+- 只巡检**已登记会话**（hook 的 `transcript_path` 带过的那些），agent 全停即零 I/O。
+- 只认 `task_complete` 带 error：中间的重试不写 `task_complete`，所以**「重试后成功」不会被误报成错误**。
+- 按 `turn_id` 去重，同一轮只报一次。
+- 已知时序窗口约 500ms（rollout 落盘晚于真实发生），期间若用户已发下一条 prompt，红灯可能短暂盖住新绿灯，下一条 hook 事件会纠正。
+
+### token 用量
+
+取自该会话 rollout JSONL 里的 `event_msg` / `token_count` 事件（`info.total_token_usage`）。那是**会话级累计值**，同一文件内取最大值、同一会话的多个 rollout 各自相加。
+
+⚠️ Codex（OpenAI 口径）与 Claude（Anthropic 口径）的 input 含义相反：Codex 的 `input_tokens` 是 prompt **总量**、已含 `cached_input_tokens` / `cache_write_input_tokens`（实测 `total_tokens == input + output`），而 UFO 的 `TokenTotals` 沿用 Anthropic 口径（input 不含缓存）。因此解析时要把缓存从 input 里减出去，否则总量会重复计算缓存部分。`output_tokens` 已含 `reasoning_output_tokens`，不重复相加。
 
 ## 状态目录
 
