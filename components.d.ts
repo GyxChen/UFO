@@ -21,10 +21,12 @@ declare module 'vue' {
     EndpointFlowEditor: typeof import('./src/components/EndpointFlowEditor.vue')['default']
     FloatingModuleHost: typeof import('./src/components/FloatingModuleHost.vue')['default']
     FloatingWindow: typeof import('./src/components/FloatingWindow.vue')['default']
-    JsCodeEditor: typeof import('./src/components/JsCodeEditor.vue')['default']
-    JsCodeFrame: typeof import('./src/components/JsCodeFrame.vue')['default']
     MainWindow: typeof import('./src/components/MainWindow.vue')['default']
+    ScriptEditor: typeof import('./src/components/ui/ScriptEditor.vue')['default']
+    ScriptEditorFrame: typeof import('./src/components/ui/ScriptEditorFrame.vue')['default']
+    ScriptEditorModal: typeof import('./src/components/ui/ScriptEditorModal.vue')['default']
     SessionRecordsPanel: typeof import('./src/components/SessionRecordsPanel.vue')['default']
+    SettingsField: typeof import('./src/components/ui/SettingsField.vue')['default']
     TooltipWindow: typeof import('./src/components/TooltipWindow.vue')['default']
   }
 }

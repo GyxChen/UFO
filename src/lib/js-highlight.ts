@@ -1,7 +1,7 @@
 /**
  * 极简 JS 高亮（零依赖）。
  *
- * 编辑器是「透明 textarea 叠在带高亮的 <pre> 上」（见 `components/JsCodeFrame.vue`），
+ * 编辑器是「透明 textarea 叠在带高亮的 <pre> 上」（见 `components/ui/ScriptEditorFrame.vue`），
  * 因此这里只需要把源码切成词法片段并渲染成带 span 的 HTML：不需要 AST、补全、折叠，
  * 也就没必要背上 CodeMirror / Monaco 那一整套状态机与主题系统。
  *

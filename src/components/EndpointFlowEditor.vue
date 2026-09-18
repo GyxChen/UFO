@@ -9,7 +9,7 @@
  * ⚠️ 反馈一律走行内 `role="status"`，不用 window.alert / window.confirm：
  * 本应用装了 tauri-plugin-prevent-default，原生对话框可能被拦掉。
  * ⚠️ 面板在主窗口内，不是悬浮窗，按钮无需 @click.stop（该约定只约束悬浮窗内的独立点击元素）。
- * ⚠️ 脚本框是 `JsCodeEditor`（轻量高亮 + 整窗编辑弹窗），不是裸 textarea；它只读写 `draft.script`。
+ * ⚠️ 脚本框是 `ScriptEditor`（轻量高亮 + 整窗编辑弹窗），不是裸 textarea；它只读写 `draft.script`。
  */
 import { computed, reactive, ref, watch } from 'vue'
 import type { EndpointProfile } from '@/lib/endpoint-profiles'
@@ -25,9 +25,9 @@ import {
   type FlowOutcome,
   type FlowTestResult,
 } from '@/lib/flow'
-import JsCodeEditor from './JsCodeEditor.vue'
 import BaseButton from './ui/BaseButton.vue'
 import BaseInput from './ui/BaseInput.vue'
+import ScriptEditor from './ui/ScriptEditor.vue'
 import BaseSwitch from './ui/BaseSwitch.vue'
 
 const props = defineProps<{ profile: EndpointProfile | null }>()
@@ -222,12 +222,12 @@ function clampInt(value: number, min: number, max: number): number {
       </div>
 
       <!--
-        脚本：轻量高亮编辑器（JsCodeFrame 双层渲染）；右上角「扩大」按钮弹出整窗编辑框。
+        脚本：轻量高亮编辑器（ScriptEditorFrame 双层渲染）；右上角「扩大」按钮弹出整窗编辑框。
         这里不用 <label> 包住：编辑器内部有「扩大」按钮，label 的隐式激活会抢焦点。
       -->
       <div class="flow-editor__field">
         <span>脚本</span>
-        <JsCodeEditor
+        <ScriptEditor
           v-model="draft.script"
           aria-label="流程脚本源码"
           :title="`编辑脚本 · ${profile.url}`"

@@ -2,7 +2,7 @@
  * 代码编辑器的交互模型（纯函数 / 纯类型，便于单测）。
  *
  * 两部分内容：
- * 1. Tab / Shift+Tab 的缩进计算 —— 编辑器本体是 textarea（见 `components/JsCodeFrame.vue`），
+ * 1. Tab / Shift+Tab 的缩进计算 —— 编辑器本体是 textarea（见 `components/ui/ScriptEditorFrame.vue`），
  *    浏览器默认把 Tab 当「切换焦点」，写代码时不可用，所以手动接管。
  * 2. `EditorCaret` —— 光标与滚动的位置快照，用于「内嵌编辑框 ⇄ 整窗弹窗」之间交接编辑位置。
  */

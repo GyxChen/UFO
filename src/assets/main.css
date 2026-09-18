@@ -58,7 +58,7 @@
   --ufo-radius: 12px;
 
   /*
-   * JS 编辑器语法高亮配色（`JsCodeFrame` 的高亮层专用）。
+   * 脚本编辑器语法高亮配色（`ScriptEditorFrame` 的高亮层专用）。
    *
    * 低饱和、与 Matte 面板同族；注释压暗斜体，宿主注入的 API（http / secrets / cache /
    * format / ctx）用强调色 —— 脚本作者最该一眼看到的就是「沙盒里能用什么」。
@@ -601,22 +601,6 @@ html.is-tooltip-window #app {
   color: var(--ufo-muted);
 }
 
-.module-settings__retention,
-.module-settings__field {
-  @apply flex flex-col gap-1.5;
-}
-
-.module-settings__retention > span,
-.module-settings__field > span {
-  @apply text-[12px];
-  color: var(--ufo-muted);
-}
-
-.module-settings__field-hint {
-  @apply -mt-1 text-[11px] leading-snug;
-  color: var(--ufo-muted);
-}
-
 .module-settings__caps {
   @apply mt-1 grid grid-cols-2 gap-2.5 border-t pt-3;
   border-color: var(--ufo-border);
@@ -909,7 +893,7 @@ html.is-tooltip-window #app {
 }
 
 /*
- * 轻量 JS 编辑框（JsCodeFrame / JsCodeEditor）。
+ * 轻量脚本编辑框（ScriptEditorFrame / ScriptEditor）。
  *
  * 两层叠加：`.jse__highlight`（着色后的 `<pre>`）在下，`.jse__input`（文字透明的 textarea）在上。
  * ⚠️ 两层的字体 / 字号 / 行高 / 内边距必须逐项一致，改一个就得改另一个，否则字符与光标错位；
@@ -954,9 +938,9 @@ html.is-tooltip-window #app {
 
 /*
  * 高亮层：按 `--jse-gutter` 收窄，宽度与输入层的内容盒逐像素一致（槽宽由
- * JsCodeFrame.syncGutter 量出来写进变量），自身 overflow:hidden 裁掉长行尾，
+ * ScriptEditorFrame.syncGutter 量出来写进变量），自身 overflow:hidden 裁掉长行尾，
  * 文字不会画进滚动条槽里。
- * 滚动同步用 transform 位移（见 JsCodeFrame.syncScroll）而不是 scrollTop ——
+ * 滚动同步用 transform 位移（见 ScriptEditorFrame.syncScroll）而不是 scrollTop ——
  * 两层可滚动的最大距离不同，但位移量永远一致，字符才不会错位。
  */
 .jse__highlight {
@@ -971,7 +955,7 @@ html.is-tooltip-window #app {
  * 输入层：铺满、文字透明，只留光标与选区。
  * `scrollbar-gutter: stable` 常驻一条滚动条槽：滚动条出现时不再挤占内容宽度，
  * 编辑区不会随脚本长短左右跳动（高亮层按同一槽宽收窄，见上方）。槽宽随缩放变化，
- * 由 JsCodeFrame.syncGutter 量出后写进 --jse-gutter。
+ * 由 ScriptEditorFrame.syncGutter 量出后写进 --jse-gutter。
  * 滚动条轨道仍用编辑区底色：滑块是半透明的，轨道实色才不会透出下层高亮。
  */
 .jse__input {

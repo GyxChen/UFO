@@ -9,6 +9,7 @@ import BaseInput from './ui/BaseInput.vue'
 import BaseSegmentedControl from './ui/BaseSegmentedControl.vue'
 import BaseSelect from './ui/BaseSelect.vue'
 import BaseSwitch from './ui/BaseSwitch.vue'
+import SettingsField from './ui/SettingsField.vue'
 import EndpointExtensionPanel from './EndpointExtensionPanel.vue'
 import SessionRecordsPanel from './SessionRecordsPanel.vue'
 import closeIcon from '@/assets/close.svg'
@@ -274,22 +275,26 @@ async function saveTimeouts() {
           />
         </div>
 
-        <label class="module-settings__retention">
-          <span>完成灯保留（秒）</span>
+        <SettingsField label="完成灯保留（秒）" label-for="completed-retention-seconds">
           <BaseInput
             v-model.number="retentionInput"
+            id="completed-retention-seconds"
             type="number"
             min="1"
             max="86400"
             step="1"
             @change="updateRetention"
           />
-        </label>
+        </SettingsField>
 
-        <label class="module-settings__retention">
-          <span>执行中超时（秒）</span>
+        <SettingsField
+          label="执行中超时（秒）"
+          label-for="running-timeout-seconds"
+          hint="绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。"
+        >
           <BaseInput
             v-model.number="runningTimeoutInput"
+            id="running-timeout-seconds"
             type="number"
             min="60"
             max="3600"
@@ -297,11 +302,13 @@ async function saveTimeouts() {
             title="Running 无新 hook 时移除绿灯；慢 agent 可拉长"
             @change="updateRunningTimeout"
           />
-        </label>
-        <p class="module-settings__field-hint">绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。</p>
+        </SettingsField>
 
-        <div class="module-settings__retention">
-          <span id="token-unit-label">Token 单位</span>
+        <SettingsField
+          label="Token 单位"
+          label-id="token-unit-label"
+          hint="悬浮窗提示行里的 token 总量写法：Tokens 显示原始计数，M tokens 以百万为单位。"
+        >
           <BaseSegmentedControl
             v-model="tokenUnitInput"
             name="token-unit"
@@ -309,37 +316,38 @@ async function saveTimeouts() {
             aria-labelledby="token-unit-label"
             @change="updateTokenUnit"
           />
-        </div>
-        <p class="module-settings__field-hint">
-          悬浮窗提示行里的 token 总量写法：Tokens 显示原始计数，M tokens 以百万为单位。
-        </p>
+        </SettingsField>
 
-        <div class="module-settings__retention">
-          <span id="proxy-resolver-label">代理解析器</span>
+        <SettingsField
+          label="代理解析器"
+          label-id="proxy-resolver-label"
+          hint="选了代理工具后，会把本地监听地址反查成真正的上游 endpoint 显示在提示窗；不解析时按原样显示。"
+        >
           <BaseSelect
             v-model="proxyResolverInput"
             :options="proxyResolverOptions"
             aria-labelledby="proxy-resolver-label"
             @change="updateProxyResolver"
           />
-        </div>
-        <p class="module-settings__field-hint">
-          选了代理工具后，会把它监听的本地地址（如 127.0.0.1）反查成真正的上游 endpoint 显示在提示窗；
-          不解析时按原样显示。
-        </p>
+        </SettingsField>
 
         <div class="module-settings__caps" aria-label="各形态格子上限">
-          <label v-for="item in layoutLabels" :key="item.key" class="module-settings__field">
-            <span>{{ item.label }}</span>
+          <SettingsField
+            v-for="item in layoutLabels"
+            :key="item.key"
+            :label="item.label"
+            :label-for="`max-cells-${item.key}`"
+          >
             <BaseInput
               v-model.number="maxCellsInput[item.key]"
+              :id="`max-cells-${item.key}`"
               type="number"
               min="4"
               max="8"
               step="1"
               @change="updateMaxCells(item.key)"
             />
-          </label>
+          </SettingsField>
         </div>
 
         <div class="module-settings__actions">

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 轻量 JS 代码编辑框（高亮 + Tab 缩进），零依赖。
+ * 轻量脚本代码框（高亮 + Tab 缩进），零依赖。
  *
  * 结构是业界最常见的「透明 textarea 叠在带高亮的 `<pre>` 上」两层：
  * textarea 负责输入 / 选区 / 光标 / 滚动，`<pre>` 只负责把同一份文本着色显示。
@@ -32,7 +32,7 @@ const props = withDefaults(
     /** 撑满父容器（整窗弹窗里用），默认是固定高度的小编辑框 */
     fill?: boolean
   }>(),
-  { ariaLabel: '脚本源码', placeholder: '', expandable: false, fill: false },
+  { ariaLabel: '脚本源码', placeholder: '', expandable: false, fill: false }
 )
 
 const emit = defineEmits<{
@@ -108,9 +108,7 @@ function onKeydown(event: KeyboardEvent) {
   const input = event.target as HTMLTextAreaElement
   const start = input.selectionStart ?? 0
   const end = input.selectionEnd ?? 0
-  const edit = event.shiftKey
-    ? outdentLines(input.value, start, end)
-    : indentLines(input.value, start, end)
+  const edit = event.shiftKey ? outdentLines(input.value, start, end) : indentLines(input.value, start, end)
 
   if (edit.value === input.value) return
   emit('update:modelValue', edit.value)
@@ -134,7 +132,7 @@ watch(
       syncGutter()
       syncScroll()
     })
-  },
+  }
 )
 
 /** 读当前光标与滚动位置（整窗弹窗要靠它接着编辑，否则另一个实例会停在文末）。 */
@@ -171,12 +169,7 @@ defineExpose({ readCaret, restoreCaret })
 <template>
   <div ref="frameEl" class="jse" :class="{ 'jse--fill': fill }">
     <!-- 高亮层：aria-hidden，读屏与表单语义只认下面的 textarea，避免同一段文本被读两遍。 -->
-    <pre
-      ref="highlightEl"
-      class="jse__highlight"
-      aria-hidden="true"
-      v-html="highlightHtml"
-    ></pre>
+    <pre ref="highlightEl" class="jse__highlight" aria-hidden="true" v-html="highlightHtml"></pre>
 
     <!--
       输入层：文本透明（否则与高亮层叠字加粗），只显示光标与选区。
