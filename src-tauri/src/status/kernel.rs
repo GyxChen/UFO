@@ -72,6 +72,16 @@ impl StatusRegistry {
         self.sessions.keys().cloned().collect()
     }
 
+    /// Manually removes one visible session light from the runtime registry.
+    pub fn dismiss_session(&mut self, key: &str) -> bool {
+        let removed = self.sessions.remove(key).is_some();
+        self.token_totals.remove(key);
+        if removed {
+            self.revision = self.revision.saturating_add(1);
+        }
+        removed
+    }
+
     /// 应用一条 hook 事件（无存档回填）。
     ///
     /// 生产路径走 `apply_event_with_seed`（monitor 总会先查一次回填缓存），

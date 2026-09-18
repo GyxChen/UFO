@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
+import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, monitorFromPoint, PhysicalPosition } from '@tauri-apps/api/window'
 import {
   colorForSession,
@@ -10,7 +11,12 @@ import {
   tokenTotal,
   type SessionSnapshot,
 } from '@/lib/agent-status'
-import { placeTooltip, TOOLTIP_HOVER_EVENT, type TooltipHoverPayload } from '@/lib/tooltip'
+import {
+  placeTooltip,
+  TOOLTIP_HOVER_EVENT,
+  TOOLTIP_INTERACTION_EVENT,
+  type TooltipHoverPayload,
+} from '@/lib/tooltip'
 import {
   formatFlowUpdatedAt,
   flowColorClass,
@@ -132,15 +138,36 @@ async function present(payload: TooltipHoverPayload) {
     payload.docked,
   )
 
+  await invoke('set_tooltip_interactive', { interactive: true })
   await window.setPosition(new PhysicalPosition(position.x, position.y))
   await window.show()
 }
 
 async function hide() {
   try {
+    notifyTooltipInteraction(false)
     await window.hide()
+    await invoke('set_tooltip_interactive', { interactive: false })
   } catch (error) {
     console.warn('failed to hide tooltip window', error)
+  }
+}
+
+/** Sends tooltip pointer state back to the floating window. */
+function notifyTooltipInteraction(hovered: boolean) {
+  void emitTo('floating', TOOLTIP_INTERACTION_EVENT, hovered)
+}
+
+/** Removes the currently displayed status light from the runtime snapshot. */
+async function dismissSession() {
+  const key = session.value?.key
+  if (!key) return
+  try {
+    notifyTooltipInteraction(false)
+    await store.dismissSession(key)
+    hover.value = null
+  } catch (error) {
+    console.warn('failed to dismiss status session', error)
   }
 }
 
@@ -167,7 +194,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="tooltip-shell">
+  <div
+    class="tooltip-shell"
+    @pointerenter="notifyTooltipInteraction(true)"
+    @pointerleave="notifyTooltipInteraction(false)"
+  >
     <template v-if="session">
       <div class="tooltip-row tooltip-row--head">
         <span class="tooltip-dot" :class="`tooltip-dot--${statusColor}`" aria-hidden="true" />
@@ -184,6 +215,16 @@ onBeforeUnmount(() => {
           :title="session.waiting_reason"
         >{{ session.waiting_reason }}</span>
         <span class="tooltip-row__badge">{{ session.phase }}</span>
+        <button
+          class="tooltip-close"
+          type="button"
+          aria-label="移除状态灯"
+          @pointerdown.stop
+          @pointerup.stop
+          @click.stop.prevent="void dismissSession()"
+        >
+          <img src="@/assets/close.svg" alt="" aria-hidden="true" />
+        </button>
       </div>
 
       <div class="tooltip-row">

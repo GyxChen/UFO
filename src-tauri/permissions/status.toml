@@ -4,6 +4,16 @@ description = "Allows reading the normalized agent status snapshot."
 commands.allow = ["get_status_snapshot"]
 
 [[permission]]
+identifier = "allow-dismiss-status-session"
+description = "Allows removing one visible agent status light from the current runtime."
+commands.allow = ["dismiss_status_session"]
+
+[[permission]]
+identifier = "allow-set-tooltip-interactive"
+description = "Allows toggling tooltip mouse hit testing for its close action."
+commands.allow = ["set_tooltip_interactive"]
+
+[[permission]]
 identifier = "allow-get-proxy-resolvers"
 description = "Allows listing available proxy resolvers for the settings dropdown."
 commands.allow = ["get_proxy_resolvers"]

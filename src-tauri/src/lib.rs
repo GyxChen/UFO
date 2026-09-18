@@ -23,7 +23,7 @@ use endpoint_profiles::{
 };
 use flow::{
     delete_flow_secret, get_flow_results, get_flow_snapshot, run_flow_test, save_endpoint_flow,
-    set_flow_secret, KeyringSecrets, FlowState, UreqFetch,
+    set_flow_secret, FlowState, KeyringSecrets, UreqFetch,
 };
 use module_config::ModuleState;
 use mouse::is_left_mouse_pressed;
@@ -31,7 +31,10 @@ use session_store::{
     clear_session_records, delete_session_record, get_session_records, SessionStoreState,
 };
 pub use status::try_run_status_hook;
-use status::{get_proxy_resolvers, get_status_snapshot, now_ms, spawn_monitor, StatusState};
+use status::{
+    dismiss_status_session, get_proxy_resolvers, get_status_snapshot, now_ms,
+    set_tooltip_interactive, spawn_monitor, StatusState,
+};
 
 const MAIN_WINDOW: &str = "main";
 /// 悬浮窗 label。除被 `UFO_DEVTOOLS` 点名开 devtools 外没有别处用到，故限定调试构建。
@@ -72,8 +75,7 @@ pub fn run() {
             let proxy_state = proxy::ProxyState::new(None);
             proxy_state.set_selected(&module_state.proxy_resolver());
             // endpoint 档案登记表（主窗口「信息卡拓展」的数据源），与 StatusState 共享同一份。
-            let profile_state =
-                EndpointProfileState::load(app_data.join("endpoint-profiles.json"));
+            let profile_state = EndpointProfileState::load(app_data.join("endpoint-profiles.json"));
             // 会话存档（SQLite）：跨重启续档。load 打开库、回填缓存并做一次过期清理。
             // 与 profiles 同样处理：clone 进 StatusState（monitor 线程写），再 manage 一份（命令读）。
             let session_store =
@@ -189,6 +191,8 @@ pub fn run() {
         .plugin(tauri_plugin_prevent_default::init())
         .invoke_handler(tauri::generate_handler![
             get_status_snapshot,
+            dismiss_status_session,
+            set_tooltip_interactive,
             get_proxy_resolvers,
             get_endpoint_profiles,
             add_endpoint_profile,

@@ -4,6 +4,8 @@ import type { DockedEdges, PhysicalPoint, PhysicalSize, WorkArea } from './snap'
 export const TOOLTIP_WINDOW_LABEL = 'tooltip'
 /** 悬浮窗 → 提示窗的悬停事件名。 */
 export const TOOLTIP_HOVER_EVENT = 'tooltip-hover'
+/** 提示窗 → 悬浮窗的鼠标进入/离开事件名。 */
+export const TOOLTIP_INTERACTION_EVENT = 'tooltip-interaction'
 
 /** 悬浮窗外框的物理矩形。 */
 export interface TooltipAnchor {

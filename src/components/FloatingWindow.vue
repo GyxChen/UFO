@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, provide, ref } from 'vue'
-import { emitTo } from '@tauri-apps/api/event'
+import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
 import {
@@ -11,7 +11,12 @@ import {
 } from '@/lib/agent-status-layout'
 import { floatingWindowKey } from '@/lib/floating-window-context'
 import { snapToWorkArea, type DockedEdges } from '@/lib/snap'
-import { TOOLTIP_HOVER_EVENT, TOOLTIP_WINDOW_LABEL, type TooltipHoverPayload } from '@/lib/tooltip'
+import {
+  TOOLTIP_HOVER_EVENT,
+  TOOLTIP_INTERACTION_EVENT,
+  TOOLTIP_WINDOW_LABEL,
+  type TooltipHoverPayload,
+} from '@/lib/tooltip'
 import { showMainWindow } from '@/lib/window'
 import FloatingModuleHost from './FloatingModuleHost.vue'
 
@@ -22,6 +27,7 @@ const layoutMode = ref<'square' | 'corner' | 'horizontal' | 'vertical'>('square'
 let snapTimer: ReturnType<typeof setTimeout> | undefined
 let unlistenMoved: (() => void) | undefined
 let unlistenScaleChanged: (() => void) | undefined
+let unlistenTooltipInteraction: UnlistenFn | undefined
 // 悬浮窗的基础尺寸,未贴边时恢复为该尺寸;挂载时读取。
 let baseSize: { width: number; height: number } = { width: 56, height: 56 }
 // 模块申请的格子数；不低于默认，不超过绝对上限。
@@ -35,6 +41,7 @@ const SHOW_DELAY_MS = 250
 // 离开后的隐藏延迟：短一些，但避免灯之间移动时抖动。
 const HIDE_DELAY_MS = 120
 const hoverKey = ref<string | null>(null)
+const tooltipHovered = ref(false)
 let showTimer: ReturnType<typeof setTimeout> | undefined
 let hideTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -54,6 +61,7 @@ function onSessionHover(key: string | null) {
 
   if (key === null) {
     hoverKey.value = null
+    if (tooltipHovered.value) return
     // 稍作延迟再隐藏，避免在相邻指示灯之间移动时反复开关。
     hideTimer = setTimeout(() => {
       hideTimer = undefined
@@ -70,6 +78,19 @@ function onSessionHover(key: string | null) {
 }
 
 /** 通知提示窗显示 / 隐藏；显示时附带悬浮窗外框与贴边状态供其定位。 */
+/** Keeps tooltip visible while the pointer is over its interactive window. */
+function onTooltipInteraction(hovered: boolean) {
+  tooltipHovered.value = hovered
+  if (hovered) {
+    clearTimeout(hideTimer)
+    hideTimer = undefined
+    return
+  }
+  if (hoverKey.value === null) {
+    onSessionHover(null)
+  }
+}
+
 async function emitHover(visible: boolean) {
   const payload: TooltipHoverPayload = {
     visible,
@@ -92,6 +113,7 @@ function dismissTooltip() {
   showTimer = undefined
   hideTimer = undefined
   hoverKey.value = null
+  tooltipHovered.value = false
   if (!wasActive) return
   void emitHover(false)
 }
@@ -295,6 +317,10 @@ onMounted(async () => {
   scheduleSnap()
   unlistenMoved = await window.onMoved(onMoved)
   unlistenScaleChanged = await window.onScaleChanged(onScaleChanged)
+  unlistenTooltipInteraction = await listen<boolean>(
+    TOOLTIP_INTERACTION_EVENT,
+    (event) => onTooltipInteraction(event.payload),
+  )
 })
 
 onBeforeUnmount(() => {
@@ -308,6 +334,7 @@ onBeforeUnmount(() => {
   hideTimer = undefined
   unlistenMoved?.()
   unlistenScaleChanged?.()
+  unlistenTooltipInteraction?.()
 })
 </script>
 

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import {
   colorForSession,
@@ -32,6 +33,12 @@ export const useAgentStatusStore = defineStore('agent-status', {
       this.snapshot = snapshot
       this.lastRevision = snapshot.revision
       this.connection = snapshot.source_health === 'healthy' ? 'connected' : 'degraded'
+    },
+
+    /** Removes one visible status light and applies the returned snapshot immediately. */
+    async dismissSession(key: string) {
+      const snapshot = await invoke<StatusSnapshot>('dismiss_status_session', { key })
+      this.applySnapshot(snapshot)
     },
 
     async start() {

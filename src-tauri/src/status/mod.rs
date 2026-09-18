@@ -1,5 +1,5 @@
-mod compat;
 mod codex_rollout;
+mod compat;
 mod hook;
 mod kernel;
 mod lines;
@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 
-use tauri::{AppHandle, Emitter, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 pub use hook::try_run_status_hook;
 // 供 proxy 子模块复用主目录探测（定位 ~/.cc-switch）；实现已随兼容层迁到 compat。
@@ -39,10 +39,10 @@ pub use model::{
 pub(crate) use model::StatusCounts;
 // SessionPhase 供 flow 侧把阶段映射成脚本可见的字符串，非测试构建也需要；
 // StatusSource 仅 session_store 测试构造 SessionSnapshot 时需要 → 只在测试构建下导出。
+pub use kernel::StatusRegistry;
 pub(crate) use model::SessionPhase;
 #[cfg(test)]
 pub(crate) use model::StatusSource;
-pub use kernel::StatusRegistry;
 
 use codex_rollout::CodexRolloutWatcher;
 use tokens::TokenTracker;
@@ -173,6 +173,38 @@ pub fn get_status_snapshot(state: State<'_, StatusState>) -> StatusSnapshot {
     state.snapshot_with_upstream()
 }
 
+/// Manually removes one visible status light and broadcasts the new snapshot.
+#[tauri::command]
+pub fn dismiss_status_session(
+    app: AppHandle,
+    state: State<'_, StatusState>,
+    key: String,
+) -> Result<StatusSnapshot, String> {
+    let removed = state
+        .registry
+        .lock()
+        .map_err(|_| "status registry lock poisoned".to_string())?
+        .dismiss_session(key.trim());
+    if !removed {
+        return Err("status session not found".to_string());
+    }
+
+    let snapshot = state.snapshot_with_upstream();
+    let _ = app.emit("agent-status", &snapshot);
+    Ok(snapshot)
+}
+
+/// Toggles tooltip hit testing so its close button can receive clicks while visible.
+#[tauri::command]
+pub fn set_tooltip_interactive(app: AppHandle, interactive: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("tooltip")
+        .ok_or_else(|| "tooltip window unavailable".to_string())?;
+    window
+        .set_ignore_cursor_events(!interactive)
+        .map_err(|error| error.to_string())
+}
+
 /// 供主窗口「代理解析器」下拉列出的选项（含 `none`）。
 ///
 /// 选项来自注册表，接入新代理工具后前端无需改动即会自动出现。
@@ -209,8 +241,14 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
         // 由「文件在长」推出的绿；反过来会让刚抬起的黄灯被同一批旧字节顶回绿。
         let updates = codex_rollout.poll();
         for event in updates.events {
-            changed |=
-                apply_status_event(&app, &state, &mut tokens, &mut codex_rollout, EventSource::Rollout, event);
+            changed |= apply_status_event(
+                &app,
+                &state,
+                &mut tokens,
+                &mut codex_rollout,
+                EventSource::Rollout,
+                event,
+            );
         }
         for (key, totals) in updates.tokens {
             // 事件先应用（会话得先存在），用量才登记得上；已消失的会话会被 set_tokens 忽略。
