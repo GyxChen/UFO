@@ -66,6 +66,7 @@ UI设计请使用:ui-ux-pro-max-skill
 
 ## 悬浮窗开发
 悬浮窗将来会引入更多的组件,因此悬浮窗的开发提示
+新增组件前先读 `reference/doc/floating-module-guide.md`（组件开发规范：外壳/组件契约、目录归属、配置迁移、验收清单）。
 
 ### 窗口构成
 
@@ -74,7 +75,7 @@ UI设计请使用:ui-ux-pro-max-skill
 | label | 用途 | 关键配置 |
 |---|---|---|
 | `floating` | 悬浮窗（状态灯） | 56×56，transparent，alwaysOnTop |
-| `main` | 设置主窗 | 800×600，`visible:false`，按需显示 |
+| `main` | 设置主窗 | 1000×750，`visible:false`，按需显示 |
 | `tooltip` | 悬浮信息提示窗 | 默认 300×260（组件可用 `tooltip.size` 覆盖），`visible:false`，`focusable:false`，点击穿透 |
 
 - `tooltip` 采用「声明 + 隐藏 + 按需显示」，不在运行时创建窗口，因此**不需要** `core:webview:allow-create-webview-window`。
