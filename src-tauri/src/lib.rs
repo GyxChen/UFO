@@ -41,6 +41,10 @@ use modules::agent_status::{
         set_tooltip_interactive, spawn_monitor, StatusState,
     },
 };
+use modules::weather::{
+    delete_weather_secret, get_weather_secret_status, get_weather_snapshot, search_weather_city,
+    set_weather_secret, test_weather_connection, WeatherState,
+};
 use mouse::is_left_mouse_pressed;
 
 const MAIN_WINDOW: &str = "main";
@@ -110,6 +114,7 @@ pub fn run() {
             app.manage(session_store);
             app.manage(module_state);
             app.manage(flow_state.clone());
+            app.manage(WeatherState::default());
             spawn_monitor(app.handle().clone(), status_state);
             spawn_worker(app.handle().clone(), flow_state, flow_rx);
 
@@ -222,6 +227,12 @@ pub fn run() {
             is_left_mouse_pressed,
             get_floating_module_config,
             set_floating_module_config,
+            get_weather_snapshot,
+            search_weather_city,
+            test_weather_connection,
+            set_weather_secret,
+            delete_weather_secret,
+            get_weather_secret_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,0 +1,23 @@
+[[permission]]
+identifier = "allow-get-weather-snapshot"
+description = "Allows reading the current weather and forecast snapshot."
+commands.allow = ["get_weather_snapshot"]
+
+[[permission]]
+identifier = "allow-search-weather-city"
+description = "Allows searching cities via QWeather GeoAPI for weather module settings."
+commands.allow = ["search_weather_city"]
+
+[[permission]]
+identifier = "allow-test-weather-connection"
+description = "Allows testing weather API connection and location in the settings window."
+commands.allow = ["test_weather_connection"]
+
+[[permission]]
+identifier = "allow-manage-weather-secret"
+description = "Allows writing, deleting, and querying API Key status in the OS credential store."
+commands.allow = [
+  "set_weather_secret",
+  "delete_weather_secret",
+  "get_weather_secret_status"
+]

@@ -9,6 +9,9 @@
     "allow-save-endpoint-flow",
     "allow-run-flow-test",
     "allow-manage-flow-secrets",
-    "allow-manage-session-records"
+    "allow-manage-session-records",
+    "allow-search-weather-city",
+    "allow-test-weather-connection",
+    "allow-manage-weather-secret"
   ]
 }
