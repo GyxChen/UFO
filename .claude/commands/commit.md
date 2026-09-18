@@ -20,7 +20,7 @@ allowed-tools: Bash(git *), Bash(rg *)
 git commit -m "$(cat <<'EOF'
 <一段话摘要>
 
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+@C
 EOF
 )"
 ```
@@ -41,4 +41,4 @@ EOF
 - 只做 commit，不做 push / force / reset hard。
 - 摘要必须是一段完整中文（可带 `[u]` 前缀），说明「改了什么、为什么」。
 - 若 hooks 修改了文件导致 commit 失败，按提示处理后再提交一次；不要反复空转。
-- commit 后面不要加Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com> , 加个@C 即可
+- commit message 末尾只加一行 `@C`；不要写 `Co-Authored-By: Claude …` 这类署名。

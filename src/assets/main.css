@@ -55,6 +55,25 @@
   --ufo-status-yellow: #fbbf24;
   --ufo-status-red: #f87171;
   --ufo-radius: 12px;
+
+  /*
+   * JS 编辑器语法高亮配色（`JsCodeFrame` 的高亮层专用）。
+   *
+   * 低饱和、与 Matte 面板同族；注释压暗斜体，宿主注入的 API（http / secrets / cache /
+   * format / ctx）用强调色 —— 脚本作者最该一眼看到的就是「沙盒里能用什么」。
+   * 只进 :root 不进 @theme：这套色不对外生成 Tailwind 工具类，仅供编辑器 CSS 引用。
+   */
+  --jse-comment: #6c7a72;
+  --jse-keyword: #c792ea;
+  --jse-literal: #e8a66b;
+  --jse-number: #e8a66b;
+  --jse-string: #b7e38f;
+  --jse-template: #b7e38f;
+  --jse-regex: #7fd6c0;
+  --jse-builtin: #34d399;
+  --jse-call: #7dc8f7;
+  --jse-punct: #a3a3a3;
+  --jse-op: #d4d8de;
 }
 
 html {
@@ -475,13 +494,13 @@ html.is-tooltip-window #app {
 }
 
 /*
- * 有拓展字段时提问压到单行，把高度让给字段行 + 更新时间标注。
+ * 有拓展字段时提问最多显示 3 行，把剩余高度让给字段行 + 更新时间标注。
  * ⚠️ tooltip 固定高（tauri.conf.json 260）：字段（≤4）+ 标注 + 分组分隔线已占掉约 86px，
- * 提问再放宽就会把标注挤出可视区，这里不再加行数。
+ * 通过 line-clamp 限制提问高度，避免内容溢出 tooltip。
  */
 .tooltip-prompt--compact .tooltip-prompt__text {
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
 }
 
 /*
@@ -656,7 +675,7 @@ html.is-tooltip-window #app {
  */
 /* 拓展页容器：让面板撑满窗口宽度（默认 .main-window 居中且卡片限宽 max-w-md）。 */
 .main-window--wide {
-  @apply items-stretch px-5;
+  @apply flex-1 items-stretch overflow-hidden px-5;
 }
 
 /* tabpanel 获得焦点时给一条内嵌细环；不加会完全看不见键盘焦点。 */
@@ -666,9 +685,10 @@ html.is-tooltip-window #app {
 }
 
 .ep-panel {
-  @apply grid w-full min-h-0 gap-3;
-  /* align-items:start：左右两列各自按内容定高，互不拉伸（否则矮的一侧被高的一侧撑开）。 */
-  @apply items-start;
+  @apply grid w-full min-h-0 flex-1 gap-3;
+  /* 两列填满主窗口剩余高度，各自的内容区域独立滚动。 */
+  @apply items-stretch;
+  grid-template-rows: minmax(0, 1fr);
   grid-template-columns: minmax(240px, 1fr) minmax(0, 1.4fr);
 }
 
@@ -680,12 +700,13 @@ html.is-tooltip-window #app {
 @media (max-width: 720px) {
   .ep-panel {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
   }
 }
 
 .ep-list-card,
 .ep-detail {
-  @apply my-0 min-w-0;
+  @apply my-0 min-h-0 min-w-0 h-full;
 }
 
 /*
@@ -695,7 +716,13 @@ html.is-tooltip-window #app {
  */
 .ep-list-card {
   @apply flex flex-col;
-  height: clamp(300px, 46vh, 520px);
+}
+
+/* 右侧配置区独立滚动，左侧列表的滚动由 .ep-list 负责。 */
+.ep-detail {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
 /* 头部与底部表单/提示不参与压缩：只有列表在固定高度内滚动。 */
@@ -873,12 +900,184 @@ html.is-tooltip-window #app {
   color: var(--ufo-muted);
 }
 
-/* 脚本编辑区：覆盖 .ufo-input 的固定行高，等宽字体，纵向可 resize。 */
-.flow-editor__script {
-  @apply h-auto min-h-[180px] w-full py-2 leading-relaxed;
+/*
+ * 轻量 JS 编辑框（JsCodeFrame / JsCodeEditor）。
+ *
+ * 两层叠加：`.jse__highlight`（着色后的 `<pre>`）在下，`.jse__input`（文字透明的 textarea）在上。
+ * ⚠️ 两层的字体 / 字号 / 行高 / 内边距必须逐项一致，改一个就得改另一个，否则字符与光标错位；
+ * 着色只包 span 不动字符（见 lib/js-highlight），两层文本必须始终逐字符相同。
+ */
+.jse {
+  @apply relative w-full overflow-hidden rounded-[10px] border;
+  /* 面板内小编辑框的固定高度；整窗弹窗里由 .jse--fill 撑满（见下）。 */
+  height: 220px;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border-strong);
   font-family: var(--font-mono);
   font-size: 12px;
-  resize: vertical;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+/* 焦点环画在壳上：内部 textarea 无边框无背景，自身焦点态看不见。 */
+.jse:focus-within {
+  border-color: var(--ufo-accent);
+  box-shadow: 0 0 0 3px var(--ufo-accent-soft);
+}
+
+/* 撑满父容器（整窗弹窗用）：作为 flex 子项吃掉剩余高度。 */
+.jse--fill {
+  @apply min-h-0 flex-1;
+  height: auto;
+}
+
+.jse__highlight,
+.jse__input {
+  @apply m-0 border-0;
+  padding: 10px 12px;
+  font: inherit;
+  line-height: inherit;
+  tab-size: inherit;
+  /* 不软换行：换行位置只由源码决定，两层才可能逐行重合。 */
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/*
+ * 高亮层：宽度跟随外壳，长行溢出到壳外由 .jse 的 overflow:hidden 裁掉。
+ * 滚动同步用 transform 位移（见 JsCodeFrame.syncScroll）而不是 scrollTop ——
+ * textarea 的滚动条会吃掉自己的内容宽度，两者最大可滚动距离不同，横滚到底会错开一截。
+ */
+.jse__highlight {
+  @apply absolute top-0 left-0 w-full;
+  color: var(--ufo-text);
+  pointer-events: none;
+}
+
+/*
+ * 输入层：铺满、文字透明，只留光标与选区。
+ * 滚动条轨道用编辑区底色而非 transparent：轨道压在高亮层之上，实色才能盖住
+ * 「textarea 已裁掉、高亮层还画着」的那一条（约一个滚动条宽）。
+ */
+.jse__input {
+  @apply absolute inset-0 h-full w-full outline-none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--ufo-text);
+  resize: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) var(--ufo-input);
+}
+
+/* 选区：文字是透明的，底色要能透出下层高亮，所以用半透明强调色。 */
+.jse__input::selection {
+  background: rgba(52, 211, 153, 0.3);
+}
+
+/* textarea 文字透明会让占位符一起隐形，显式给回灰字。 */
+.jse__input::placeholder {
+  color: var(--ufo-muted);
+  opacity: 1;
+}
+
+/* 扩大按钮：贴在编辑框内部右上角，压在高亮层之上；right 留出细滚动条的位置。 */
+.jse__expand {
+  @apply absolute top-1.5 right-2.5 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-[7px] border p-0;
+  background: rgba(0, 0, 0, 0.42);
+  border-color: var(--ufo-border-strong);
+  color: var(--ufo-muted);
+}
+
+.jse__expand:hover {
+  background: rgba(0, 0, 0, 0.62);
+  color: var(--ufo-text);
+}
+
+.jse__expand:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 1px;
+}
+
+.jse__expand-icon {
+  @apply block h-3.5 w-3.5;
+  pointer-events: none;
+}
+
+/* 整窗编辑弹窗：主窗是实色哑光面板，弹窗同 token（实色底、无 blur、细边框）。 */
+.jse-modal {
+  @apply fixed inset-0 z-50 flex flex-col;
+  background: var(--ufo-bg-main);
+  color: var(--ufo-text);
+}
+
+.jse-modal__bar {
+  @apply flex h-11 shrink-0 items-center gap-3 border-b px-3;
+  background: rgba(0, 0, 0, 0.18);
+  border-color: var(--ufo-border);
+}
+
+.jse-modal__title {
+  @apply shrink-0 text-[13px] font-semibold;
+  color: var(--ufo-text);
+}
+
+/* 提示行吃掉剩余宽度并截断，保证「完成」按钮在任何窗口宽度下都在栏内。 */
+.jse-modal__hint {
+  @apply min-w-0 flex-1 truncate text-[12px];
+  color: var(--ufo-muted);
+}
+
+/* 编辑区：吃满剩余高度，内部编辑框由 .jse--fill 拉伸填满。 */
+.jse-modal__body {
+  @apply flex min-h-0 flex-1 p-3;
+}
+
+/* 语法高亮：色值集中在 :root 的 --jse-* token，规则里不再写死颜色。 */
+.jse-tok--comment {
+  color: var(--jse-comment);
+  font-style: italic;
+}
+
+.jse-tok--keyword {
+  color: var(--jse-keyword);
+}
+
+.jse-tok--literal {
+  color: var(--jse-literal);
+}
+
+.jse-tok--number {
+  color: var(--jse-number);
+}
+
+.jse-tok--string {
+  color: var(--jse-string);
+}
+
+.jse-tok--template {
+  color: var(--jse-template);
+}
+
+.jse-tok--regex {
+  color: var(--jse-regex);
+}
+
+/* 宿主 API 用强调色：脚本作者最该一眼看到的就是这几个能用的入口。 */
+.jse-tok--builtin {
+  color: var(--jse-builtin);
+}
+
+.jse-tok--call {
+  color: var(--jse-call);
+}
+
+.jse-tok--punct {
+  color: var(--jse-punct);
+}
+
+.jse-tok--op {
+  color: var(--jse-op);
 }
 
 .flow-editor__actions {
@@ -1069,9 +1268,10 @@ html.is-tooltip-window #app {
  * 复用信息卡拓展（ep-*）的行 / 移除按钮样式，这里只补本面板特有的部分。
  */
 .sr-panel {
-  @apply grid w-full min-h-0 gap-3;
-  /* 左右两列各自按内容定高，不互相拉伸（与信息卡拓展一致）。 */
-  @apply items-start;
+  @apply grid w-full min-h-0 flex-1 gap-3;
+  /* 两列填满主窗口剩余高度，各自的内容区域独立滚动。 */
+  @apply items-stretch;
+  grid-template-rows: minmax(0, 1fr);
   grid-template-columns: minmax(240px, 1fr) minmax(0, 1.4fr);
 }
 
@@ -1083,12 +1283,13 @@ html.is-tooltip-window #app {
 @media (max-width: 720px) {
   .sr-panel {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
   }
 }
 
 .sr-list-card,
 .sr-detail {
-  @apply my-0 min-w-0;
+  @apply my-0 min-h-0 min-w-0 h-full;
 }
 
 /*
@@ -1097,7 +1298,13 @@ html.is-tooltip-window #app {
  */
 .sr-list-card {
   @apply flex flex-col;
-  height: clamp(300px, 46vh, 520px);
+}
+
+/* 右侧详情独立滚动，左侧列表的滚动由 .sr-list 负责。 */
+.sr-detail {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
 /* 列表可滚动：行数上限 200，不封顶会把右侧详情挤下去。 */
