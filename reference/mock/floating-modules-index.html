@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 主窗口「组件选择」方案对比</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ufo-bg-main: #3d3d3d;
+        --ufo-surface: #2a2a2a;
+        --ufo-surface-2: #323232;
+        --ufo-input: #1f1f1f;
+        --ufo-border: rgba(255, 255, 255, 0.08);
+        --ufo-border-strong: rgba(255, 255, 255, 0.14);
+        --ufo-text: #f3f4f6;
+        --ufo-muted: #a3a3a3;
+        --ufo-accent: #34d399;
+        --ufo-accent-soft: rgba(52, 211, 153, 0.16);
+        --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 48px 20px;
+        font-family: var(--font-sans);
+        color: var(--ufo-text);
+        background: radial-gradient(circle at top left, #4a4a4a 0%, #1c1c1c 55%), #141414;
+        display: grid;
+        place-items: start center;
+        gap: 24px;
+      }
+      .wrap {
+        width: min(940px, 100%);
+        display: grid;
+        gap: 24px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 24px;
+        letter-spacing: -0.02em;
+      }
+      .lead {
+        margin: 0;
+        color: var(--ufo-muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .cards {
+        display: grid;
+        gap: 14px;
+      }
+      a.card {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 14px;
+        align-items: center;
+        padding: 18px;
+        border-radius: 12px;
+        background: var(--ufo-surface);
+        border: 1px solid var(--ufo-border);
+        text-decoration: none;
+        color: inherit;
+        transition:
+          border-color 0.15s ease,
+          transform 0.15s ease;
+      }
+      a.card:hover {
+        border-color: color-mix(in srgb, var(--ufo-accent) 45%, transparent);
+        transform: translateY(-1px);
+      }
+      .card h2 {
+        margin: 0 0 6px;
+        font-size: 15px;
+      }
+      .card p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--ufo-muted);
+        line-height: 1.6;
+      }
+      .tag {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        background: var(--ufo-accent-soft);
+        color: var(--ufo-accent);
+        vertical-align: middle;
+      }
+      .go {
+        font-size: 13px;
+        color: var(--ufo-accent);
+        white-space: nowrap;
+      }
+      .pros {
+        margin: 8px 0 0;
+        padding-left: 18px;
+        font-size: 12px;
+        color: var(--ufo-muted);
+        line-height: 1.7;
+      }
+      .foot {
+        font-size: 12px;
+        color: #6b6b6b;
+        line-height: 1.7;
+      }
+      code {
+        background: var(--ufo-input);
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>主窗口「组件选择」三套方案</h1>
+        <p class="lead">
+          悬浮窗已经改成模块化外壳：组件同级共享同一块窗口，窗口格子数 = 各组件需求之和（夹在默认 4
+          格与该形态上限之间）， 各组件按需求比例分槽 —— 横条左右并排、竖条 /
+          方形上下堆叠。下面三套方案只差「主窗口里怎么挑组件」。
+        </p>
+      </header>
+
+      <div class="cards">
+        <a class="card" href="./floating-modules-a-list.html">
+          <div>
+            <h2>方案 A · 列表开关<span class="tag">改动最小</span></h2>
+            <p>一行一个组件：图标 + 名称 + 一句话说明 + 格数，右侧拖拽手柄与开关。</p>
+            <ul class="pros">
+              <li>和现有设置卡片同款，落地最快，用户零学习成本</li>
+              <li>组件多了也能靠滚动 + 排序撑住，适合「设置」这种低频页面</li>
+            </ul>
+          </div>
+          <span class="go">打开 →</span>
+        </a>
+
+        <a class="card" href="./floating-modules-b-gallery.html">
+          <div>
+            <h2>方案 B · 卡片画廊<span class="tag">最好逛</span></h2>
+            <p>每个组件一张卡，卡里先画出它在悬浮窗里的样子，开着的那张带翠绿描边。</p>
+            <ul class="pros">
+              <li>「这个组件长什么样」一眼可见，适合以后组件变多、陌生人第一次配置</li>
+              <li>卡片占地方，超过 6–8 个组件就要翻页或折叠</li>
+            </ul>
+          </div>
+          <span class="go">打开 →</span>
+        </a>
+
+        <a class="card" href="./floating-modules-c-preview.html">
+          <div>
+            <h2>方案 C · 列表 + 三形态实时预览<span class="tag">最直观</span></h2>
+            <p>左侧勾选与排序，右侧实时画出方形 / 横条 / 竖条三种形态，标出总格数与每个组件分到的位置。</p>
+            <ul class="pros">
+              <li>直接说明「多一个组件窗口会长多大、谁在前谁在后」，贴边换形的行为不用猜</li>
+              <li>信息密度最高，实现量也最大（预览要跟着配置实时重算）</li>
+            </ul>
+          </div>
+          <span class="go">打开 →</span>
+        </a>
+      </div>
+
+      <p class="foot">
+        三套方案里的开关都能点，状态行会同步「已启用数量 / 窗口格子需求」。<br />
+        配色与控件沿用 Matte 方案 A 的 token（<code>src/assets/main.css</code>）；真实实现里主窗口没有页外的方案标签。
+      </p>
+    </div>
+  </body>
+</html>

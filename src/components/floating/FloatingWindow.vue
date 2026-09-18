@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, provide, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
@@ -8,8 +8,16 @@ import {
   ABS_MIN_CELLS,
   DEFAULT_WINDOW_CELLS,
   layoutFromDocked,
-} from '@/lib/agent-status-layout'
-import { floatingWindowKey } from '@/lib/floating-window-context'
+  type FloatingLayout,
+} from '@/lib/floating-layout'
+import type { FloatingHoverTarget } from '@/lib/floating-module-context'
+import {
+  FLOATING_RUNTIME_EVENT,
+  FLOATING_RUNTIME_REQUEST_EVENT,
+  OPEN_MODULE_SETTINGS_EVENT,
+  type OpenModuleSettingsPayload,
+} from '@/lib/floating-bridge'
+import type { FloatingRuntimeSnapshot } from '@/lib/floating-modules'
 import { snapToWorkArea, type DockedEdges } from '@/lib/snap'
 import {
   TOOLTIP_HOVER_EVENT,
@@ -23,7 +31,7 @@ import FloatingModuleHost from './FloatingModuleHost.vue'
 const window = getCurrentWindow()
 const pointerStart = ref<{ x: number; y: number } | null>(null)
 const dragging = ref(false)
-const layoutMode = ref<'square' | 'corner' | 'horizontal' | 'vertical'>('square')
+const layoutMode = ref<FloatingLayout>('square')
 let snapTimer: ReturnType<typeof setTimeout> | undefined
 let unlistenMoved: (() => void) | undefined
 let unlistenScaleChanged: (() => void) | undefined
@@ -40,7 +48,7 @@ let lastDocked: DockedEdges = { left: false, top: false, right: false, bottom: f
 const SHOW_DELAY_MS = 250
 // 离开后的隐藏延迟：短一些，但避免灯之间移动时抖动。
 const HIDE_DELAY_MS = 120
-const hoverKey = ref<string | null>(null)
+const hoverTarget = ref<FloatingHoverTarget | null>(null)
 const tooltipHovered = ref(false)
 let showTimer: ReturnType<typeof setTimeout> | undefined
 let hideTimer: ReturnType<typeof setTimeout> | undefined
@@ -52,15 +60,40 @@ function setWindowCells(cells: number) {
   scheduleSnap()
 }
 
-/** 悬停到某个指示灯（key 非 null）或离开（null）。 */
-function onSessionHover(key: string | null) {
+/** 最近一次运行时快照：主窗口可能后开，所以缓存一份给它要。 */
+let lastRuntime: FloatingRuntimeSnapshot | null = null
+let unlistenRuntimeRequest: UnlistenFn | undefined
+
+/**
+ * 宿主算出各形态的运行时快照 → 广播给主窗口（组件徽标 + 三形态预览）。
+ * 主窗口没开也没关系，事件没人收而已。
+ */
+function onModuleRuntime(snapshot: FloatingRuntimeSnapshot) {
+  lastRuntime = snapshot
+  void broadcastRuntime()
+}
+
+/** 把缓存的运行时快照发给主窗口；主窗口刚挂载时会主动来要一次。 */
+async function broadcastRuntime() {
+  if (!lastRuntime) {
+    return
+  }
+  try {
+    await emitTo('main', FLOATING_RUNTIME_EVENT, lastRuntime)
+  } catch (error) {
+    console.warn('failed to broadcast floating runtime', error)
+  }
+}
+
+/** 某个模块上报悬停到了它的哪个对象（null 表示离开），由外壳转成提示窗事件。 */
+function onModuleHover(target: FloatingHoverTarget | null) {
   clearTimeout(showTimer)
   clearTimeout(hideTimer)
   showTimer = undefined
   hideTimer = undefined
 
-  if (key === null) {
-    hoverKey.value = null
+  if (target === null) {
+    hoverTarget.value = null
     if (tooltipHovered.value) return
     // 稍作延迟再隐藏，避免在相邻指示灯之间移动时反复开关。
     hideTimer = setTimeout(() => {
@@ -70,7 +103,7 @@ function onSessionHover(key: string | null) {
     return
   }
 
-  hoverKey.value = key
+  hoverTarget.value = target
   showTimer = setTimeout(() => {
     showTimer = undefined
     void emitHover(true)
@@ -86,15 +119,15 @@ function onTooltipInteraction(hovered: boolean) {
     hideTimer = undefined
     return
   }
-  if (hoverKey.value === null) {
-    onSessionHover(null)
+  if (hoverTarget.value === null) {
+    onModuleHover(null)
   }
 }
 
 async function emitHover(visible: boolean) {
   const payload: TooltipHoverPayload = {
     visible,
-    sessionKey: visible ? hoverKey.value : null,
+    target: visible ? hoverTarget.value : null,
     anchor: lastRect ?? { x: 0, y: 0, width: 0, height: 0 },
     docked: lastDocked,
   }
@@ -107,18 +140,16 @@ async function emitHover(visible: boolean) {
 
 /** 立即取消待显示的提示窗并隐藏已显示的（拖拽 / 点击 / 贴边重算时调用）。 */
 function dismissTooltip() {
-  const wasActive = showTimer !== undefined || hideTimer !== undefined || hoverKey.value !== null
+  const wasActive = showTimer !== undefined || hideTimer !== undefined || hoverTarget.value !== null
   clearTimeout(showTimer)
   clearTimeout(hideTimer)
   showTimer = undefined
   hideTimer = undefined
-  hoverKey.value = null
+  hoverTarget.value = null
   tooltipHovered.value = false
   if (!wasActive) return
   void emitHover(false)
 }
-
-provide(floatingWindowKey, { layoutMode, setWindowCells, onSessionHover })
 
 function onPointerDown(event: PointerEvent) {
   if (event.button !== 0) {
@@ -154,7 +185,26 @@ async function onPointerMove(event: PointerEvent) {
   }
 }
 
-function onPointerUp() {
+/**
+ * 点在某块组件上就打开那个组件的设置页，点空白处打开组件列表页。
+ * 模块槽位的根节点带 `data-module-id`，所以这里不需要认识任何具体模块。
+ */
+function moduleIdAt(target: EventTarget | null): string | null {
+  const element = target instanceof HTMLElement ? target : null
+  return element?.closest('[data-module-id]')?.getAttribute('data-module-id') ?? null
+}
+
+/** 显示主窗口并让它切到某个组件的设置页（null = 组件列表页）。 */
+async function openMainWindow(moduleId: string | null) {
+  try {
+    await showMainWindow()
+    await emitTo('main', OPEN_MODULE_SETTINGS_EVENT, { moduleId } satisfies OpenModuleSettingsPayload)
+  } catch (error) {
+    console.error('failed to open module settings', error)
+  }
+}
+
+function onPointerUp(event: PointerEvent) {
   if (!pointerStart.value) {
     return
   }
@@ -166,13 +216,19 @@ function onPointerUp() {
   stopDragReleasePolling()
 
   if (!wasDragging) {
-    void showMainWindow().catch((error) => {
-      console.error('failed to show main window', error)
-    })
+    // 不是拖拽 = 一次点击：落到哪个组件上就开哪个组件的设置。
+    void openMainWindow(moduleIdAt(event.target))
     return
   }
 
   scheduleSnap()
+}
+
+/** 触摸 / 系统取消：只清理状态，不当成点击（否则会莫名弹主窗口）。 */
+function onPointerCancel() {
+  pointerStart.value = null
+  dragging.value = false
+  stopDragReleasePolling()
 }
 
 /**
@@ -204,7 +260,7 @@ function startDragReleasePolling() {
     dragPollInFlight = true
     // 命令可用时返回 boolean；平台不支持时返回 null（invoke 得到 null/undefined）。
     void invoke('is_left_mouse_pressed')
-      .then((pressed) => {
+      .then(pressed => {
         dragPollInFlight = false
         // 响应可能滞后送达：处理前先确认仍处于「未收到 pointerup 的拖拽」状态。
         if (!dragging.value) {
@@ -225,7 +281,7 @@ function startDragReleasePolling() {
         dragging.value = false
         scheduleSnap()
       })
-      .catch((error) => {
+      .catch(error => {
         dragPollInFlight = false
         // 命令不可用时退回原行为：由 pointerup / onMoved 防抖负责贴边，
         // 宁可偶发提前贴边，也不能永远不贴边。
@@ -255,7 +311,7 @@ function scheduleSnap() {
     if (dragging.value) {
       return
     }
-    void snapWindow().catch((error) => {
+    void snapWindow().catch(error => {
       console.error('failed to snap floating window', error)
     })
   }, 140)
@@ -276,7 +332,7 @@ async function snapWindow() {
       position: { x: monitor.workArea.position.x, y: monitor.workArea.position.y },
       size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
     },
-    { cells: requestedCells },
+    { cells: requestedCells }
   )
 
   if (result.position.x !== position.x || result.position.y !== position.y) {
@@ -317,10 +373,13 @@ onMounted(async () => {
   scheduleSnap()
   unlistenMoved = await window.onMoved(onMoved)
   unlistenScaleChanged = await window.onScaleChanged(onScaleChanged)
-  unlistenTooltipInteraction = await listen<boolean>(
-    TOOLTIP_INTERACTION_EVENT,
-    (event) => onTooltipInteraction(event.payload),
+  unlistenTooltipInteraction = await listen<boolean>(TOOLTIP_INTERACTION_EVENT, event =>
+    onTooltipInteraction(event.payload)
   )
+  // 主窗口挂载时会来要一次快照（它可能错过了我们启动时那次广播）。
+  unlistenRuntimeRequest = await listen(FLOATING_RUNTIME_REQUEST_EVENT, () => {
+    void broadcastRuntime()
+  })
 })
 
 onBeforeUnmount(() => {
@@ -335,6 +394,8 @@ onBeforeUnmount(() => {
   unlistenMoved?.()
   unlistenScaleChanged?.()
   unlistenTooltipInteraction?.()
+  unlistenRuntimeRequest?.()
+  unlistenRuntimeRequest = undefined
 })
 </script>
 
@@ -347,9 +408,14 @@ onBeforeUnmount(() => {
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
+      @pointercancel="onPointerCancel"
     >
-      <FloatingModuleHost :layout-mode="layoutMode" />
+      <FloatingModuleHost
+        :layout-mode="layoutMode"
+        @cells="setWindowCells"
+        @hover="onModuleHover"
+        @runtime="onModuleRuntime"
+      />
     </button>
   </div>
 </template>

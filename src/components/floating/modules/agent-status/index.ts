@@ -1,0 +1,49 @@
+import type { FloatingModuleDefinition } from '@/lib/floating-modules'
+import { useAgentStatusStore } from '@/stores/agentStatus'
+import AgentStatusModule from './AgentStatusModule.vue'
+import AgentStatusTooltip from './AgentStatusTooltip.vue'
+import ExtensionsSection from './sections/ExtensionsSection.vue'
+import GeneralSection from './sections/GeneralSection.vue'
+import RecordsSection from './sections/RecordsSection.vue'
+import { agentStatusDemand } from './demand'
+
+/**
+ * Agent 状态灯模块：一个 CLI 会话一盏灯。
+ *
+ * 格子需求（`demand`）、悬停信息卡（`tooltip`）、设置页分区（`settings.sections`）都挂在这里，
+ * 宿主与主窗口只认这份定义，不认识组件内部。
+ */
+export const agentStatusModule: FloatingModuleDefinition = {
+  id: 'agent-status',
+  label: 'Agent 状态灯',
+  description: '每个 CLI 会话一盏灯：绿=执行中 / 黄=等待操作 / 红=出错，悬停看详情。',
+  version: 1,
+  defaultEnabled: true,
+  supportedLayouts: ['square', 'corner', 'horizontal', 'vertical'],
+  component: AgentStatusModule,
+  demand: agentStatusDemand,
+  /**
+   * 设置页分三个分区，主窗口会把它渲染成组件页顶部的二级 tabbar。
+   * 顺序 = tab 顺序；第一个（常规）是点齿轮 / 点悬浮窗进来时落到的默认分区。
+   *
+   * 切法不是「一个配置项一个 tab」，而是按**版面**切：短表单全收在「常规」一页，
+   * 需要占满高度、左右各自滚动的两个面板各占一个 tab（`fill: true`）。
+   */
+  settings: {
+    sections: [
+      { id: 'general', label: '常规', component: GeneralSection },
+      { id: 'extensions', label: '信息卡拓展', component: ExtensionsSection, fill: true },
+      { id: 'records', label: '会话记录', component: RecordsSection, fill: true },
+    ],
+  },
+  tooltip: {
+    component: AgentStatusTooltip,
+    // 一屏预算：head + Endpoint + token + 4 字段 + 刷新标注 + 提问 1 行 ≈ 236px（见 AGENTS.md）。
+    size: { width: 300, height: 260 },
+    /**
+     * 会话数据要先到达提示窗才弹（提示窗是独立 webview，事件异步），
+     * 否则会先弹一个空框、再填内容（且位置可能还在上一个目标那里）。
+     */
+    hasContent: target => useAgentStatusStore().sessions.some(session => session.key === target.key),
+  },
+}

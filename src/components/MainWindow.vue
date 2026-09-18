@@ -1,30 +1,90 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
-import type { FloatingLayout, MaxCellsByLayout, TokenUnit } from '@/lib/floating-modules'
+/**
+ * 主窗口：两级导航 + 内容区。
+ *
+ * 一级 tab = 「悬浮窗设置」（悬浮窗整体：组件列表 + 三形态预览）+
+ * 每个声明了设置页的组件各一页；二级 tab = 组件自己的设置分区
+ * （行为 / 窗口格子 / 当前会话 / 信息卡拓展 / 会话记录）。
+ *
+ * ⚠️ 「悬浮窗设置」是**一页到底**，没有二级：它本身就是一块整体（列表 + 预览并排），
+ * 再切一刀反而把「改组件」和「看效果」拆开了。二级只服务组件设置页。
+ * 组件只给一个分区时同样不渲染二级（只有一个 tab 的 tabbar 是纯噪音）。
+ *
+ * 内容容器按分区的 `fill` 选：`fill: true`（列表 / 编辑器）用 `.main-window--wide` —— 外层不滚、
+ * 内层各列占满高度各自滚；否则 `.main-window--stack` —— 内容有多高算多高，滚外层页面。
+ *
+ * 两级导航都是 `BaseTabs`，靠 variant 区分外观（一级下划线 / 二级胶囊）；
+ * 页面清单完全由模块注册表推出，新增组件不用改这个文件。
+ * 打开某组件设置有两条路：组件列表行上的齿轮，或直接点悬浮窗里的那个组件
+ * （外壳发 `OPEN_MODULE_SETTINGS_EVENT` 过来）。
+ */
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { FLOATING_MODULE_DEFINITIONS } from './floating/modules'
+import FloatingModulesPanel from './floating/FloatingModulesPanel.vue'
+import BaseTabs from './ui/BaseTabs.vue'
+import { OPEN_MODULE_SETTINGS_EVENT, type OpenModuleSettingsPayload } from '@/lib/floating-bridge'
+import { hasModuleSettings, type FloatingModuleSection } from '@/lib/floating-modules'
 import { hideMainWindow, startCurrentWindowDrag } from '@/lib/window'
-import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
-import BaseButton from './ui/BaseButton.vue'
-import BaseInput from './ui/BaseInput.vue'
-import BaseSegmentedControl from './ui/BaseSegmentedControl.vue'
-import BaseSelect from './ui/BaseSelect.vue'
-import BaseSwitch from './ui/BaseSwitch.vue'
-import SettingsField from './ui/SettingsField.vue'
-import EndpointExtensionPanel from './EndpointExtensionPanel.vue'
-import SessionRecordsPanel from './SessionRecordsPanel.vue'
 import closeIcon from '@/assets/close.svg'
 
-const agentStatus = useAgentStatusStore()
+/** 悬浮窗设置页的 tab key；用固定串而不是模块 id，免得将来某个组件真叫这个名字。 */
+const MODULES_TAB = 'floating-window'
+
+/** 一个一级页面：悬浮窗设置，或某个组件的设置页。 */
+interface MainTab {
+  /** tab 唯一 key（组件页 = 模块 id） */
+  key: string
+  /** tabbar 上的文字 */
+  label: string
+  /** 该页的二级分区；空数组 = 这页没有二级 tabbar */
+  sections: FloatingModuleSection[]
+}
+
 const modules = useFloatingModulesStore()
 
-/** 主窗口顶部的三个页面；`settings` 沿用原有设置页，`extension` 按 endpoint 配拓展，`session` 管理持久化会话记录。 */
-type MainTab = 'settings' | 'extension' | 'session'
-const activeTab = ref<MainTab>('settings')
-const tabs: { key: MainTab; label: string }[] = [
-  { key: 'settings', label: '悬浮窗设置' },
-  { key: 'extension', label: '信息卡拓展' },
-  { key: 'session', label: '会话记录' },
-]
+/** 一级页面清单：悬浮窗设置 + 每个有设置页的组件一页（顺序 = 注册表顺序）。 */
+const tabs = computed<MainTab[]>(() => [
+  { key: MODULES_TAB, label: '悬浮窗设置', sections: [] },
+  ...FLOATING_MODULE_DEFINITIONS.filter(hasModuleSettings).map(definition => ({
+    key: definition.id,
+    label: definition.label,
+    sections: definition.settings?.sections ?? [],
+  })),
+])
+
+const activeTab = ref<string>(MODULES_TAB)
+/** 当前一级页的分区列表。 */
+const activeSections = computed(() => tabs.value.find(tab => tab.key === activeTab.value)?.sections ?? [])
+/** 当前二级分区的 id；空串 = 还没选（只有单分区的组件会出现）。 */
+const activeSectionId = ref<string>('')
+/** 当前该渲染的分区内容；这页没有分区时为 null。 */
+const activeSection = computed(
+  () =>
+    activeSections.value.find(section => section.id === activeSectionId.value) ??
+    activeSections.value[0] ??
+    null
+)
+/** 一级 tab 的文字，用作组件页里那个（视觉隐藏的）h1。 */
+const activeTabLabel = computed(() => tabs.value.find(tab => tab.key === activeTab.value)?.label ?? '')
+
+// 换一级页就回到该页第一个分区：组件设置页每次都从默认分区开始，不会停在上次看的那一页。
+watch(
+  activeSections,
+  sections => {
+    activeSectionId.value = sections[0]?.id ?? ''
+  },
+  { immediate: true }
+)
+
+/**
+ * 切到某个组件的设置页。
+ * 组件没有设置页（或没传 id）时回到悬浮窗设置页 —— 悬浮窗上点空白处就是这个语义。
+ */
+function openModuleSettings(moduleId: string | null) {
+  activeTab.value = tabs.value.some(tab => tab.key === moduleId) ? (moduleId as string) : MODULES_TAB
+}
 
 /** 自绘标题栏拖拽：左键按下后交给系统移动无边框窗口。 */
 async function onTitlebarPointerDown(event: PointerEvent) {
@@ -39,30 +99,6 @@ async function onTitlebarPointerDown(event: PointerEvent) {
   }
 }
 
-/** tab 按钮元素，用于方向键切换后把焦点移到新选中项（roving tabindex）。 */
-const tabRefs = ref<HTMLElement[]>([])
-function setTabRef(el: unknown, index: number) {
-  if (el) tabRefs.value[index] = el as HTMLElement
-}
-
-/**
- * tablist 键盘导航：←/→ 在各页面间循环，Home/End 跳到首尾。
- * 只有选中项可 Tab 到达，因此方向键是唯一的横向移动方式（WAI-ARIA Tabs 模式）。
- * 按 tabs.length 计算，新增页面无需改这里。
- */
-function onTabKeydown(event: KeyboardEvent, index: number) {
-  const count = tabs.length
-  let next: number | null = null
-  if (event.key === 'ArrowRight') next = (index + 1) % count
-  else if (event.key === 'ArrowLeft') next = (index - 1 + count) % count
-  else if (event.key === 'Home') next = 0
-  else if (event.key === 'End') next = count - 1
-  if (next === null) return
-  event.preventDefault()
-  activeTab.value = tabs[next].key
-  void nextTick(() => tabRefs.value[next]?.focus())
-}
-
 /** 关闭按钮：隐藏到托盘，不退出进程。 */
 async function onCloseMain() {
   try {
@@ -72,139 +108,25 @@ async function onCloseMain() {
   }
 }
 
-const retentionInput = ref(modules.retentionSeconds)
-const runningTimeoutInput = ref(modules.runningTimeoutSeconds)
-const maxCellsInput = reactive<MaxCellsByLayout>({ ...modules.maxCellsByLayout })
-const tokenUnitInput = ref<TokenUnit>(modules.tokenUnit)
-const proxyResolverInput = ref(modules.proxyResolver)
+let unlistenOpenSettings: UnlistenFn | undefined
 
-/** token 单位选项；`tokens` 显示原始计数，`m_tokens` 显示百万。 */
-const tokenUnitOptions: { value: TokenUnit; label: string }[] = [
-  { value: 'tokens', label: 'Tokens' },
-  { value: 'm_tokens', label: 'M tokens' },
-]
-
-/** 代理解析器下拉选项；只把后端 id/label 映射成通用下拉需要的结构。 */
-const proxyResolverOptions = computed(() =>
-  modules.resolvers.map(option => ({ value: option.id, label: option.label }))
-)
-
-const layoutLabels: { key: FloatingLayout; label: string }[] = [
-  { key: 'square', label: '方形上限' },
-  { key: 'corner', label: '四角上限' },
-  { key: 'horizontal', label: '横条上限' },
-  { key: 'vertical', label: '竖条上限' },
-]
-
-watch(
-  () => modules.retentionSeconds,
-  seconds => {
-    retentionInput.value = seconds
-  },
-  { immediate: true }
-)
-
-watch(
-  () => modules.runningTimeoutSeconds,
-  seconds => {
-    runningTimeoutInput.value = seconds
-  },
-  { immediate: true }
-)
-
-watch(
-  () => modules.maxCellsByLayout,
-  value => {
-    Object.assign(maxCellsInput, value)
-  },
-  { immediate: true, deep: true }
-)
-
-watch(
-  () => modules.tokenUnit,
-  unit => {
-    tokenUnitInput.value = unit
-  },
-  { immediate: true }
-)
-
-watch(
-  () => modules.proxyResolver,
-  id => {
-    proxyResolverInput.value = id
-  },
-  { immediate: true }
-)
-
-/** 切换 Agent 状态灯模块启用状态；失败时回滚 checkbox。 */
-async function toggleAgentStatus(event: Event) {
-  const input = event.target as HTMLInputElement
+onMounted(async () => {
+  // 悬浮窗广播运行时快照（组件徽标 + 三形态预览），并主动要一次避免错过启动时的广播。
+  void modules.startRuntimeBridge()
   try {
-    await modules.updateAgentStatus(input.checked)
-  } catch {
-    input.checked = modules.agentStatusEnabled
+    unlistenOpenSettings = await listen<OpenModuleSettingsPayload>(OPEN_MODULE_SETTINGS_EVENT, event => {
+      openModuleSettings(event.payload?.moduleId ?? null)
+    })
+  } catch (error) {
+    console.warn('open-module-settings channel unavailable', error)
   }
-}
+})
 
-/** 更新完成灯保留时长（秒）。 */
-async function updateRetention() {
-  try {
-    await modules.updateRetentionSeconds(retentionInput.value)
-  } catch {
-    retentionInput.value = modules.retentionSeconds
-  }
-}
-
-/** 更新 Running 无新 hook 超时（秒）；慢 agent 可拉长避免绿灯被误清。 */
-async function updateRunningTimeout() {
-  try {
-    await modules.updateRunningTimeoutSeconds(runningTimeoutInput.value)
-  } catch {
-    runningTimeoutInput.value = modules.runningTimeoutSeconds
-  }
-}
-
-/** 更新指定悬浮窗形态的格子上限。 */
-async function updateMaxCells(layout: FloatingLayout) {
-  try {
-    await modules.updateMaxCellsByLayout({ [layout]: maxCellsInput[layout] })
-  } catch {
-    Object.assign(maxCellsInput, modules.maxCellsByLayout)
-  }
-}
-
-/** 更新 token 展示单位；失败时回滚到 store 中的值。 */
-async function updateTokenUnit() {
-  try {
-    await modules.updateTokenUnit(tokenUnitInput.value)
-  } catch {
-    tokenUnitInput.value = modules.tokenUnit
-  }
-}
-
-/** 更新选中的代理解析器；失败时回滚到 store 中的值。 */
-async function updateProxyResolver() {
-  try {
-    await modules.updateProxyResolver(proxyResolverInput.value)
-  } catch {
-    proxyResolverInput.value = modules.proxyResolver
-  }
-}
-
-/** 将各形态上限与超时设置重置为当前 store 中的值。 */
-function resetMaxCells() {
-  Object.assign(maxCellsInput, modules.maxCellsByLayout)
-  retentionInput.value = modules.retentionSeconds
-  runningTimeoutInput.value = modules.runningTimeoutSeconds
-  tokenUnitInput.value = modules.tokenUnit
-  proxyResolverInput.value = modules.proxyResolver
-}
-
-/** 保存完成灯保留 + Running 超时。 */
-async function saveTimeouts() {
-  await updateRetention()
-  await updateRunningTimeout()
-}
+onBeforeUnmount(() => {
+  unlistenOpenSettings?.()
+  unlistenOpenSettings = undefined
+  modules.stopRuntimeBridge()
+})
 </script>
 
 <template>
@@ -223,185 +145,56 @@ async function saveTimeouts() {
       </button>
     </header>
 
-    <nav class="main-tabs" role="tablist" aria-label="主窗口分区">
-      <button
-        v-for="(tab, index) in tabs"
-        :key="tab.key"
-        :ref="el => setTabRef(el, index)"
-        type="button"
-        role="tab"
-        class="main-tabs__tab"
-        :class="{ 'main-tabs__tab--active': activeTab === tab.key }"
-        :aria-selected="activeTab === tab.key"
-        :aria-controls="`main-tab-panel-${tab.key}`"
-        :id="`main-tab-${tab.key}`"
-        :tabindex="activeTab === tab.key ? 0 : -1"
-        @click="activeTab = tab.key"
-        @keydown="onTabKeydown($event, index)"
-      >
-        {{ tab.label }}
-      </button>
-    </nav>
+    <!-- 一级：悬浮窗设置 / 各组件设置页（下划线，见 .main-tabs 默认样式）。 -->
+    <BaseTabs
+      v-model="activeTab"
+      id-prefix="main"
+      aria-label="主窗口分区"
+      :tabs="tabs.map(tab => ({ key: tab.key, label: tab.label }))"
+    />
+
+    <!-- 二级：当前组件自己的设置分区（胶囊，只在该组件给了多个分区时出现）。 -->
+    <BaseTabs
+      v-if="activeSections.length > 1"
+      v-model="activeSectionId"
+      variant="chips"
+      id-prefix="module"
+      :aria-label="`${activeTabLabel} 设置分区`"
+      :tabs="activeSections.map(section => ({ key: section.id, label: section.label }))"
+    />
 
     <main
-      v-if="activeTab === 'settings'"
-      class="main-window"
-      role="tabpanel"
-      tabindex="0"
-      id="main-tab-panel-settings"
-      aria-labelledby="main-tab-settings"
-    >
-      <header class="main-window__hero">
-        <h1 class="main-window__title">悬浮窗设置</h1>
-        <div class="main-window__badge">Agent Status</div>
-      </header>
-
-      <section class="ufo-card module-settings" aria-labelledby="module-settings-title">
-        <div class="ufo-card__header">
-          <h2 id="module-settings-title" class="ufo-card__title">悬浮窗模块</h2>
-          <span class="ufo-card__hint">即时生效</span>
-        </div>
-
-        <div class="module-settings__toggle">
-          <div class="module-settings__toggle-copy">
-            <span class="module-settings__toggle-label">Agent 状态灯</span>
-            <span class="module-settings__toggle-hint">在悬浮窗显示会话指示灯</span>
-          </div>
-          <BaseSwitch
-            :model-value="modules.agentStatusEnabled"
-            aria-label="启用 Agent 状态灯"
-            title="启用 Agent 状态灯"
-            @change="toggleAgentStatus"
-          />
-        </div>
-
-        <SettingsField label="完成灯保留（秒）" label-for="completed-retention-seconds">
-          <BaseInput
-            v-model.number="retentionInput"
-            id="completed-retention-seconds"
-            type="number"
-            min="1"
-            max="86400"
-            step="1"
-            @change="updateRetention"
-          />
-        </SettingsField>
-
-        <SettingsField
-          label="执行中超时（秒）"
-          label-for="running-timeout-seconds"
-          hint="绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。"
-        >
-          <BaseInput
-            v-model.number="runningTimeoutInput"
-            id="running-timeout-seconds"
-            type="number"
-            min="60"
-            max="3600"
-            step="30"
-            title="Running 无新 hook 时移除绿灯；慢 agent 可拉长"
-            @change="updateRunningTimeout"
-          />
-        </SettingsField>
-
-        <SettingsField
-          label="Token 单位"
-          label-id="token-unit-label"
-          hint="悬浮窗提示行里的 token 总量写法：Tokens 显示原始计数，M tokens 以百万为单位。"
-        >
-          <BaseSegmentedControl
-            v-model="tokenUnitInput"
-            name="token-unit"
-            :options="tokenUnitOptions"
-            aria-labelledby="token-unit-label"
-            @change="updateTokenUnit"
-          />
-        </SettingsField>
-
-        <SettingsField
-          label="代理解析器"
-          label-id="proxy-resolver-label"
-          hint="选了代理工具后，会把本地监听地址反查成真正的上游 endpoint 显示在提示窗；不解析时按原样显示。"
-        >
-          <BaseSelect
-            v-model="proxyResolverInput"
-            :options="proxyResolverOptions"
-            aria-labelledby="proxy-resolver-label"
-            @change="updateProxyResolver"
-          />
-        </SettingsField>
-
-        <div class="module-settings__caps" aria-label="各形态格子上限">
-          <SettingsField
-            v-for="item in layoutLabels"
-            :key="item.key"
-            :label="item.label"
-            :label-for="`max-cells-${item.key}`"
-          >
-            <BaseInput
-              v-model.number="maxCellsInput[item.key]"
-              :id="`max-cells-${item.key}`"
-              type="number"
-              min="4"
-              max="8"
-              step="1"
-              @change="updateMaxCells(item.key)"
-            />
-          </SettingsField>
-        </div>
-
-        <div class="module-settings__actions">
-          <BaseButton variant="ghost" @click="resetMaxCells"> 重置 </BaseButton>
-          <BaseButton variant="primary" @click="saveTimeouts"> 保存 </BaseButton>
-        </div>
-      </section>
-
-      <p class="agent-session-list__meta">
-        每个 CLI 会话对应一盏独立状态灯；窗口在默认 4 格之上按数量放大，上限由各形态配置决定。
-      </p>
-
-      <section class="ufo-card agent-session-list" aria-labelledby="agent-session-list-title">
-        <div class="ufo-card__header">
-          <h2 id="agent-session-list-title" class="ufo-card__title">Agent 会话</h2>
-          <span class="ufo-card__hint">
-            {{ agentStatus.sessions.length ? `${agentStatus.sessions.length} 个活跃` : '暂无' }}
-          </span>
-        </div>
-        <p v-if="!agentStatus.sessions.length" class="agent-session-list__empty">当前没有已登记的会话</p>
-        <ul v-else>
-          <li v-for="session in agentStatus.sessions" :key="session.key">
-            <span
-              class="agent-session-list__dot"
-              :class="`agent-session-list__dot--${agentStatus.sessionColor(session)}`"
-              aria-hidden="true"
-            />
-            <span>{{ session.provider }} · {{ session.session_id.slice(0, 12) }}</span>
-            <span>{{ session.phase }}</span>
-          </li>
-        </ul>
-      </section>
-    </main>
-
-    <main
-      v-else-if="activeTab === 'extension'"
+      v-if="activeTab === MODULES_TAB"
       class="main-window main-window--wide"
       role="tabpanel"
       tabindex="0"
-      id="main-tab-panel-extension"
-      aria-labelledby="main-tab-extension"
+      :id="`main-panel-${MODULES_TAB}`"
+      :aria-labelledby="`main-tab-${MODULES_TAB}`"
     >
-      <EndpointExtensionPanel />
+      <FloatingModulesPanel @open-settings="openModuleSettings" />
     </main>
 
     <main
       v-else
-      class="main-window main-window--wide"
+      class="main-window"
+      :class="activeSection?.fill ? 'main-window--wide' : 'main-window--stack'"
       role="tabpanel"
       tabindex="0"
-      id="main-tab-panel-session"
-      aria-labelledby="main-tab-session"
+      :id="`main-panel-${activeTab}`"
+      :aria-labelledby="`main-tab-${activeTab}`"
     >
-      <SessionRecordsPanel />
+      <!-- 组件名只在无障碍树里出现：屏幕上的一级 tab + 二级 tab 已经说清是哪个组件的哪一块。 -->
+      <h1 class="sr-only">{{ activeTabLabel }}</h1>
+      <section
+        v-if="activeSection"
+        class="module-page"
+        :class="{ 'module-page--fill': activeSection.fill }"
+        role="tabpanel"
+        :id="`module-panel-${activeSection.id}`"
+        :aria-labelledby="`module-tab-${activeSection.id}`"
+      >
+        <component :is="activeSection.component" />
+      </section>
     </main>
   </div>
 </template>

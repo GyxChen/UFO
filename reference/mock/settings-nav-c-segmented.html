@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 方案 C · 一级横条 + 二级分段控件</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+:root{
+  --ufo-bg-main:#3d3d3d; --ufo-surface:#2a2a2a; --ufo-surface-2:#323232; --ufo-input:#1f1f1f;
+  --ufo-border:rgba(255,255,255,.08); --ufo-border-strong:rgba(255,255,255,.14);
+  --ufo-text:#f3f4f6; --ufo-muted:#a3a3a3; --ufo-accent:#34d399; --ufo-accent-soft:rgba(52,211,153,.16);
+  --ufo-accent-on:#052e1d; --ufo-ring:rgba(52,211,153,.55); --ufo-radius:12px;
+  --font-sans:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:28px 20px 40px;display:grid;place-items:start center;gap:16px;
+  font-family:var(--font-sans);color:var(--ufo-text);
+  background:radial-gradient(circle at top left,#4a4a4a 0%,#1c1c1c 55%),#141414}
+.lead{width:800px;max-width:100%;margin:0;font-size:12.5px;line-height:1.8;color:var(--ufo-muted)}
+.lead b{color:var(--ufo-text);font-weight:600}
+.lead .k{background:var(--ufo-input);border-radius:6px;padding:1px 6px;font-size:12px}
+
+.frame{width:800px;height:600px;display:flex;flex-direction:column;overflow:hidden;border-radius:16px;
+  background:var(--ufo-bg-main);border:1px solid var(--ufo-border-strong);box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.titlebar{position:relative;display:flex;align-items:center;height:40px;padding:0 8px 0 12px;flex:none;
+  background:rgba(0,0,0,.18);border-bottom:1px solid var(--ufo-border);font-size:12px;color:var(--ufo-muted)}
+.titlebar .x{margin-left:auto;width:36px;height:36px;border:0;border-radius:8px;background:transparent;color:#a3a3a3;cursor:pointer}
+.titlebar .x:hover{background:rgba(248,113,113,.18);color:var(--ufo-text)}
+
+.l1{display:flex;gap:4px;padding:0 8px;flex:none;background:rgba(0,0,0,.10);border-bottom:1px solid var(--ufo-border)}
+.l1__tab{position:relative;margin-bottom:-1px;border:0;background:transparent;padding:11px 12px 10px;
+  font:500 13px/1 var(--font-sans);color:var(--ufo-muted);cursor:pointer;transition:color .15s ease-out}
+.l1__tab:hover{color:var(--ufo-text)}
+.l1__tab.is-on{color:var(--ufo-text);font-weight:600}
+.l1__tab.is-on::after{content:'';position:absolute;left:8px;right:8px;bottom:0;height:2px;border-radius:2px;background:var(--ufo-accent)}
+.l1__tab:focus-visible{outline:2px solid var(--ufo-ring);outline-offset:-3px;border-radius:8px}
+.l1__tab[disabled]{color:#5f5f5f;cursor:default}
+.l1__tab[disabled]:hover{color:#5f5f5f}
+
+.content{flex:1;min-height:0;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px;
+  scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) transparent}
+.panel{display:flex;flex-direction:column;gap:14px}
+.panel[hidden]{display:none}
+.card{display:grid;gap:12px;padding:14px;border-radius:var(--ufo-radius);background:var(--ufo-surface);border:1px solid var(--ufo-border)}
+.card__head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.card__head h2{margin:0;font-size:13px;font-weight:600;color:#e5e5e5}
+.hint{font-size:11px;color:var(--ufo-muted)}
+.note{margin:0;font-size:11px;line-height:1.7;color:var(--ufo-muted)}
+.field{display:grid;gap:6px}
+.field>label{font-size:12px}
+input[type=number],select{width:100%;height:34px;padding:0 10px;font:400 13px var(--font-sans);color:var(--ufo-text);
+  background:var(--ufo-input);border:1px solid var(--ufo-border);border-radius:10px}
+input[type=number]:focus,select:focus{outline:none;border-color:var(--ufo-accent);box-shadow:0 0 0 3px rgba(52,211,153,.28)}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.seg{display:inline-flex;padding:3px;border-radius:10px;background:var(--ufo-input);border:1px solid var(--ufo-border);width:max-content}
+.seg--full{width:100%}
+.seg button{flex:1;border:0;background:transparent;color:var(--ufo-muted);padding:6px 14px;border-radius:8px;
+  font:500 12px var(--font-sans);cursor:pointer}
+.seg button.is-on{background:var(--ufo-accent-soft);color:var(--ufo-accent);font-weight:600}
+.rows{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.row{display:grid;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;
+  background:var(--ufo-surface-2);border:1px solid var(--ufo-border);grid-template-columns:20px minmax(0,1fr) auto auto auto auto}
+.row--plain{grid-template-columns:12px 1fr auto}
+.row__idx{font-size:11px;color:var(--ufo-muted);text-align:center;font-variant-numeric:tabular-nums}
+.row__copy{display:grid;gap:3px;min-width:0}
+.row__copy b{font-size:13px;font-weight:600}
+.row__copy em{font-size:11px;font-style:normal;color:var(--ufo-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row__cells{font-size:11px;color:var(--ufo-muted);font-variant-numeric:tabular-nums}
+.icon-btn{width:26px;height:26px;display:grid;place-items:center;border:0;border-radius:8px;background:transparent;cursor:pointer}
+.icon-btn svg{width:14px;height:14px;fill:#a3a3a3}
+.icon-btn:hover{background:rgba(255,255,255,.08)}
+.icon-btn:hover svg{fill:var(--ufo-text)}
+.sw{position:relative;width:38px;height:22px;border-radius:999px;background:#404040;flex:none}
+.sw::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s ease-out}
+.sw.is-on{background:var(--ufo-accent)}
+.sw.is-on::after{left:19px}
+.grip{color:#6b6b6b;font-size:12px;letter-spacing:-2px;cursor:grab}
+.status{margin:0;font-size:11px;color:var(--ufo-muted)}
+.dot{width:9px;height:9px;border-radius:50%;display:block}
+.dot--green{background:var(--ufo-accent)} .dot--yellow{background:#fbbf24} .dot--red{background:#f87171}
+.shapes{display:flex;flex-direction:column;gap:12px}
+.shape{display:grid;gap:6px}
+.shape__title{font-size:12px;font-weight:600}
+.shape__stage{display:flex;align-items:center;justify-content:center;min-height:78px;border-radius:10px;background:var(--ufo-input);padding:8px}
+.shape__win{display:flex;gap:1px;border-radius:6px;overflow:hidden;background:var(--ufo-border-strong);border:1px solid var(--ufo-border-strong)}
+.shape__win span{display:grid;place-items:center;background:var(--ufo-accent-soft);color:var(--ufo-accent);font-size:9px;overflow:hidden}
+.shape__win--corner,.shape__win--vertical{flex-direction:column}
+.shape__win--corner{width:96px;height:96px}
+.shape__win--horizontal{width:220px;height:34px}
+.shape__win--vertical{width:34px;height:200px}
+.shape__size{font-size:10px;color:var(--ufo-muted);font-variant-numeric:tabular-nums}
+.split-cols{display:grid;grid-template-columns:minmax(180px,1fr) minmax(0,1.35fr);gap:12px;align-items:start}
+.col{display:grid;gap:8px;min-width:0}
+.col__head{font-size:12px;font-weight:600;color:#e5e5e5}
+.editor{margin:0;padding:10px;border-radius:10px;background:var(--ufo-input);border:1px solid var(--ufo-border);
+  font:400 11px/1.7 ui-monospace,'Cascadia Mono',Consolas,monospace;color:#a3a3a3;overflow:auto;max-height:150px;white-space:pre}
+.btn{height:32px;padding:0 12px;border-radius:10px;font:500 12px var(--font-sans);cursor:pointer;border:1px solid transparent}
+.btn--ghost{background:transparent;border-color:var(--ufo-border-strong);color:var(--ufo-text)}
+.btn--danger{background:transparent;border-color:rgba(248,113,113,.4);color:#f87171}
+.btn--primary{background:var(--ufo-accent);color:var(--ufo-accent-on);font-weight:600}
+.actions{display:flex;justify-content:flex-end;gap:8px}
+
+/* ── 方案 A：二级＝胶囊条（L1 之下再来一条，视觉与 L1 明显区分） ── */
+.v-a .l2{display:flex;align-items:center;gap:10px;padding:7px 18px;flex:none;
+  background:rgba(0,0,0,.14);border-bottom:1px solid var(--ufo-border)}
+.v-a .l2[hidden]{display:none}
+.v-a .l2__title{display:none}
+.v-a .l2__items{display:flex;flex-wrap:wrap;gap:6px}
+.v-a .l2__tab{border:1px solid transparent;background:transparent;color:var(--ufo-muted);
+  padding:5px 11px;border-radius:999px;font:500 12px var(--font-sans);cursor:pointer;
+  transition:background-color .15s ease-out,color .15s ease-out}
+.v-a .l2__tab:hover{background:rgba(255,255,255,.06);color:var(--ufo-text)}
+.v-a .l2__tab.is-on{background:var(--ufo-accent-soft);color:var(--ufo-accent);border-color:rgba(52,211,153,.35);font-weight:600}
+.v-a .l2__tab:focus-visible{outline:2px solid var(--ufo-ring);outline-offset:2px}
+
+/* ── 方案 B：二级＝左侧竖排导航（设置中心式，分区多也不挤） ── */
+.v-b .split{flex:1;min-height:0;display:grid;grid-template-columns:152px minmax(0,1fr)}
+.v-b .l2{display:flex;flex-direction:column;gap:10px;padding:12px 10px;overflow-y:auto;
+  background:rgba(0,0,0,.12);border-right:1px solid var(--ufo-border);
+  scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) transparent}
+.v-b .l2[hidden]{display:none}
+.v-b .l2__title{display:none}
+.v-b .l2__items{display:flex;flex-direction:column;gap:2px}
+.v-b .l2__tab{position:relative;text-align:left;border:0;background:transparent;color:var(--ufo-muted);
+  padding:8px 10px 8px 12px;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer}
+.v-b .l2__tab:hover{background:rgba(255,255,255,.06);color:var(--ufo-text)}
+.v-b .l2__tab.is-on{background:var(--ufo-accent-soft);color:var(--ufo-text);font-weight:600}
+.v-b .l2__tab.is-on::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--ufo-accent)}
+.v-b .l2__tab:focus-visible{outline:2px solid var(--ufo-ring);outline-offset:-2px}
+.v-b .content{padding:14px 16px}
+
+/* ── 方案 C：二级＝页面标题右侧的分段控件（不额外占一条） ── */
+.v-c .l2{display:flex;align-items:center;gap:14px;flex:none;padding:14px 18px 0}
+.v-c .l2[hidden]{display:none}
+.v-c .l2__title{margin:0;font-size:15px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
+.v-c .l2__items{display:inline-flex;padding:3px;border-radius:10px;background:var(--ufo-input);
+  border:1px solid var(--ufo-border);margin-left:auto;overflow:auto}
+.v-c .l2__tab{border:0;background:transparent;color:var(--ufo-muted);padding:6px 12px;border-radius:8px;
+  font:500 12px var(--font-sans);cursor:pointer;white-space:nowrap}
+.v-c .l2__tab.is-on{background:var(--ufo-accent-soft);color:var(--ufo-accent);font-weight:600}
+.v-c .l2__tab:focus-visible{outline:2px solid var(--ufo-ring);outline-offset:2px}
+.v-c .content{padding-top:12px}
+    </style>
+  </head>
+  <body class="v-c">
+    <p class="lead"><b>方案 C · 一级横条 + 二级分段控件</b> —— 点一级 tab 切「悬浮窗设置 / Agent 状态灯」，再点二级 tab 切这一页里的分区。一级用<span class="k">下划线</span>，二级刻意换一种外观（胶囊 / 竖排 / 分段），避免两条一模一样的横条叠在一起。</p>
+    <div class="frame">
+    <header class="titlebar"><span>UFO · 主窗口</span><button type="button" class="x" aria-label="隐藏主窗口">✕</button></header>
+    <nav class="l1" role="tablist" aria-label="主窗口分区">
+      <button type="button" class="l1__tab is-on" data-l1="floating" role="tab" aria-selected="true">悬浮窗设置</button>
+      <button type="button" class="l1__tab" data-l1="agent" role="tab" aria-selected="false">Agent 状态灯</button>
+      <button type="button" class="l1__tab" data-l1="todo" role="tab" aria-selected="false" disabled title="后续组件的设置页各占一个一级 tab">更多组件…</button>
+    </nav>
+    
+    <div class="l2" data-l2-group="floating" role="tablist" aria-label="悬浮窗设置分区">
+      <h2 class="l2__title">悬浮窗设置</h2>
+      <div class="l2__items">
+        <button type="button" class="l2__tab is-on" data-l2="float-modules" role="tab" aria-selected="true">组件</button>
+        <button type="button" class="l2__tab" data-l2="float-preview" role="tab" aria-selected="false">三形态预览</button>
+      </div>
+    </div>
+    <div class="l2" data-l2-group="agent" role="tablist" aria-label="Agent 状态灯分区" hidden>
+      <h2 class="l2__title">Agent 状态灯</h2>
+      <div class="l2__items">
+        <button type="button" class="l2__tab is-on" data-l2="agent-behavior" role="tab" aria-selected="true">行为</button>
+        <button type="button" class="l2__tab" data-l2="agent-cells" role="tab" aria-selected="false">窗口格子</button>
+        <button type="button" class="l2__tab" data-l2="agent-sessions" role="tab" aria-selected="false">当前会话</button>
+        <button type="button" class="l2__tab" data-l2="agent-ext" role="tab" aria-selected="false">信息卡拓展</button>
+        <button type="button" class="l2__tab" data-l2="agent-records" role="tab" aria-selected="false">会话记录</button>
+      </div>
+    </div>
+    <main class="content">
+<section class="panel" data-panel="float-modules">
+  <div class="card">
+    <div class="card__head"><h2>悬浮窗组件</h2><span class="hint">2 / 2 已启用</span></div>
+    <ul class="rows">
+      <li class="row">
+        <span class="row__idx">1</span>
+        <span class="row__copy"><b>Agent 状态灯</b><em>每个 CLI 会话一盏灯：绿=执行中 / 黄=等待操作 / 红=出错。</em></span>
+        <span class="row__cells">5 格</span>
+        <button class="icon-btn" aria-label="Agent 状态灯的设置"><svg viewBox="0 0 1024 1024"><path fill-rule="evenodd" d="M385.2 153.8L423.3 142.5L390.4 58.0L633.6 58.0L638.8 153.8L684.5 173.4L710.5 188.0L747.0 105.0L919.0 277.0L855.0 348.4L873.4 394.6L881.5 423.3L966.0 390.4L966.0 633.6L870.2 638.8L850.6 684.5L836.0 710.5L919.0 747.0L747.0 919.0L675.6 855.0L629.4 873.4L600.7 881.5L633.6 966.0L390.4 966.0L385.2 870.2L339.5 850.6L313.5 836.0L277.0 919.0L105.0 747.0L169.0 675.6L150.6 629.4L142.5 600.7L58.0 633.6L58.0 390.4L153.8 385.2L173.4 339.5L188.0 313.5L105.0 277.0L277.0 105.0L348.4 169.0ZM512.0 344.0A168,168 0 1 0 512.0 680.0A168,168 0 1 0 512.0 344.0Z"/></svg></button>
+        <span class="sw is-on" role="img" aria-label="已启用"></span>
+        <span class="grip" aria-hidden="true">⋮⋮</span>
+      </li>
+      <li class="row">
+        <span class="row__idx">2</span>
+        <span class="row__copy"><b>Token 用量</b><em>把当前会话的 token 消耗做成一条迷你条形指标。</em></span>
+        <span class="row__cells">2 格</span>
+        <button class="icon-btn" aria-label="Token 用量的设置"><svg viewBox="0 0 1024 1024"><path fill-rule="evenodd" d="M385.2 153.8L423.3 142.5L390.4 58.0L633.6 58.0L638.8 153.8L684.5 173.4L710.5 188.0L747.0 105.0L919.0 277.0L855.0 348.4L873.4 394.6L881.5 423.3L966.0 390.4L966.0 633.6L870.2 638.8L850.6 684.5L836.0 710.5L919.0 747.0L747.0 919.0L675.6 855.0L629.4 873.4L600.7 881.5L633.6 966.0L390.4 966.0L385.2 870.2L339.5 850.6L313.5 836.0L277.0 919.0L105.0 747.0L169.0 675.6L150.6 629.4L142.5 600.7L58.0 633.6L58.0 390.4L153.8 385.2L173.4 339.5L188.0 313.5L105.0 277.0L277.0 105.0L348.4 169.0ZM512.0 344.0A168,168 0 1 0 512.0 680.0A168,168 0 1 0 512.0 344.0Z"/></svg></button>
+        <span class="sw is-on" role="img" aria-label="已启用"></span>
+        <span class="grip" aria-hidden="true">⋮⋮</span>
+      </li>
+    </ul>
+    <p class="status">已启用 2 个组件 · 需求 7 格 · 窗口尺寸随贴边形态变化</p>
+  </div>
+</section>
+<section class="panel" data-panel="float-preview" hidden>
+  <div class="card">
+    <div class="card__head"><h2>悬浮窗预览</h2><span class="hint">贴边即变形</span></div>
+    <div class="shapes">
+      <div class="shape">
+        <span class="shape__title">方形 · 四角</span>
+        <div class="shape__stage">
+          <div class="shape__win shape__win--corner"><span style="flex:5">Agent 状态灯</span><span style="flex:2">Token 用量</span></div>
+        </div>
+        <span class="shape__size">7 格 · 未贴边 56×56 · 贴角 168×168px</span>
+      </div>
+      <div class="shape">
+        <span class="shape__title">横条</span>
+        <div class="shape__stage">
+          <div class="shape__win shape__win--horizontal"><span style="flex:5">Agent 状态灯</span><span style="flex:2">Token 用量</span></div>
+        </div>
+        <span class="shape__size">7 格 · 392×56px</span>
+      </div>
+      <div class="shape">
+        <span class="shape__title">竖条</span>
+        <div class="shape__stage">
+          <div class="shape__win shape__win--vertical"><span style="flex:5"></span><span style="flex:2"></span></div>
+        </div>
+        <span class="shape__size">7 格 · 56×392px</span>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="panel" data-panel="agent-behavior" hidden>
+  <div class="card">
+    <div class="card__head"><h2>行为</h2><span class="hint">即时生效</span></div>
+    <div class="field"><label>完成灯保留（秒）</label><input type="number" value="30"></div>
+    <div class="field">
+      <label>执行中超时（秒）</label>
+      <input type="number" value="60">
+      <span class="note">绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。</span>
+    </div>
+    <div class="field">
+      <label>Token 单位</label>
+      <div class="seg seg--full" role="group" aria-label="Token 单位">
+        <button type="button">Tokens</button><button type="button" class="is-on">M tokens</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>代理解析器</label>
+      <select><option>不解析</option><option selected>cc-switch</option></select>
+      <span class="note">选了代理工具后，会把本地监听地址反查成真正的上游 endpoint 显示在提示窗。</span>
+    </div>
+  </div>
+</section>
+<section class="panel" data-panel="agent-cells" hidden>
+  <div class="card">
+    <div class="card__head"><h2>窗口格子</h2><span class="hint">4 – 8 格</span></div>
+    <p class="note">状态灯越多窗口越大，这里限制各形态最多长到几格；超出的会话会收进最后一格的 +N。上限是整个悬浮窗的（同级组件共享），不只影响状态灯。</p>
+    <div class="grid-2">
+      <div class="field"><label>方形上限</label><input type="number" value="8"></div>
+      <div class="field"><label>四角上限</label><input type="number" value="8"></div>
+      <div class="field"><label>横条上限</label><input type="number" value="8"></div>
+      <div class="field"><label>竖条上限</label><input type="number" value="8"></div>
+    </div>
+    <div class="actions"><button class="btn btn--ghost">重置</button><button class="btn btn--primary">保存</button></div>
+  </div>
+</section>
+<section class="panel" data-panel="agent-sessions" hidden>
+  <div class="card">
+    <div class="card__head"><h2>当前会话</h2><span class="hint">3 个活跃</span></div>
+    <ul class="rows">
+      <li class="row row--plain"><span class="dot dot--green"></span><span class="row__copy"><b>claude · session-4a1</b><em>正在执行</em></span><span class="row__cells">Running</span></li>
+      <li class="row row--plain"><span class="dot dot--yellow"></span><span class="row__copy"><b>codex · session-2f7</b><em>等待用户操作</em></span><span class="row__cells">Waiting</span></li>
+      <li class="row row--plain"><span class="dot dot--red"></span><span class="row__copy"><b>claude · session-9c0</b><em>出错</em></span><span class="row__cells">Failed</span></li>
+    </ul>
+  </div>
+</section>
+<section class="panel" data-panel="agent-ext" hidden>
+  <div class="card">
+    <div class="card__head"><h2>信息卡拓展</h2><span class="hint">按 endpoint 配置</span></div>
+    <div class="split-cols">
+      <div class="col">
+        <span class="col__head">Endpoint</span>
+        <ul class="rows">
+          <li class="row row--plain"><span class="dot dot--green"></span><span class="row__copy"><b>api.anthropic.com</b><em>1 个会话在用</em></span></li>
+          <li class="row row--plain"><span class="dot dot--green"></span><span class="row__copy"><b>api.openai.com</b><em>2 个会话在用</em></span></li>
+        </ul>
+      </div>
+      <div class="col">
+        <span class="col__head">流程脚本 · api.anthropic.com</span>
+        <pre class="editor">const res = await http.get('https://api.anthropic.com/usage');
+return [
+  { label: '余额', value: res.balance, color: 'green' },
+  { label: '今日', value: res.today, color: null },
+];</pre>
+        <p class="note">脚本在 QuickJS 沙盒里跑，只能通过 <code>http</code> 出网；返回值作为拓展字段显示在信息卡上。</p>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="panel" data-panel="agent-records" hidden>
+  <div class="card">
+    <div class="card__head"><h2>会话记录</h2><span class="hint">跨重启续档</span></div>
+    <ul class="rows">
+      <li class="row row--plain"><span class="dot dot--green"></span><span class="row__copy"><b>api.anthropic.com</b><em>上周帮你重构模块化外壳…</em></span><span class="row__cells">1.26M</span></li>
+      <li class="row row--plain"><span class="dot dot--green"></span><span class="row__copy"><b>api.openai.com</b><em>把主窗口的组件选择做成列表 + 预览…</em></span><span class="row__cells">884K</span></li>
+    </ul>
+    <div class="actions"><button class="btn btn--danger">清除全部</button></div>
+  </div>
+</section>
+    </main>
+    
+    </div>
+    <script>
+(function () {
+      var l1s = [].slice.call(document.querySelectorAll('[data-l1]'));
+      var groups = [].slice.call(document.querySelectorAll('[data-l2-group]'));
+      var panels = [].slice.call(document.querySelectorAll('[data-panel]'));
+      var l2s = [].slice.call(document.querySelectorAll('[data-l2]'));
+
+      function selectL2(btn) {
+        l2s.forEach(function (b) {
+          var on = b === btn;
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        panels.forEach(function (p) {
+          p.hidden = p.getAttribute('data-panel') !== btn.getAttribute('data-l2');
+        });
+      }
+
+      function selectL1(id) {
+        l1s.forEach(function (b) {
+          var on = b.getAttribute('data-l1') === id;
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        groups.forEach(function (g) { g.hidden = g.getAttribute('data-l2-group') !== id; });
+        var group = null;
+        for (var i = 0; i < groups.length; i++) {
+          if (groups[i].getAttribute('data-l2-group') === id) group = groups[i];
+        }
+        var first = group && group.querySelector('[data-l2]');
+        if (first) selectL2(first);
+      }
+
+      l1s.forEach(function (b) {
+        b.addEventListener('click', function () { selectL1(b.getAttribute('data-l1')); });
+      });
+      l2s.forEach(function (b) {
+        b.addEventListener('click', function () { selectL2(b); });
+      });
+      selectL1('floating');
+      // 方便评审：?page=agent&tab=agent-ext 直接落到某个二级分区
+      var qs = new URLSearchParams(location.search);
+      if (qs.get('page')) selectL1(qs.get('page'));
+      if (qs.get('tab')) {
+        var want = document.querySelector('[data-l2="' + qs.get('tab') + '"]');
+        if (want) selectL2(want);
+      }
+    })();
+    </script>
+  </body>
+</html>

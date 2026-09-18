@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 组件选择 方案 C（列表 + 三形态实时预览）</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ufo-bg: rgba(61, 61, 61, 0.8);
+        --ufo-bg-main: #3d3d3d;
+        --ufo-surface: #2a2a2a;
+        --ufo-surface-2: #323232;
+        --ufo-input: #1f1f1f;
+        --ufo-border: rgba(255, 255, 255, 0.08);
+        --ufo-border-strong: rgba(255, 255, 255, 0.14);
+        --ufo-radius: 12px;
+        --ufo-text: #f3f4f6;
+        --ufo-muted: #a3a3a3;
+        --ufo-accent: #34d399;
+        --ufo-accent-soft: rgba(52, 211, 153, 0.16);
+        --ufo-accent-on: #052e1d;
+        --ufo-ring: rgba(52, 211, 153, 0.55);
+        --ufo-status-green: #34d399;
+        --ufo-status-yellow: #fbbf24;
+        --ufo-status-red: #f87171;
+        --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 40px 20px 60px;
+        font-family: var(--font-sans);
+        color: var(--ufo-text);
+        background: radial-gradient(circle at top left, #4a4a4a 0%, #1c1c1c 55%), #141414;
+        display: grid;
+        place-items: start center;
+        gap: 18px;
+      }
+
+      .mock-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: min(1000px, 100%);
+      }
+      .mock-tag {
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        background: var(--ufo-accent-soft);
+        color: var(--ufo-accent);
+      }
+      .mock-bar p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--ufo-muted);
+      }
+      .mock-bar a {
+        color: var(--ufo-muted);
+        font-size: 12px;
+        text-decoration: none;
+        border-bottom: 1px dashed var(--ufo-border-strong);
+      }
+      .mock-bar a:hover {
+        color: var(--ufo-text);
+      }
+
+      .frame {
+        width: min(1000px, 100%);
+        height: 750px;
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--ufo-bg-main);
+        border: 1px solid var(--ufo-border);
+        box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55);
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+      }
+      .titlebar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--ufo-border);
+      }
+      .titlebar span {
+        font-size: 13px;
+        color: var(--ufo-muted);
+      }
+      .titlebar button {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--ufo-muted);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+      }
+      .titlebar button:hover {
+        background: var(--ufo-surface-2);
+        color: var(--ufo-text);
+      }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        padding: 8px 14px 0;
+        border-bottom: 1px solid var(--ufo-border);
+      }
+      .tabs button {
+        padding: 8px 14px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        background: transparent;
+        color: var(--ufo-muted);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        border-radius: 8px 8px 0 0;
+      }
+      .tabs button[aria-selected='true'] {
+        color: var(--ufo-text);
+        border-bottom-color: var(--ufo-accent);
+      }
+      .content {
+        padding: 20px 24px 28px;
+        overflow-y: auto;
+      }
+      .content::-webkit-scrollbar {
+        width: 10px;
+      }
+      .content::-webkit-scrollbar-thumb {
+        background: #4b4b4b;
+        border-radius: 999px;
+        border: 3px solid transparent;
+        background-clip: content-box;
+      }
+
+      h1 {
+        margin: 0 0 4px;
+        font-size: 20px;
+        letter-spacing: -0.02em;
+      }
+      .sub {
+        margin: 0 0 16px;
+        color: var(--ufo-muted);
+        font-size: 13px;
+      }
+
+      /* 方案 C：左侧挑组件，右侧实时看到悬浮窗三种形态长什么样。 */
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 16px;
+        align-items: start;
+      }
+      .card {
+        background: var(--ufo-surface);
+        border: 1px solid var(--ufo-border);
+        border-radius: var(--ufo-radius);
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+      .card > header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .card h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .card .hint {
+        font-size: 12px;
+        color: var(--ufo-muted);
+      }
+
+      .module-list {
+        display: grid;
+        gap: 8px;
+      }
+      .module-row {
+        display: grid;
+        grid-template-columns: 26px 34px 1fr auto auto auto;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: var(--ufo-surface-2);
+        border: 1px solid transparent;
+      }
+      .module-row:hover {
+        border-color: var(--ufo-border-strong);
+      }
+      .module-row.is-off {
+        background: transparent;
+        border-color: var(--ufo-border);
+      }
+      .module-row.is-off .module-icon,
+      .module-row.is-off .module-copy {
+        opacity: 0.55;
+      }
+      .order-badge {
+        width: 22px;
+        height: 22px;
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        font-weight: 700;
+        background: var(--ufo-accent-soft);
+        color: var(--ufo-accent);
+      }
+      .module-row.is-off .order-badge {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--ufo-muted);
+      }
+      .module-icon {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        background: var(--ufo-input);
+        border: 1px solid var(--ufo-border);
+      }
+      .module-copy {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .module-copy strong {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .module-copy span {
+        font-size: 12px;
+        color: var(--ufo-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .module-cells {
+        font-size: 11px;
+        color: var(--ufo-muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .handle {
+        width: 26px;
+        height: 26px;
+        display: grid;
+        place-items: center;
+        color: #6b6b6b;
+        cursor: grab;
+        border-radius: 8px;
+      }
+      .handle:hover {
+        color: var(--ufo-muted);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .switch {
+        width: 44px;
+        height: 26px;
+        border: 0;
+        padding: 0;
+        background: transparent;
+        cursor: pointer;
+      }
+      .switch .track {
+        position: relative;
+        display: block;
+        width: 44px;
+        height: 26px;
+        border-radius: 999px;
+        background: #404040;
+        transition: background 0.18s ease;
+      }
+      .switch .track::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.18s ease;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      }
+      .switch[aria-checked='true'] .track {
+        background: var(--ufo-accent);
+      }
+      .switch[aria-checked='true'] .track::after {
+        transform: translateX(18px);
+      }
+      .switch:focus-visible .track {
+        outline: 2px solid var(--ufo-ring);
+        outline-offset: 2px;
+      }
+
+      .caps {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .caps label {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ufo-muted);
+      }
+      .caps input {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--ufo-border);
+        background: var(--ufo-input);
+        color: var(--ufo-text);
+        font: inherit;
+        font-size: 13px;
+      }
+      .caps input:focus-visible {
+        outline: none;
+        border-color: var(--ufo-accent);
+        box-shadow: 0 0 0 3px var(--ufo-ring);
+      }
+
+      .preview {
+        position: sticky;
+        top: 0;
+      }
+      .preview-body {
+        display: grid;
+        gap: 14px;
+      }
+      .shape {
+        display: grid;
+        gap: 6px;
+      }
+      .shape h3 {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ufo-muted);
+        display: flex;
+        justify-content: space-between;
+      }
+      .shape h3 em {
+        font-style: normal;
+        color: #6b6b6b;
+        font-weight: 500;
+      }
+      .stage {
+        display: grid;
+        place-items: center;
+        padding: 12px;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.18);
+        border: 1px dashed var(--ufo-border);
+        min-height: 128px;
+      }
+      /* 悬浮窗外壳视觉：毛玻璃 + 圆角，尺寸随形态变化。 */
+      .shell {
+        display: flex;
+        gap: 2px;
+        padding: 3px;
+        border-radius: 8px;
+        background: var(--ufo-bg);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        backdrop-filter: blur(6px);
+        box-shadow: 0 6px 15px rgba(142, 142, 142, 0.19);
+      }
+      .shell.is-column {
+        flex-direction: column;
+      }
+      .block {
+        display: grid;
+        place-items: center;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--ufo-muted);
+        font-size: 11px;
+        font-weight: 700;
+        min-width: 14px;
+        min-height: 14px;
+        overflow: hidden;
+      }
+      .block.is-1 {
+        background: var(--ufo-accent-soft);
+        border-color: color-mix(in srgb, var(--ufo-accent) 40%, transparent);
+        color: var(--ufo-accent);
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        font-size: 11px;
+        color: var(--ufo-muted);
+      }
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .legend i {
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        background: var(--ufo-accent-soft);
+        color: var(--ufo-accent);
+        font-size: 9px;
+        font-weight: 700;
+        display: grid;
+        place-items: center;
+        font-style: normal;
+      }
+      .status-line {
+        font-size: 12px;
+        color: var(--ufo-muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .status-line b {
+        color: var(--ufo-text);
+        font-weight: 600;
+      }
+      .note {
+        margin: 0;
+        font-size: 11px;
+        color: #6b6b6b;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="mock-bar">
+      <span class="mock-tag">方案 C · 列表 + 三形态预览</span>
+      <p>左边勾组件，右边立刻看到方形 / 横条 / 竖条各自的样子与格子占用。</p>
+      <a href="./floating-modules-index.html">← 返回对比页</a>
+    </div>
+
+    <div class="frame">
+      <div class="titlebar">
+        <span>UFO · 主窗口</span>
+        <button type="button" aria-label="隐藏主窗口">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="主窗口分区">
+        <button type="button" role="tab" aria-selected="true">悬浮窗设置</button>
+        <button type="button" role="tab" aria-selected="false">信息卡拓展</button>
+        <button type="button" role="tab" aria-selected="false">会话记录</button>
+      </nav>
+
+      <div class="content">
+        <h1>悬浮窗设置</h1>
+        <p class="sub">悬浮窗是拼出来的：勾选组件、排好顺序，窗口会按总需求自动长大。</p>
+
+        <div class="split">
+          <div style="display: grid; gap: 16px">
+            <section class="card">
+              <header>
+                <h2>悬浮窗组件</h2>
+                <span class="hint">数字 = 窗口里的先后顺序</span>
+              </header>
+              <div class="module-list" id="moduleList"></div>
+              <span class="status-line" id="moduleStatus" role="status" aria-atomic="true"></span>
+            </section>
+
+            <section class="card">
+              <header>
+                <h2>各形态格子上限</h2>
+                <span class="hint">4 – 8</span>
+              </header>
+              <div class="caps">
+                <label>方形 / 四角<input id="cap-square" type="number" min="4" max="8" value="8" /></label>
+                <label>横条<input id="cap-horizontal" type="number" min="4" max="8" value="8" /></label>
+                <label>竖条<input id="cap-vertical" type="number" min="4" max="8" value="8" /></label>
+              </div>
+              <p class="note">需求超过上限时窗口不再变大，各组件按比例等分收缩（状态灯退化成 +N）。</p>
+            </section>
+          </div>
+
+          <section class="card preview">
+            <header>
+              <h2>悬浮窗预览</h2>
+              <span class="hint">贴边即换形</span>
+            </header>
+            <div class="preview-body">
+              <div class="shape">
+                <h3>方形 · 四角 <em>side = ⌈√总格数⌉</em></h3>
+                <div class="stage"><div class="shell is-column" id="shell-square"></div></div>
+              </div>
+              <div class="shape">
+                <h3>横条 <em>上下贴边 · 宽 = 总格数</em></h3>
+                <div class="stage"><div class="shell" id="shell-horizontal"></div></div>
+              </div>
+              <div class="shape">
+                <h3>竖条 <em>左右贴边 · 高 = 总格数</em></h3>
+                <div class="stage"><div class="shell is-column" id="shell-vertical"></div></div>
+              </div>
+              <div class="legend" id="legend"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // 模块清单：与注册表一一对应；cells = 该组件需要的格子数。
+      const modules = [
+        { id: 'agent-status', label: 'Agent 状态灯', hint: '每个 CLI 会话一盏灯', cells: 4, on: true },
+        { id: 'token-usage', label: 'Token 用量', hint: '当前会话 token 迷你指标', cells: 2, on: true },
+        { id: 'todos', label: '待办清单', hint: '会话 TODO 勾选状态', cells: 3, on: false },
+        { id: 'clipboard', label: '剪贴板历史', hint: '最近几条复制内容', cells: 2, on: false },
+      ]
+
+      const icons = {
+        'agent-status':
+          '<svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><circle cx="8" cy="8" r="3" /><circle cx="17" cy="15" r="3" /></svg>',
+        'token-usage':
+          '<svg viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" stroke-width="2"><path d="M4 19V5M4 19h16" /><rect x="7" y="12" width="3" height="7" rx="1" /><rect x="13" y="8" width="3" height="11" rx="1" /></svg>',
+        todos:
+          '<svg viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" stroke-width="2"><path d="M5 7h14M5 12h14M5 17h8" /></svg>',
+        clipboard:
+          '<svg viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" stroke-width="2"><rect x="6" y="4" width="12" height="16" rx="2" /><path d="M9 9h6M9 13h4" /></svg>',
+      }
+
+      const CELL = 26 // 预览里 1 格 = 26px（按真实比例缩放，不写死窗口像素）
+      const DEFAULT_CELLS = 4
+      const ABS_MAX = 8
+
+      const caps = { square: 8, corner: 8, horizontal: 8, vertical: 8 }
+
+      const clamp = (value, min, max) => Math.min(Math.max(Math.floor(value), min), max)
+
+      /** 窗口格子数 = 各启用组件需求之和，夹在 [默认 4, 该形态上限]。 */
+      function windowCells(layout) {
+        const total = modules.filter(m => m.on).reduce((sum, m) => sum + Math.max(1, m.cells), 0)
+        return clamp(total, DEFAULT_CELLS, clamp(caps[layout], 4, ABS_MAX))
+      }
+
+      function renderList() {
+        const enabledOrder = modules.filter(m => m.on)
+        const list = document.getElementById('moduleList')
+        list.innerHTML = modules
+          .map(m => {
+            const index = enabledOrder.indexOf(m) + 1
+            return (
+              '<div class="module-row ' +
+              (m.on ? '' : 'is-off') +
+              '" data-id="' +
+              m.id +
+              '">' +
+              '<span class="order-badge">' +
+              (m.on ? index : '–') +
+              '</span>' +
+              '<span class="module-icon" aria-hidden="true">' +
+              icons[m.id] +
+              '</span>' +
+              '<span class="module-copy"><strong>' +
+              m.label +
+              '</strong><span>' +
+              m.hint +
+              '</span></span>' +
+              '<span class="module-cells">' +
+              m.cells +
+              ' 格</span>' +
+              '<span class="handle" role="button" tabindex="0" aria-label="拖动排序">⠿</span>' +
+              '<button class="switch" type="button" role="switch" aria-checked="' +
+              m.on +
+              '" aria-label="启用 ' +
+              m.label +
+              '"><span class="track"></span></button>' +
+              '</div>'
+            )
+          })
+          .join('')
+      }
+
+      function renderPreview() {
+        const enabled = modules.filter(m => m.on)
+        const shares = enabled.map(m => Math.max(1, m.cells))
+
+        for (const layout of ['square', 'horizontal', 'vertical']) {
+          const shell = document.getElementById('shell-' + layout)
+          const total = windowCells(layout)
+          const side = Math.ceil(Math.sqrt(total))
+          const length = total * CELL
+
+          // 外壳尺寸：方形为 side×side，横条 total×1，竖条 1×total。
+          if (layout === 'square') {
+            shell.style.width = side * CELL + 'px'
+            shell.style.height = side * CELL + 'px'
+          } else if (layout === 'horizontal') {
+            shell.style.width = length + 'px'
+            shell.style.height = CELL + 'px'
+          } else {
+            shell.style.width = CELL + 'px'
+            shell.style.height = length + 'px'
+          }
+
+          // 分槽：按各组件需求比例（flex-grow = 需求），与实现的 grid fr 分槽一致。
+          shell.innerHTML = enabled
+            .map(
+              (m, i) =>
+                '<span class="block ' +
+                (i === 0 ? 'is-1' : '') +
+                '" style="flex: ' +
+                shares[i] +
+                ' 1 0">' +
+                (i + 1) +
+                '</span>'
+            )
+            .join('')
+          if (!enabled.length) {
+            shell.innerHTML = '<span class="block" style="flex: 1 1 0">空</span>'
+          }
+        }
+
+        const total = windowCells('square')
+        const demand = modules.filter(m => m.on).reduce((sum, m) => sum + Math.max(1, m.cells), 0)
+        document.getElementById('moduleStatus').innerHTML =
+          '已启用 <b>' +
+          enabled.length +
+          '</b> 个组件 · 需求 <b>' +
+          demand +
+          '</b> 格 · 当前窗口 <b>' +
+          total +
+          '</b> 格'
+        document.getElementById('legend').innerHTML =
+          enabled.map((m, i) => '<span><i>' + (i + 1) + '</i>' + m.label + '（' + m.cells + ' 格）</span>').join('') ||
+          '<span>还没有启用任何组件</span>'
+      }
+
+      function refresh() {
+        renderList()
+        renderPreview()
+      }
+
+      document.addEventListener('click', event => {
+        const sw = event.target.closest('.switch')
+        if (!sw) return
+        const id = sw.closest('.module-row').dataset.id
+        const target = modules.find(m => m.id === id)
+        target.on = !target.on
+        refresh()
+      })
+
+      for (const key of ['square', 'horizontal', 'vertical']) {
+        document.getElementById('cap-' + key).addEventListener('change', event => {
+          caps[key] = Number(event.target.value)
+          // 四角与方形共用上限（同一套网格规则）。
+          if (key === 'square') caps.corner = caps.square
+          refresh()
+        })
+      }
+
+      refresh()
+    </script>
+  </body>
+</html>

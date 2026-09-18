@@ -1,6 +1,4 @@
-/** 与 agent-status-layout 的默认容量对齐；此处内联避免循环依赖。 */
-const DEFAULT_WINDOW_CELLS = 4
-const ABS_MAX_CELLS = 8
+import { DEFAULT_WINDOW_CELLS, floatingWindowSize, layoutFromDocked } from './floating-layout'
 
 export interface PhysicalPoint {
   x: number
@@ -123,25 +121,16 @@ export function snapToWorkArea(
   return { position: { x, y }, size, docked }
 }
 
+/**
+ * 贴边后的窗口尺寸。
+ * 口径统一在 `floatingWindowSize`（同一处也供主窗口的三形态预览使用）：
+ * 角 / 方形按边长倍率、上下贴边横条、左右贴边竖条。
+ */
 function dockedSize(base: PhysicalSize, docked: DockedEdges, cells: number): PhysicalSize {
-  const n = Math.min(Math.max(Math.floor(cells), 1), ABS_MAX_CELLS)
-  const vertical = docked.top || docked.bottom
-  const horizontal = docked.left || docked.right
-
-  if (vertical && horizontal) {
-    // 角落贴边 → 正方形：边长倍率按 ceil(sqrt(cells)) 扩展。
-    const side = Math.ceil(Math.sqrt(n))
-    return { width: base.width * side, height: base.height * side }
-  }
-  if (vertical) {
-    // 上下贴边 → 横条 N×1
-    return { width: base.width * n, height: base.height }
-  }
-  if (horizontal) {
-    // 左右贴边 → 竖条 1×N
-    return { width: base.width, height: base.height * n }
-  }
-  return { width: base.width, height: base.height }
+  return floatingWindowSize(layoutFromDocked(docked), cells, {
+    width: base.width,
+    height: base.height,
+  })
 }
 
 function clamp(value: number, min: number, max: number): number {

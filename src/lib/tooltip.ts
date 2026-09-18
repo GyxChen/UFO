@@ -1,4 +1,6 @@
 import type { DockedEdges, PhysicalPoint, PhysicalSize, WorkArea } from './snap'
+import type { FloatingHoverTarget } from './floating-module-context'
+import type { FloatingModuleDefinition } from './floating-modules'
 
 /** 信息提示窗的窗口 label。 */
 export const TOOLTIP_WINDOW_LABEL = 'tooltip'
@@ -19,12 +21,28 @@ export interface TooltipAnchor {
 export interface TooltipHoverPayload {
   /** 是否应显示提示窗。 */
   visible: boolean
-  /** 悬停的会话 key（SessionSnapshot.key）；null 表示未指向具体会话。 */
-  sessionKey: string | null
+  /** 悬停目标（哪个模块的哪个对象）；null 表示未指向具体对象。 */
+  target: FloatingHoverTarget | null
   /** 悬浮窗外框，提示窗据此定位。 */
   anchor: TooltipAnchor
   /** 悬浮窗当前贴边状态，决定提示窗优先出现在哪一侧。 */
   docked: DockedEdges
+}
+
+/**
+ * 按悬停目标找出该由哪个模块提供信息卡内容。
+ *
+ * 提示窗是独立窗口，它只认注册表：目标模块不存在，或模块没有声明「带组件的信息卡」时返回 null
+ * （外壳据此不弹窗）。要求组件存在，是为了让「解析出结果」等价于「有东西可渲染」——
+ * 否则会弹出一个空白的提示窗。这样新增模块自带信息卡，提示窗零改动。
+ */
+export function resolveTooltipDefinition(
+  definitions: readonly FloatingModuleDefinition[],
+  target: FloatingHoverTarget | null | undefined
+): FloatingModuleDefinition | null {
+  if (!target) return null
+  const definition = definitions.find(item => item.id === target.moduleId)
+  return definition?.tooltip?.component ? definition : null
 }
 
 /** 提示窗相对悬浮窗出现的方向。 */
@@ -58,7 +76,7 @@ export function placeTooltip(
   tooltip: PhysicalSize,
   workArea: WorkArea,
   docked: DockedEdges,
-  { gap = DEFAULT_GAP, margin = DEFAULT_MARGIN }: TooltipPlacementOptions = {},
+  { gap = DEFAULT_GAP, margin = DEFAULT_MARGIN }: TooltipPlacementOptions = {}
 ): TooltipPlacement {
   const areaLeft = workArea.position.x
   const areaTop = workArea.position.y
@@ -107,12 +125,7 @@ function candidateSides(docked: DockedEdges): TooltipSide[] {
  * 某一侧的候选坐标。
  * 非主轴上与悬浮窗居中对齐，避免横条 / 竖条形态下提示窗偏在一角。
  */
-function positionForSide(
-  side: TooltipSide,
-  anchor: TooltipAnchor,
-  tooltip: PhysicalSize,
-  gap: number,
-): PhysicalPoint {
+function positionForSide(side: TooltipSide, anchor: TooltipAnchor, tooltip: PhysicalSize, gap: number): PhysicalPoint {
   const centeredX = anchor.x + (anchor.width - tooltip.width) / 2
   const centeredY = anchor.y + (anchor.height - tooltip.height) / 2
   switch (side) {
@@ -135,7 +148,7 @@ function fits(
   areaTop: number,
   areaRight: number,
   areaBottom: number,
-  margin: number,
+  margin: number
 ): boolean {
   return (
     position.x >= areaLeft + margin &&
@@ -146,12 +159,7 @@ function fits(
 }
 
 /** 将坐标夹进工作区；提示窗大于工作区时固定在工作区左上角。 */
-function clampToArea(
-  position: PhysicalPoint,
-  size: PhysicalSize,
-  workArea: WorkArea,
-  margin: number,
-): PhysicalPoint {
+function clampToArea(position: PhysicalPoint, size: PhysicalSize, workArea: WorkArea, margin: number): PhysicalPoint {
   const areaLeft = workArea.position.x
   const areaTop = workArea.position.y
   const maxX = Math.max(areaLeft + margin, areaLeft + workArea.size.width - margin - size.width)

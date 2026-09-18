@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 组件选择 方案 B（卡片画廊）</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ufo-bg: rgba(61, 61, 61, 0.8);
+        --ufo-bg-main: #3d3d3d;
+        --ufo-surface: #2a2a2a;
+        --ufo-surface-2: #323232;
+        --ufo-input: #1f1f1f;
+        --ufo-border: rgba(255, 255, 255, 0.08);
+        --ufo-border-strong: rgba(255, 255, 255, 0.14);
+        --ufo-radius: 12px;
+        --ufo-text: #f3f4f6;
+        --ufo-muted: #a3a3a3;
+        --ufo-accent: #34d399;
+        --ufo-accent-soft: rgba(52, 211, 153, 0.16);
+        --ufo-accent-on: #052e1d;
+        --ufo-ring: rgba(52, 211, 153, 0.55);
+        --ufo-status-green: #34d399;
+        --ufo-status-yellow: #fbbf24;
+        --ufo-status-red: #f87171;
+        --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 40px 20px 60px;
+        font-family: var(--font-sans);
+        color: var(--ufo-text);
+        background: radial-gradient(circle at top left, #4a4a4a 0%, #1c1c1c 55%), #141414;
+        display: grid;
+        place-items: start center;
+        gap: 18px;
+      }
+
+      .mock-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: min(1000px, 100%);
+      }
+      .mock-tag {
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        background: var(--ufo-accent-soft);
+        color: var(--ufo-accent);
+      }
+      .mock-bar p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--ufo-muted);
+      }
+      .mock-bar a {
+        color: var(--ufo-muted);
+        font-size: 12px;
+        text-decoration: none;
+        border-bottom: 1px dashed var(--ufo-border-strong);
+      }
+      .mock-bar a:hover {
+        color: var(--ufo-text);
+      }
+
+      .frame {
+        width: min(1000px, 100%);
+        height: 750px;
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--ufo-bg-main);
+        border: 1px solid var(--ufo-border);
+        box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55);
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+      }
+      .titlebar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--ufo-border);
+      }
+      .titlebar span {
+        font-size: 13px;
+        color: var(--ufo-muted);
+      }
+      .titlebar button {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--ufo-muted);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+      }
+      .titlebar button:hover {
+        background: var(--ufo-surface-2);
+        color: var(--ufo-text);
+      }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        padding: 8px 14px 0;
+        border-bottom: 1px solid var(--ufo-border);
+      }
+      .tabs button {
+        padding: 8px 14px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        background: transparent;
+        color: var(--ufo-muted);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        border-radius: 8px 8px 0 0;
+      }
+      .tabs button[aria-selected='true'] {
+        color: var(--ufo-text);
+        border-bottom-color: var(--ufo-accent);
+      }
+      .content {
+        padding: 20px 24px 28px;
+        overflow-y: auto;
+        display: grid;
+        gap: 16px;
+        align-content: start;
+      }
+      .content::-webkit-scrollbar {
+        width: 10px;
+      }
+      .content::-webkit-scrollbar-thumb {
+        background: #4b4b4b;
+        border-radius: 999px;
+        border: 3px solid transparent;
+        background-clip: content-box;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        letter-spacing: -0.02em;
+      }
+      .hero {
+        display: grid;
+        gap: 6px;
+      }
+      .hero .sub {
+        margin: 0;
+        color: var(--ufo-muted);
+        font-size: 13px;
+      }
+      .section-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+      .section-head h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .section-head .hint {
+        font-size: 12px;
+        color: var(--ufo-muted);
+      }
+
+      /* 方案 B 的核心：卡片即预览，开着的那张带翠绿描边。 */
+      .gallery {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .gallery-card {
+        position: relative;
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border-radius: var(--ufo-radius);
+        background: var(--ufo-surface);
+        border: 1px solid var(--ufo-border);
+        transition:
+          border-color 0.15s ease,
+          transform 0.15s ease;
+      }
+      .gallery-card:hover {
+        transform: translateY(-1px);
+        border-color: var(--ufo-border-strong);
+      }
+      .gallery-card.is-on {
+        border-color: color-mix(in srgb, var(--ufo-accent) 45%, transparent);
+        box-shadow: 0 0 0 3px var(--ufo-accent-soft);
+      }
+      .gallery-card.is-off {
+        opacity: 0.72;
+      }
+      .gallery-card header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .gallery-card header strong {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .gallery-card p {
+        margin: 0;
+        font-size: 12px;
+        color: var(--ufo-muted);
+        line-height: 1.5;
+        min-height: 36px;
+      }
+      .gallery-card footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--ufo-muted);
+      }
+
+      /* 迷你预览：画出该组件在悬浮窗里的样子（方形形态）。 */
+      .thumb {
+        height: 96px;
+        border-radius: 10px;
+        background: rgba(61, 61, 61, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        display: grid;
+        place-items: center;
+        backdrop-filter: blur(6px);
+      }
+      .thumb-lights {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+      .thumb-lights i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: block;
+      }
+      .thumb-bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 5px;
+        height: 44px;
+      }
+      .thumb-bars i {
+        width: 8px;
+        border-radius: 3px 3px 0 0;
+        background: var(--ufo-accent);
+        display: block;
+      }
+      .thumb-token {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ufo-accent);
+        font-variant-numeric: tabular-nums;
+      }
+      .thumb-todos {
+        display: grid;
+        gap: 5px;
+        font-size: 10px;
+        color: var(--ufo-muted);
+      }
+      .thumb-todos span {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .thumb-todos i {
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        border: 1px solid var(--ufo-muted);
+        display: block;
+      }
+      .thumb-todos i.done {
+        background: var(--ufo-accent);
+        border-color: var(--ufo-accent);
+      }
+      .thumb-list {
+        display: grid;
+        gap: 5px;
+        width: 60%;
+      }
+      .thumb-list i {
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.28);
+        display: block;
+      }
+
+      .switch {
+        width: 44px;
+        height: 26px;
+        border: 0;
+        padding: 0;
+        background: transparent;
+        cursor: pointer;
+        flex: 0 0 auto;
+      }
+      .switch .track {
+        position: relative;
+        display: block;
+        width: 44px;
+        height: 26px;
+        border-radius: 999px;
+        background: #404040;
+        transition: background 0.18s ease;
+      }
+      .switch .track::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.18s ease;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      }
+      .switch[aria-checked='true'] .track {
+        background: var(--ufo-accent);
+      }
+      .switch[aria-checked='true'] .track::after {
+        transform: translateX(18px);
+      }
+      .switch:focus-visible .track {
+        outline: 2px solid var(--ufo-ring);
+        outline-offset: 2px;
+      }
+
+      .status-line {
+        font-size: 12px;
+        color: var(--ufo-muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .card {
+        background: var(--ufo-surface);
+        border: 1px solid var(--ufo-border);
+        border-radius: var(--ufo-radius);
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+      .field {
+        display: grid;
+        grid-template-columns: 1fr 200px;
+        align-items: center;
+        gap: 16px;
+      }
+      .field label {
+        font-size: 13px;
+      }
+      .field input {
+        width: 100%;
+        padding: 9px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--ufo-border);
+        background: var(--ufo-input);
+        color: var(--ufo-text);
+        font: inherit;
+        font-size: 13px;
+      }
+      .field input:focus-visible {
+        outline: none;
+        border-color: var(--ufo-accent);
+        box-shadow: 0 0 0 3px var(--ufo-ring);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="mock-bar">
+      <span class="mock-tag">方案 B · 卡片画廊</span>
+      <p>每个组件先给一张「长什么样」的预览，适合组件多、靠视觉挑的场景。</p>
+      <a href="./floating-modules-index.html">← 返回对比页</a>
+    </div>
+
+    <div class="frame">
+      <div class="titlebar">
+        <span>UFO · 主窗口</span>
+        <button type="button" aria-label="隐藏主窗口">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="主窗口分区">
+        <button type="button" role="tab" aria-selected="true">悬浮窗设置</button>
+        <button type="button" role="tab" aria-selected="false">信息卡拓展</button>
+        <button type="button" role="tab" aria-selected="false">会话记录</button>
+      </nav>
+
+      <div class="content">
+        <div class="hero">
+          <h1>悬浮窗设置</h1>
+          <p class="sub">点卡片上的开关就能把组件放进悬浮窗，窗口会按各组件需要的格子自动放大。</p>
+        </div>
+
+        <div class="section-head">
+          <h2>悬浮窗组件</h2>
+          <span class="status-line" id="moduleStatus" role="status" aria-atomic="true"></span>
+        </div>
+
+        <div class="gallery" id="gallery">
+          <article class="gallery-card is-on" data-cells="4">
+            <header>
+              <strong>Agent 状态灯</strong>
+              <button class="switch" type="button" role="switch" aria-checked="true" aria-label="启用 Agent 状态灯">
+                <span class="track"></span>
+              </button>
+            </header>
+            <div class="thumb">
+              <div class="thumb-lights">
+                <i style="background: var(--ufo-status-green)"></i>
+                <i style="background: var(--ufo-status-yellow)"></i>
+                <i style="background: var(--ufo-status-red)"></i>
+                <i style="background: var(--ufo-status-green)"></i>
+              </div>
+            </div>
+            <p>每个 CLI 会话一盏灯，悬停能看到 endpoint / token / 提问。</p>
+            <footer><span>4 格起 · 随会话数放大</span><span>内置</span></footer>
+          </article>
+
+          <article class="gallery-card is-on" data-cells="2">
+            <header>
+              <strong>Token 用量</strong>
+              <button class="switch" type="button" role="switch" aria-checked="true" aria-label="启用 Token 用量">
+                <span class="track"></span>
+              </button>
+            </header>
+            <div class="thumb">
+              <div style="display: grid; gap: 8px; justify-items: center">
+                <span class="thumb-token">1.26M</span>
+                <div class="thumb-bars">
+                  <i style="height: 30%"></i><i style="height: 55%"></i><i style="height: 40%"></i>
+                  <i style="height: 75%"></i><i style="height: 60%"></i><i style="height: 100%"></i>
+                </div>
+              </div>
+            </div>
+            <p>把当前会话的 token 消耗摊成一条迷你指标，超预算变黄。</p>
+            <footer><span>2 格</span><span>示例组件</span></footer>
+          </article>
+
+          <article class="gallery-card is-off" data-cells="3">
+            <header>
+              <strong>待办清单</strong>
+              <button class="switch" type="button" role="switch" aria-checked="false" aria-label="启用 待办清单">
+                <span class="track"></span>
+              </button>
+            </header>
+            <div class="thumb">
+              <div class="thumb-todos">
+                <span><i class="done"></i>接好事件源</span>
+                <span><i class="done"></i>补单元测试</span>
+                <span><i></i>更新文档</span>
+              </div>
+            </div>
+            <p>把当前会话的 TODO 勾选状态摊在悬浮窗上，一眼看到还剩几项。</p>
+            <footer><span>3 格</span><span>示例组件</span></footer>
+          </article>
+
+          <article class="gallery-card is-off" data-cells="2">
+            <header>
+              <strong>剪贴板历史</strong>
+              <button class="switch" type="button" role="switch" aria-checked="false" aria-label="启用 剪贴板历史">
+                <span class="track"></span>
+              </button>
+            </header>
+            <div class="thumb">
+              <div class="thumb-list">
+                <i style="width: 90%"></i><i style="width: 70%"></i><i style="width: 80%"></i>
+              </div>
+            </div>
+            <p>最近几条复制内容，点一下写回剪贴板。</p>
+            <footer><span>2 格</span><span>示例组件</span></footer>
+          </article>
+        </div>
+
+        <section class="card" aria-labelledby="behavior-title">
+          <header class="section-head">
+            <h2 id="behavior-title">行为</h2>
+            <span class="hint">与组件无关</span>
+          </header>
+          <div class="field">
+            <label for="retention">完成灯保留（秒）</label>
+            <input id="retention" type="number" value="30" min="1" max="86400" />
+          </div>
+          <div class="field">
+            <label for="timeout">执行中超时（秒）</label>
+            <input id="timeout" type="number" value="60" min="60" max="3600" />
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const gallery = document.getElementById('gallery')
+      const status = document.getElementById('moduleStatus')
+
+      function refresh() {
+        const cards = [...gallery.querySelectorAll('.gallery-card')]
+        let enabled = 0
+        let cells = 0
+        for (const card of cards) {
+          const on = card.querySelector('.switch').getAttribute('aria-checked') === 'true'
+          card.classList.toggle('is-on', on)
+          card.classList.toggle('is-off', !on)
+          if (on) {
+            enabled += 1
+            cells += Number(card.dataset.cells)
+          }
+        }
+        status.textContent = '已启用 ' + enabled + ' / ' + cards.length + ' 个 · 需求 ' + cells + ' 格'
+      }
+
+      gallery.addEventListener('click', event => {
+        const sw = event.target.closest('.switch')
+        if (!sw) return
+        sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true')
+        refresh()
+      })
+
+      refresh()
+    </script>
+  </body>
+</html>

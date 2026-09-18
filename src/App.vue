@@ -4,7 +4,7 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import { useAgentStatusStore } from './stores/agentStatus'
 import { useFloatingModulesStore } from './stores/floatingModules'
 import { useFlowResultsStore } from './stores/flowResults'
-import FloatingWindow from './components/FloatingWindow.vue'
+import FloatingWindow from './components/floating/FloatingWindow.vue'
 import MainWindow from './components/MainWindow.vue'
 import TooltipWindow from './components/TooltipWindow.vue'
 
