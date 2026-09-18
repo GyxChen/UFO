@@ -11,16 +11,16 @@ import type { ComputedRef, InjectionKey } from 'vue'
 export interface FloatingModuleApi {
   /** 本模块此刻分到的格子数（宿主按需求比例切分窗口，至少 1 格）。 */
   allocatedCells: ComputedRef<number>
-  /** 上报悬停对象（模块自定义 key，如会话 key）；null 表示离开，用于控制信息提示窗。 */
+  /** 上报悬停对象（key 由模块自定义，宿主只负责转发）；null 表示离开，用于控制信息提示窗。 */
   reportHover: (key: string | null) => void
 }
 
 /** 宿主注入给单个模块的上下文 key。 */
 export const floatingModuleKey: InjectionKey<FloatingModuleApi> = Symbol('floating-module')
 
-/** 悬停目标：哪个模块的哪个对象（key 由模块自己定义，如会话 key）。 */
+/** 悬停目标：哪个模块的哪个对象（key 由模块自己定义与解释，外壳只当字符串转发）。 */
 export interface FloatingHoverTarget {
-  /** 触发悬停的模块 id，如 `agent-status`。 */
+  /** 触发悬停的模块 id（注册表里的那个）。 */
   moduleId: string
   /** 模块自定义的悬停对象 key。 */
   key: string

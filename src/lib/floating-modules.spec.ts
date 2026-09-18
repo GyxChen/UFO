@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ABS_MAX_CELLS, ABS_MIN_CELLS, DEFAULT_WINDOW_CELLS } from './floating-layout'
 import {
+  activateModules,
   allocatedCells,
   defaultMaxCellsByLayout,
   enabledModuleDefinitions,
@@ -18,16 +19,13 @@ const config: FloatingModuleConfig = {
     { id: 'agent-status', enabled: true, order: 0 },
     { id: 'future-mod', enabled: false, order: 1 },
   ],
-  completed_retention_ms: 30_000,
-  running_timeout_ms: 60_000,
   max_cells_by_layout: {
     square: 8,
     corner: 8,
     horizontal: 8,
     vertical: 8,
   },
-  token_unit: 'tokens',
-  proxy_resolver: 'none',
+  module_settings: {},
 }
 
 const definitions: FloatingModuleDefinition[] = [
@@ -189,5 +187,57 @@ describe('floating window cell aggregation', () => {
       horizontal: ABS_MAX_CELLS,
       vertical: ABS_MAX_CELLS,
     })
+  })
+})
+
+/**
+ * 模块生命周期：外壳只遍历注册表调用 `activate`，因此新增组件不需要改任何外壳文件。
+ * 这里锁三件事：按注册表顺序启动、清理按逆序执行、单个模块抛错不影响其它模块。
+ */
+describe('activateModules', () => {
+  const definition = (id: string, activate?: FloatingModuleDefinition['activate']) =>
+    ({
+      id,
+      label: id,
+      description: '',
+      version: 1,
+      defaultEnabled: true,
+      supportedLayouts: ['square'],
+      component: { render: () => null },
+      activate,
+    }) as FloatingModuleDefinition
+
+  it('activates every module in registry order and disposes in reverse', () => {
+    const calls: string[] = []
+    const stop = activateModules([
+      definition('first', () => {
+        calls.push('start:first')
+        return () => calls.push('stop:first')
+      }),
+      definition('second', () => {
+        calls.push('start:second')
+        return () => calls.push('stop:second')
+      }),
+    ])
+
+    expect(calls).toEqual(['start:first', 'start:second'])
+    stop()
+    expect(calls).toEqual(['start:first', 'start:second', 'stop:second', 'stop:first'])
+  })
+
+  it('keeps going when a module throws on activate or dispose', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const stop = activateModules([
+      definition('broken', () => {
+        throw new Error('nope')
+      }),
+      definition('ok', () => () => {
+        throw new Error('dispose nope')
+      }),
+    ])
+
+    expect(() => stop()).not.toThrow()
+    expect(warn).toHaveBeenCalledTimes(2)
+    warn.mockRestore()
   })
 })

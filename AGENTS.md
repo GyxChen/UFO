@@ -87,29 +87,42 @@ UI设计请使用:ui-ux-pro-max-skill
 悬浮窗不是「Agent 状态灯专用窗」，而是一块可拼装的容器：组件（模块）同级共享同一块窗口，彼此不知道对方存在。
 
 ```
-src/components/floating/
-├── FloatingWindow.vue              # 外壳：拖拽 / 贴边 / 形态 / 窗口尺寸 / 提示窗路由 / 点组件开设置页
-├── FloatingModuleHost.vue          # 宿主：挂载启用模块，汇总格子需求 → 窗口尺寸，按需求分槽
-├── FloatingModuleSlot.vue          # 槽位：注入 floatingModuleKey，并在根节点标 data-module-id
-├── FloatingModulesPanel.vue        # 主窗「悬浮窗设置」页：列表（开关 / 齿轮 / 排序）+ 三形态预览
-├── FloatingShapePreview.vue        # 三形态预览：按真实比例等比缩放，色块按需求比例分槽
-├── tooltip/
-│   ├── TooltipRow.vue              # 信息卡的通用行（标签 + 值 + 语义色），各组件复用
-│   └── TooltipSection.vue          # 信息卡的通用分组容器（顶部强分隔线）
-└── modules/
-    ├── index.ts                    # 模块注册表：新增组件只改这一行
-    └── agent-status/
-        ├── AgentStatusModule.vue   # 模块视图（按 layout-mode prop 适配四种形态）
-        ├── AgentStatusTooltip.vue  # 模块的悬停信息卡内容（可选）
-        ├── demand.ts               # 模块的格子需求函数（声明式，宿主不挂载也能量窗口）
-        ├── sections/               # 模块的设置页分区（可选）：一个分区 = 二级 tabbar 的一项
-        │   ├── GeneralSection.vue      # 常规：行为 + 窗口格子（两块短表单卡片横向并排）
-        │   ├── ExtensionsSection.vue   # 信息卡拓展（fill：占满高度，左右各自滚）
-        │   └── RecordsSection.vue      # 会话记录（同上）
-        └── index.ts                # 模块定义（id / label / 描述 / 形态 / 组件 / demand / settings / tooltip）
+src/
+├── App.vue                            # 应用外壳：按 label 分派三窗 + 调 activateModules（不认识任何模块）
+├── components/floating/               # 悬浮窗外壳（容器侧，零模块语义）
+│   ├── FloatingWindow.vue             # 外壳：拖拽 / 贴边 / 形态 / 窗口尺寸 / 提示窗路由 / 点组件开设置页
+│   ├── FloatingModuleHost.vue         # 宿主：挂载启用模块，汇总格子需求 → 窗口尺寸，按需求分槽
+│   ├── FloatingModuleSlot.vue         # 槽位：注入 floatingModuleKey，并在根节点标 data-module-id
+│   ├── FloatingModulesPanel.vue       # 主窗「悬浮窗设置」页：列表（开关 / 齿轮 / 排序）+ 三形态预览
+│   ├── FloatingShapePreview.vue       # 三形态预览：按真实比例等比缩放，色块按需求比例分槽
+│   └── tooltip/
+│       ├── TooltipRow.vue             # 信息卡的通用行（标签 + 值 + 语义色），各组件复用
+│       └── TooltipSection.vue         # 信息卡的通用分组容器（顶部强分隔线）
+├── modules/                           # 悬浮窗组件：垂直切片，定义 / 视图 / 数据 / 样式都收在自己目录里
+│   ├── index.ts                       # 模块注册表：新增组件只改这一行
+│   └── agent-status/
+│       ├── index.ts                   # 模块定义（id / label / 形态 / component / demand / settings / tooltip / activate）
+│       ├── AgentStatusModule.vue      # 模块视图（按 layout-mode prop 适配四种形态）
+│       ├── AgentStatusTooltip.vue     # 模块的悬停信息卡内容（可选）
+│       ├── demand.ts                  # 模块的格子需求函数（声明式，宿主不挂载也能量窗口）
+│       ├── agent-status.css           # 模块自己的样式（从 main.css 切出，见「样式归属」）
+│       ├── sections/                  # 模块的设置页分区（可选）：一个分区 = 二级 tabbar 的一项
+│       │   ├── GeneralSection.vue     # 常规：行为 + 窗口格子（两块短表单卡片横向并排）
+│       │   ├── ExtensionsSection.vue  # 信息卡拓展（fill：占满高度，左右各自滚）
+│       │   └── RecordsSection.vue     # 会话记录（同上）
+│       ├── panels/                    # 分区里的大面板：endpoint 拓展 / 流程脚本编辑器 / 会话记录
+│       ├── lib/                       # 模块自己的纯逻辑（含 spec）：状态灯模型 / 灯位布局 / endpoint 档案 / 会话档案 / 流程脚本
+│       ├── settings.ts                # 模块自己的配置块：字段名 / 默认值 / 取值范围只在这里解释（含 spec）
+│       └── stores/                    # 模块自己的 pinia store：会话快照 / endpoint 档案 / 会话档案 / 脚本结果
+├── components/{MainWindow,TooltipWindow}.vue   # 另外两个窗口（外壳侧）
+├── components/ui/                     # 公共控件（按钮 / 输入 / 开关 / 下拉 / 分段 / tab / 脚本编辑器）
+├── lib/                               # 外壳与公共能力：floating-{layout,modules,module-context,bridge} / tooltip / snap / window / js-editor / js-highlight
+└── stores/floatingModules.ts          # 悬浮窗配置（组件开关 / 顺序 / 形态上限 / 各组件配置块）：窗口级数据，属于外壳
 ```
 
-配套的纯逻辑：`src/lib/floating-layout.ts`（形态判定 + 窗口尺寸口径）、`src/lib/floating-modules.ts`（模块定义类型 + 需求汇总）、`src/lib/floating-bridge.ts`（悬浮窗 ↔ 主窗的跨窗口事件契约）。
+配套的纯逻辑：`src/lib/floating-layout.ts`（形态判定 + 窗口尺寸口径）、`src/lib/floating-modules.ts`（模块定义类型 + 需求汇总 + 生命周期启动 `activateModules`）、`src/lib/floating-bridge.ts`（悬浮窗 ↔ 主窗的跨窗口事件契约）。
+
+Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-tauri/src/modules/<id>/`，外壳在 `src-tauri/src/floating/`）。
 
 模块与宿主之间的契约（`src/lib/floating-module-context.ts` 的 `floatingModuleKey`）：
 
@@ -121,6 +134,8 @@ src/components/floating/
 | `allocatedCells` | 宿主 → 模块 | 本模块实际分到的格子数（按需求比例切分窗口，至少 1 格），网格类模块据此决定列行 |
 | `layout-mode` prop | 宿主 → 模块 | 当前形态，模块必须同时适配方形 / 四角 / 横条 / 竖条 |
 | `tooltip`（定义字段） | 模块 → 提示窗 | 可选的悬停信息卡：内容组件 + `size`（可选，覆盖提示窗默认尺寸）+ `hasContent(target)` 就绪判定；不给就悬停不弹窗 |
+| `activate()`（定义字段） | 模块 → 外壳 | 可选的模块生命周期：外壳在每个窗口挂载时调一次（`activateModules`，卸载时逆序调返回值）。模块在这里启动自己的 store / 订阅跨窗口事件 —— **外壳不认识任何模块的数据源**，所以「谁需要先 start」只写在模块自己身上。⚠️ 不能改成组件 `onMounted`：提示窗的 `tooltip.hasContent` 在内容组件挂载**之前**就要答案，数据晚到一步就永远弹不出来 |
+| `module_settings[<id>]`（配置块） | 模块 ↔ 外壳 | 模块自己的配置：外壳按 id 存一块 JSON（`FloatingModuleConfig.module_settings`），**不解释里面任何字段**。模块用 `useFloatingModulesStore().moduleSettings(id)` / `updateModuleSettings(id, patch)` 读写，字段名 / 默认值 / 取值范围写在自己的 `settings.ts`（如 `src/modules/agent-status/settings.ts`）。Rust 侧同理：外壳整块透传，模块在 `src-tauri/src/modules/agent_status/settings.rs` 里解析 / 认领旧字段 / 同步运行时 |
 
 窗口尺寸的汇总规则（`moduleDemand` / `resolveWindowCells` 在 `src/lib/floating-modules.ts`，尺寸换算 `floatingWindowSize` 在 `src/lib/floating-layout.ts`，全是纯函数 + 单元测试）：
 
@@ -132,13 +147,14 @@ src/components/floating/
 - ⚠️ 未贴边的方形固定 56×56（尺寸与格子数无关），所以多组件时内容是**等比压缩**；只有贴角 / 贴边的窗口才按格子数放大。
 - 各形态尺寸由纯函数 `runtimeSnapshot(current, config, definitions, layoutMaxFor)` 一次算全（`{ layout, byLayout }`）：悬浮窗广播它，主窗的列表徽标 + 三形态预览都读它。跨窗口事件在 `src/lib/floating-bridge.ts`（`FLOATING_RUNTIME_EVENT` 广播 / `FLOATING_RUNTIME_REQUEST_EVENT` 补发请求——主窗挂载时可能已错过启动广播）。
 
-新增一个组件 = 5 步（前 3 步必做，第 4 步按需，第 5 步是验证）：
+新增一个组件 = 6 步（前 3 步必做，第 4 / 5 步按需，第 6 步是验证）：
 
-1. 建目录 `src/components/floating/modules/<id>/`，写模块视图 + `index.ts` 导出 `FloatingModuleDefinition`（id 只允许字母 / 数字 / 短横线，后端会校验）。
+1. 建目录 `src/modules/<id>/`（视图、`lib/`、`stores/`、样式都放这里），写模块视图 + `index.ts` 导出 `FloatingModuleDefinition`（id 只允许字母 / 数字 / 短横线，后端会校验）。
 2. 在 `modules/index.ts` 的 `FLOATING_MODULE_DEFINITIONS` 里加一条 —— 主窗列表、悬浮窗宿主、提示窗分派都读它，别的文件不用动。
 3. 模块里 `inject(floatingModuleKey, null)` 拿 `allocatedCells` / `reportHover`（照抄 `AgentStatusModule` 即可）；按形态算的格子数写成定义里的 `demand(layout)`（照抄 `demand.ts`），`supportedLayouts` 按需要写窄。
-4. （按需）`settings.sections` 给设置页（一个分区 = 二级 tab 的一项，照抄 `modules/agent-status/sections/`）、`tooltip` 给悬停信息卡。信息卡 = 内容组件 + `hasContent`（数据没到齐就返回 false，避免先弹空框）；行用 `tooltip/TooltipRow.vue`、分组用 `tooltip/TooltipSection.vue`，装不下就在 `tooltip.size` 里加尺寸。提示窗按 `moduleId` 分派，不认识任何模块语义，**不用改提示窗**。
-5. 跑 `npx vitest run`（`src/components/floating/floating-module-host.spec.ts` 锁同级挂载 + 汇总 + 悬停转发；`src/lib/floating-modules.spec.ts` / `src/lib/floating-layout.spec.ts` 锁需求汇总与尺寸口径；`src/lib/tooltip.spec.ts` 锁信息卡分派）。
+4. （按需）`settings.sections` 给设置页（一个分区 = 二级 tab 的一项，照抄 `src/modules/agent-status/sections/`；组件自己的配置项读写走模块自己的 `settings.ts` 与外壳 store 的 `moduleSettings` / `updateModuleSettings`）、`tooltip` 给悬停信息卡。信息卡 = 内容组件 + `hasContent`（数据没到齐就返回 false，避免先弹空框）；行用 `components/floating/tooltip/TooltipRow.vue`、分组用 `TooltipSection.vue`，装不下就在 `tooltip.size` 里加尺寸。提示窗按 `moduleId` 分派，不认识任何模块语义，**不用改提示窗**。
+5. （按需）`activate()` 给模块生命周期：要订阅跨窗口事件 / 起自己的 store 就写在这里（外壳按注册表调用，见上表）。**不要**改 `App.vue`。
+6. 跑 `npx vitest run`（`src/components/floating/floating-module-host.spec.ts` 锁同级挂载 + 汇总 + 悬停转发，只用假模块；`src/lib/floating-modules.spec.ts` / `src/lib/floating-layout.spec.ts` 锁需求汇总、尺寸口径与 `activateModules`；`src/lib/tooltip.spec.ts` 锁信息卡分派；模块自己的集成验证放 `src/modules/<id>/*.spec.ts`）。
 
 其它约定：
 
@@ -149,9 +165,50 @@ src/components/floating/
   - 二级（`variant="chips"`，胶囊）= 当前组件自己的设置分区，列它自己的 `settings.sections`。
   - ⚠️ 「悬浮窗设置」**一页到底、没有二级**：它本身就是一块整体（列表 + 预览左右并排），再切一刀会把「改组件」和「看效果」拆开。二级只服务组件设置页。
   - ⚠️ 两级 tabbar 上下相邻，外观必须保持不同（下划线 vs 胶囊），否则看不出哪条是一级。组件名在屏幕上已由两级 tab 表达，组件页里那个 h1 用 `sr-only` 只留给读屏。
-- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **各形态格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 「各形态格子上限」虽然摆在状态灯页里，**口径是整个悬浮窗的**（`max_cells_by_layout`，同级组件共享），页面文案已写明。
+- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **各形态格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 前四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「各形态格子上限」**口径是整个悬浮窗的**（`max_cells_by_layout`，同级组件共享，仍由外壳 store 持有），页面文案已写明。
 - 打开组件设置有两条路，走同一个事件：① 主窗组件列表行的齿轮；② 点悬浮窗上该组件的区域（槽位根节点的 `data-module-id` + 外壳 `moduleIdAt()` → `emitTo('main', OPEN_MODULE_SETTINGS_EVENT)`，点空白处传 null = 打开组件列表页）。打开后落到该组件**第一个分区**（`activeSections` 变化时重置），不会停在上次看的那一块。⚠️ 顺序必须是「先 showMainWindow 再 emitTo」：窗口还没打开时事件没人接。`pointercancel`（触摸取消）只清状态，**不当点击**，否则会莫名弹主窗。
 - 布局 mock 见 `reference/mock/floating-modules-index.html`（组件选择三套，采用第三套）；两级导航 mock 见 `reference/mock/settings-nav-index.html`（双层横条 / 左侧竖排 / 分段控件，采用第一套 A：二级用胶囊条）。
+
+### 外壳 / 模块的边界（加组件时的验收口径）
+
+外壳（容器）**不认识任何具体组件**：它只认窗口 label、注册表和几份公开契约。
+
+- 外壳文件 = `src/App.vue`、`src/components/{MainWindow,TooltipWindow}.vue`、`src/components/floating/**`、`src/lib/floating-{layout,modules,module-context,bridge}.ts`、`src/lib/tooltip.ts`、`src/lib/snap.ts`、`src/stores/floatingModules.ts`。这些文件里**不得出现任何模块 id 或模块专有词汇**（状态灯 / 会话 / endpoint / 流程脚本……），注释举例也只写 `<id>`。
+- 模块自己的东西（视图 / 信息卡 / 设置分区 / 面板 / 纯逻辑 / store / 样式）全部收在 `src/modules/<id>/`，跨目录引用写 `@/modules/<id>/…`。
+- 模块 → 外壳只走三份契约：注入的 `FloatingModuleApi`（`allocatedCells` / `reportHover`）、`@/lib/floating-*` 的纯函数与事件常量、外壳公开的 store（如悬浮窗配置）。
+- **样式归属**：`src/assets/main.css` 只留窗口外壳 / 宿主 / 公共控件 / 公共信息卡行与分组（`.main-*` / `.floating-*` / `.ufo-*` / `.module-catalog*` / `.module-row*` / `.module-settings*` / `.shape-preview*` / `.general-cards` / `.tooltip-shell|row|section*`）；模块样式写在 `src/modules/<id>/<id>.css`，由模块定义 `import`。
+  ⚠️ Tailwind v4 只给「入口 CSS」注入主题与工具类：独立 CSS 文件里用 `@apply` 必须先 `@reference "../../assets/main.css";`（在文件头），否则构建报 `Cannot apply unknown utility class`。该指令只提供编译上下文，不会重复输出入口样式。
+- 验收：`rg -n "agent-status|agentStatus" src/App.vue src/components/floating src/lib/floating-modules.ts src/lib/floating-module-context.ts` 应当无命中（模块自己的目录、模块的 spec 除外）。
+- **配置下放**（外壳配置只留 `modules[].enabled|order` + `max_cells_by_layout`，其余字段全在各组件自己的 `module_settings[<id>]` 里）：
+  - 前端：外壳 store 只提供 `moduleSettings(id)` / `updateModuleSettings(id, patch)`（浅合并后整份落盘）；字段名 / 默认值 / 取值范围写在模块自己的 `src/modules/<id>/settings.ts` 里，读的时候各自夹取 —— 坏一个字段只影响它自己。
+  - Rust：`FloatingModuleConfig.module_settings` 整块透传（`BTreeMap<String, Value>`）；模块在 `src-tauri/src/modules/agent_status/settings.rs` 里解析（`AgentStatusSettings::from_block`，逐字段宽松取值 + 夹取），并通过组合根（`lib.rs`）登记的两个钩子接入外壳：`adopt_legacy_fields`（认领旧版扁平字段）与 `config_hook()`（配置落盘后同步给运行时，改完即时生效）。
+  - 旧配置迁移：外壳把顶层多出来的未知字段（`#[serde(flatten)] legacy`）原样交给各模块的认领钩子；有认领就把清理过的配置**写回一次**（不 bump revision、不广播）。⚠️ 只在文件里还没有该模块配置块时取旧值，绝不覆盖用户新改的设置。
+  - ⚠️ 外壳不得再出现模块专有字段名，验收：`rg -n "completed_retention_ms|running_timeout_ms|token_unit|proxy_resolver" src-tauri/src/floating src/lib/floating-modules.ts src/stores/floatingModules.ts` 应当无命中。
+
+### Rust 侧结构（与前端一一对应）
+
+前端按组件切目录，Rust 侧同样 —— 外壳不认识组件，只有组合根点名组件：
+
+```
+src-tauri/src/
+├── lib.rs                  # 组合根：窗口 / 托盘 / 命令注册 / 状态装配 / 组件钩子登记
+├── main.rs                 # 入口：`--status-hook` 快进快出，其余交给 Tauri
+├── devtools.rs / mouse.rs  # 外壳：调试开关 / 鼠标按键状态
+├── floating/               # 悬浮窗外壳（对应前端 `src/lib/floating-*` + `stores/floatingModules.ts`）
+│   └── module_config.rs    # 组件配置的存取：`module_settings` 整块透传，不认字段名
+└── modules/
+    └── agent_status/       # Agent 状态灯（对应前端 `src/modules/agent-status/`）
+        ├── settings.rs     # 本组件的配置块：解析 / 夹取 / 认领旧字段 / 推给运行时
+        ├── status/         # 采集与灯态：hook 收口 / 兼容层 compat/ / 内核 / Codex rollout / token
+        ├── flow/           # 信息卡拓展的流程脚本沙盒（QuickJS）
+        ├── proxy/          # 代理解析器（本地代理 → 上游 endpoint）
+        ├── endpoint_profiles.rs   # endpoint 档案落盘（信息卡拓展的数据源）
+        └── session_store.rs       # 会话存档 SQLite（跨重启续档）
+```
+
+- 目录名 = 前端模块 id 的 Rust 写法（`agent-status` ↔ `agent_status`）；跨目录引用一律写全路径 `crate::modules::agent_status::…`，**不要**在 crate 根做 `use` 别名转发（那样会掩盖结构）。
+- 加一个 Rust 侧组件 = 建目录 + `modules/mod.rs` 加一行 + 在组合根登记它的钩子 / 状态 / 命令；外壳（`floating/`）零改动。
+- 验收：`rg -n "agent-status|agentStatus|token_unit|proxy_resolver|completed_retention_ms" src-tauri/src/floating src-tauri/src/mouse.rs src-tauri/src/devtools.rs` 应当无命中。
 
 ### 悬浮窗 hover 信息提示
 
@@ -165,15 +222,15 @@ src/components/floating/
 - tooltip 是独立窗口，**不适用**方形/横条/竖条三形态适配；默认尺寸 300×260（`tauri.conf.json`），组件可用 `tooltip.size` 覆盖（提示窗在 `present()` 里**先 `setSize` 再量尺寸定位**）。内容用 flex + 省略号自适应。
 - Agent 状态灯信息卡的展示字段（自上而下顺序固定）：provider/phase、Endpoint（见「代理解析器」）、token 用量、**流程脚本拓展字段 + 刷新标注**、`prompt`（用户提问）。拓展字段紧跟 token 行、提问永远在最后（不要插回提问下面，否则与「字段属用量类」的视觉分组错位）。**不展示 session id**。这些字段属于 `AgentStatusTooltip.vue`，不是提示窗的公共契约。
 - ⚠️ **指示灯不要加 `title` 属性**：`title` 会触发 Windows 原生文字提示，与悬浮窗自己的 tooltip 重复且更简陋。无障碍信息只走 `aria-label`（不产生可见提示）。
-- ⚠️ tooltip 的 token 单位来自模块配置，因此 tooltip 窗口**必须**在 `App.vue` 中 `floatingModules.start()`；否则它永远停留在 `fallbackConfig` 的默认单位，主窗口切换后不生效。（同理 `flowResults.start()` 也必须在 `App.vue` 调。）
+- ⚠️ tooltip 的 token 单位来自模块配置，而 `floatingModules` 是窗口级 store，由外壳在 `App.vue` 里 `start()`（三窗都起）；否则提示窗永远停留在 `fallbackConfig` 的默认单位，主窗口切换后不生效。
 
 ### token 用量展示
 
 - 数据链路：hook 只透传 `transcript_path` → 常驻 monitor 线程用 `TokenTracker` 增量解析 transcript → `StatusRegistry::set_tokens` → `SessionSnapshot.tokens`。**hook 进程不解析 transcript**（每次事件都要启动一次，必须快进快出）。
 - 去重按 `message.id`：同一条 API 响应会写成多条 assistant 记录，每条都带同一份 usage，不去重会翻 2–3 倍。子代理 transcript（`<session-id>/subagents/*.jsonl`）并入同一会话。
 - `SessionSnapshot.tokens` 为 `Option<TokenTotals>` + `#[serde(default)]`（**不得升 `SCHEMA_VERSION`**）；它不是事件派生字段，由 `snapshot()` 时合并。
-- 单位可配（`module_config.rs` 的 `TokenUnit`）：`tokens` = 原始计数（`1,261,847`），`m_tokens` = 百万（`1.26M`，不足 0.01M 显示 `<0.01M`）。**只在主窗口改**（Agent 状态灯的设置页），悬浮窗 / 提示窗只读展示。
-- 格式化在 `src/lib/agent-status.ts`：`tokenTotal` / `formatTokenCount` / `formatTokenMillions`。tooltip 里的 token 明细（title）始终用原始计数，不受单位影响。
+- 单位可配（模块配置块 `module_settings['agent-status'].token_unit`；字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`）：`tokens` = 原始计数（`1,261,847`），`m_tokens` = 百万（`1.26M`，不足 0.01M 显示 `<0.01M`）。**只在主窗口改**（Agent 状态灯的设置页），悬浮窗 / 提示窗只读展示。
+- 格式化在 `src/modules/agent-status/lib/agent-status.ts`：`tokenTotal` / `formatTokenCount` / `formatTokenMillions`。tooltip 里的 token 明细（title）始终用原始计数，不受单位影响。
 
 ### 会话展示字段（base_url / prompt）
 
@@ -191,8 +248,8 @@ src/components/floating/
 
 用 cc-switch 这类本地代理时，`base_url` 只是 `127.0.0.1:<port>`，真实上游写在代理自己的配置里。UFO 通过「代理解析器」把本地地址反查成上游 endpoint 显示在 tooltip 的 Endpoint 行。
 
-- 下拉选的是**解析器工具**（`不解析(none)` / `cc-switch` / 将来更多），不是代理内部的 provider。存 `module_config.rs` 的 `proxy_resolver` 字段，旧配置缺字段回落 `none`。
-- 命中解析时 `SessionSnapshot.upstream_url` 被填充；tooltip 用 `displayEndpoint`（`src/lib/agent-status.ts`）= `upstream_url ?? base_url`，**上游优先、回落本地**，两者都无才显示 `—`。
+- 下拉选的是**解析器工具**（`不解析(none)` / `cc-switch` / 将来更多），不是代理内部的 provider。存模块配置块 `module_settings['agent-status'].proxy_resolver`（`status/settings.rs` 解析；外壳只透传整块 JSON），旧配置缺字段回落 `none`。
+- 命中解析时 `SessionSnapshot.upstream_url` 被填充；tooltip 用 `displayEndpoint`（`src/modules/agent-status/lib/agent-status.ts`）= `upstream_url ?? base_url`，**上游优先、回落本地**，两者都无才显示 `—`。
 - 接口：`ProxyResolver` trait（`proxy/mod.rs`），`build_registry` 里注册一行即接入新工具，下拉与填充逻辑零改动。
 - `CcSwitchResolver`：只读打开 `~/.cc-switch/cc-switch.db`，按 `proxy_config` + `providers` 反查。命中要求该 app 行**两列同时为 1**：`proxy_enabled`（全局代理服务器开关，三行镜像同值）且 `enabled`（该 app 是否被接管）——语义来自 cc-switch 源码，只看其一会在「服务器开着但该 app 未接管」时误命中。⚠️ `listen_port` 是 `INTEGER`（非 TEXT），必须按整数读，否则 rusqlite 读整行 `InvalidType` 失败、功能空转。上游取 `is_current=1` provider 的 endpoint；带 5s TTL 缓存。
 - ⚠️ **两个 app 的 `settings_config` 存法不同，取上游必须按 app 分流**（`upstream_from_settings`）：claude 是 `env.ANTHROPIC_BASE_URL`；codex **没有 `env` 块**，base_url 埋在 `config` 字段那段 **TOML 文本**里（`model_provider` → `[model_providers.<name>].base_url`）。早先只读 `env.ANTHROPIC_BASE_URL`，导致 Codex 会话的 upstream 恒为 None、tooltip 一直停在本地代理地址。解析规则复用适配器那份（`status::base_url_from_config_text`），保证「tooltip 显示的 endpoint」与「反查出的上游」同源。
@@ -227,7 +284,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - ⚠️ 出网只走 `http`，且 `validate_http_url` 拦住 loopback / 私网 / 链路本地 / CGNAT / 云元数据 / 无点短主机名。固有代价：域名解析到内网 IP 挡不住（不发连接无法预解），文档已注明。
 - **为什么把出网收成一个 `http`**（改沙盒能力前先读这段）：脚本是用户原文，安全性完全依赖「他能碰到什么」。QuickJS 本身没有任何 syscall —— 没有 `loader`/`dyn-load` feature 就连 `import`/`require` 都不存在，JS 层也没有 fs/net/child_process 这些宿主接口。因此脚本唯一能「影响外界」的路径，就是我们主动 `globals.set` 进去的那几个闭包。收成一条通道换来三件事：① **地址策略只有一处可管** —— `validate_http_url` 把 loopback/私网/云元数据挡在发起连接之前，若同时开放 socket 或模块加载，端口扫描与 SSRF 根本无从拦起。② **资源可控** —— 单次请求 500ms–15s 超时、响应体 256KB 封顶，配 worker 串行队列，不会出现一个脚本把带宽和内存吃光。③ **可审计、可静默** —— agent 全停 = 零出网（调度只看存活会话），用户能靠「网络有没有动静」判断脚本在干什么；多一条出网路径这条不变量就破了。要加新能力（如读本地文件、走 IPC）必须同样收敛成一个带策略校验的宿主闭包，绝不能给脚本原生网络。
 - **调度**：status monitor 每轮（约 500ms）调 `flow.tick`，**只对「当前存活会话涉及的 endpoint」且到点者入队**；口径是「还在 `StatusSnapshot.sessions` 里」，不看 phase（黄/绿/闪烁灯都可能被悬停）。agent 全停 = 零出网。跑在专用 worker 线程、串行执行；结果按**会话 key** 索引广播 `flow-results`，tooltip 零归一逻辑直接查表。
-- ⚠️ 广播值类型是 `FlowSessionResult { fields, updated_at_ms, interval_sec }`（不是裸 `FlowField[]`）：tooltip 要在字段下方标注「更新于 HH:MM:SS」，让用户能分辨屏上是刚跑的值还是旧值（脚本挂掉时字段整块不显，更需要时间锚点）。`interval_sec` 仍随结果一路带下来（后端调度 / 退避用），但**前端已不展示刷新周期**（对用户是噪音）。`apply_result` 每次回写都刷新标注；格式化在 `src/lib/flow.ts` 的 `formatFlowUpdatedAt`；`isFlowSnapshot` 对**整份结果对象**严格校验（缺新鲜度字段的旧形态直接拒绝）。
+- ⚠️ 广播值类型是 `FlowSessionResult { fields, updated_at_ms, interval_sec }`（不是裸 `FlowField[]`）：tooltip 要在字段下方标注「更新于 HH:MM:SS」，让用户能分辨屏上是刚跑的值还是旧值（脚本挂掉时字段整块不显，更需要时间锚点）。`interval_sec` 仍随结果一路带下来（后端调度 / 退避用），但**前端已不展示刷新周期**（对用户是噪音）。`apply_result` 每次回写都刷新标注；格式化在 `src/modules/agent-status/lib/flow.ts` 的 `formatFlowUpdatedAt`；`isFlowSnapshot` 对**整份结果对象**严格校验（缺新鲜度字段的旧形态直接拒绝）。
 - ⚠️ **同 endpoint 多会话只跑一次**（`running` 去抖），但结果回填到每个会话 key。连续失败按 `interval × 2^n` 指数退避、封顶 600s（否则脚本挂了还每秒打网）。
 - **密钥**：`secrets.get(name)` 按名字从 OS 凭据管理器取（`keyring`，service = `<APP_ID>/flow/<endpoint_id>`）；值不落盘、不进档案、不进日志。⚠️ Windows 凭据管理器**不能按 service 列举**，因此档案 extensions 里存一份 `secret_names` 名字清单——它是删档案时唯一能级联清凭据的依据，清单丢了凭据就成了孤儿。
 - ⚠️ `secret_names` 与 `script_hash` 由**服务端权威维护**：`save_endpoint_flow` 会保留旧 `secret_names`、按脚本内容重算 `script_hash`，**不接受**前端传入这两项（前端漏传会清空凭据记账）。
@@ -235,7 +292,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - ⚠️ `parse_fields` 的 `MAX_FIELDS=4` 与 tooltip 高度（`tauri.conf.json` 的 260）绑定：加字段数要同步看窗口尺寸，超出会被 clip。一屏预算（含刷新标注）：head + Endpoint + token + 4 字段 + 标注 + 提问 1 行 ≈ 236px；提问靠 `--compact` 压到 1 行，**不要再给它加行数**，否则标注会被挤出可视区。
 - ⚠️ rquickjs 闭包两个坑（已踩过）：① 参数生命周期必须写外层具名 `'js`，不能写 `'_`（否则 E0106 / lifetime may not live long enough）；② 可选参数用 `prelude::Opt` 而非 `Option`——`Option` 没实现 `FromParam`，会被当成**必填**参数。
 - ⚠️ release 是 `panic = "abort"`：`flow` 全模块宿主闭包不得 panic（不 unwrap/expect/索引/slice），失败一律变 `Err(String)` 或跳过，否则一次 panic 带走整个 App。
-- 前端：编辑器 `EndpointFlowEditor.vue` + `lib/flow.ts` + `stores/flowResults.ts`；`flowResults.start()` **必须在 `App.vue` 调用**（tooltip 要用它，和 tokenUnit 同坑，不启动永远收不到数据）。`run_flow_test` 不进调度队列，日志回显（仅主窗口）；⚠️ 它是 **`async` 命令 + `spawn_blocking`**——非 async 命令跑在主线程，一次测试最坏阻塞 15s 会冻结窗口事件循环；带引用入参的 async 命令按 tauri 宏要求必须返回 `Result`。
+- 前端：编辑器 `src/modules/agent-status/panels/EndpointFlowEditor.vue` + 模块的 `lib/flow.ts` + `stores/flowResults.ts`。结果 store 由**模块定义**的 `activate()` 启动（见上表），不再依赖 `App.vue`：不启动提示窗就永远收不到脚本字段。`run_flow_test` 不进调度队列，日志回显（仅主窗口）；⚠️ 它是 **`async` 命令 + `spawn_blocking`**——非 async 命令跑在主线程，一次测试最坏阻塞 15s 会冻结窗口事件循环；带引用入参的 async 命令按 tauri 宏要求必须返回 `Result`。
 - 保存/删除 endpoint 后会**立刻**再广播一次 `flow-results`（字段已被 invalidate 清掉），否则 tooltip 手里仍是旧脚本的字段、要等下次轮询才刷新。
 - 新命令注册三处（`#[tauri::command]` + `permissions/status.toml` + capability）：`get_flow_results`/`get_flow_snapshot` 给三窗口（`default.json` 的 `allow-get-flow-results`）；`save_endpoint_flow`/`run_flow_test`/`set_flow_secret`/`delete_flow_secret` 只在 `main-module-settings.json` 授权（仅 main）。
 
@@ -251,7 +308,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - ⚠️ **prompt 现在长期明文驻留磁盘**：原先只在 inbox 里约 500ms 就被消费删除，落库后会长期留在 `session-records.db` 且在主窗口「会话记录」页可见。提问可能含密钥/私有代码，这是已知代价（见下）。
 - ⚠️ **「清除全部」只删归档、不强清内存**：仍在运行的会话会在下一个 hook 事件后被重新记录（面板文案与详情都按此写明）。要连灯一起清是另一种语义（需 `registry.remove`），本轮按需求选择不这么做。
 - **存活标记在前端 join**：列表行的「灯亮着」按 `agentStatus.sessions` 现算，不给存档加存活态字段。
-- **Endpoint 展示 = `upstream_url ?? base_url`**（与 tooltip 的 `displayEndpoint` 同一口径）：`base_url` 是会话实际连的地址（用 cc-switch 时就是 `127.0.0.1:<port>`），`upstream_url` 是刷盘那一刻代理解析器反查出的上游。**两者都要存** —— 只存 base_url 会让面板一直显示 localhost；只存上游则丢失「经哪个本地代理转发」的副标注（`recordLocalNote` 用它）。前端读法是 `src/lib/session-records.ts` 的 `recordEndpoint` / `recordLocalNote`。
+- **Endpoint 展示 = `upstream_url ?? base_url`**（与 tooltip 的 `displayEndpoint` 同一口径）：`base_url` 是会话实际连的地址（用 cc-switch 时就是 `127.0.0.1:<port>`），`upstream_url` 是刷盘那一刻代理解析器反查出的上游。**两者都要存** —— 只存 base_url 会让面板一直显示 localhost；只存上游则丢失「经哪个本地代理转发」的副标注（`recordLocalNote` 用它）。前端读法是 `src/modules/agent-status/lib/session-records.ts` 的 `recordEndpoint` / `recordLocalNote`。
 - ⚠️ `upstream_url` 随 `SessionSnapshot` 一起落库，**不是**回填字段（`StoredSeed` 不含它）：内核的继承阶梯只用 `base_url`，上游由快照生成时按当前解析器现算。库内对应列由 `PRAGMA user_version` 2 迁移补上（v1 用 `ALTER TABLE ADD COLUMN`，老行取 NULL）。
 - **新命令注册三处**：`#[tauri::command]` + `permissions/status.toml` 的 `[[permission]]` + capability 文件。`get_session_records` 给三窗口（`default.json`），`delete_session_record`/`clear_session_records` 只在 `main-module-settings.json` 授权（仅 main）。
 - ⚠️ 会话记录面板同样**不能用 `window.alert`/`confirm`**（`tauri-plugin-prevent-default`），删除/清除都走两步确认 + `role="status"`。

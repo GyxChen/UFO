@@ -3,8 +3,7 @@
  * 主窗口：两级导航 + 内容区。
  *
  * 一级 tab = 「悬浮窗设置」（悬浮窗整体：组件列表 + 三形态预览）+
- * 每个声明了设置页的组件各一页；二级 tab = 组件自己的设置分区
- * （行为 / 窗口格子 / 当前会话 / 信息卡拓展 / 会话记录）。
+ * 每个声明了设置页的组件各一页；二级 tab = 该组件自己的设置分区（切法由组件定义，外壳不参与）。
  *
  * ⚠️ 「悬浮窗设置」是**一页到底**，没有二级：它本身就是一块整体（列表 + 预览并排），
  * 再切一刀反而把「改组件」和「看效果」拆开了。二级只服务组件设置页。
@@ -20,7 +19,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { FLOATING_MODULE_DEFINITIONS } from './floating/modules'
+import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import FloatingModulesPanel from './floating/FloatingModulesPanel.vue'
 import BaseTabs from './ui/BaseTabs.vue'
 import { OPEN_MODULE_SETTINGS_EVENT, type OpenModuleSettingsPayload } from '@/lib/floating-bridge'

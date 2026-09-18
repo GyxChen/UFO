@@ -26,3 +26,7 @@ LOCAL_NOTES.md
 .env
 .codegraph
 target/
+
+# Python 缓存（技能脚本会生成 __pycache__/*.pyc）
+__pycache__/
+*.pyc

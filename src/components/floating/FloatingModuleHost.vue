@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import FloatingModuleSlot from './FloatingModuleSlot.vue'
-import { FLOATING_MODULE_DEFINITIONS } from './modules'
+import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import type { FloatingHoverTarget } from '@/lib/floating-module-context'
 import type { FloatingLayout } from '@/lib/floating-layout'
 import {

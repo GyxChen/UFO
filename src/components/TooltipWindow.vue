@@ -10,7 +10,7 @@ import {
   TOOLTIP_INTERACTION_EVENT,
   type TooltipHoverPayload,
 } from '@/lib/tooltip'
-import { FLOATING_MODULE_DEFINITIONS } from './floating/modules'
+import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 
 /**
  * 悬停信息提示窗（三个窗口里的第三个）。
@@ -134,7 +134,7 @@ onBeforeUnmount(() => {
     @pointerenter="notifyTooltipInteraction(true)"
     @pointerleave="notifyTooltipInteraction(false)"
   >
-    <!-- 内容由模块提供（如 Agent 状态灯的会话信息卡）；多根节点渲染，外壳样式不用为谁调整。 -->
+    <!-- 内容由模块提供（每个组件自带的信息卡）；多根节点渲染，外壳样式不用为谁调整。 -->
     <component :is="content.component" v-if="content" :target="content.target" />
   </div>
 </template>

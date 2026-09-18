@@ -12,7 +12,6 @@ import type {
   FloatingModuleDefinition,
   FloatingRuntimeSnapshot,
 } from '@/lib/floating-modules'
-import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 
 /**
@@ -40,9 +39,9 @@ const stubModule = (cells: number, key = 'stub-key') =>
 
 const definitions: FloatingModuleDefinition[] = [
   {
-    id: 'agent-status',
-    label: 'Agent 状态灯',
-    description: '会话指示灯',
+    id: 'stub-a',
+    label: '假模块 A',
+    description: '占位模块',
     version: 1,
     defaultEnabled: true,
     supportedLayouts: ['square', 'corner', 'horizontal', 'vertical'],
@@ -65,14 +64,11 @@ const config = (extraEnabled: boolean): FloatingModuleConfig => ({
   schema_version: 1,
   revision: 5,
   modules: [
-    { id: 'agent-status', enabled: true, order: 0 },
+    { id: 'stub-a', enabled: true, order: 0 },
     { id: 'extra', enabled: extraEnabled, order: 1 },
   ],
-  completed_retention_ms: 30_000,
-  running_timeout_ms: 60_000,
   max_cells_by_layout: { square: 8, corner: 8, horizontal: 8, vertical: 8 },
-  token_unit: 'tokens',
-  proxy_resolver: 'none',
+  module_settings: {},
 })
 
 /** 装配一次宿主：注入 pinia 与模块清单，并按形态挂载。 */
@@ -163,7 +159,7 @@ describe('FloatingModuleHost', () => {
     const snapshot = (wrapper.emitted('runtime') as [FloatingRuntimeSnapshot][]).at(-1)?.[0]
     // 需求按形态分别求值：当前形态是方形，但四种形态都要有数据（主窗口要画三形态预览）。
     expect(Object.keys(snapshot?.byLayout ?? {})).toEqual(['square', 'corner', 'horizontal', 'vertical'])
-    expect(snapshot?.byLayout.horizontal.demands).toEqual({ 'agent-status': 4, extra: 2 })
+    expect(snapshot?.byLayout.horizontal.demands).toEqual({ 'stub-a': 4, extra: 2 })
     expect(snapshot?.byLayout.horizontal.windowCells).toBe(6)
   })
 
@@ -177,9 +173,9 @@ describe('FloatingModuleHost', () => {
 
     const snapshot = (wrapper.emitted('runtime') as [FloatingRuntimeSnapshot][]).at(-1)?.[0]
     // 只支持竖条的模块不出现在横条 / 方形快照里，窗口也随之回到 4 格。
-    expect(snapshot?.byLayout.horizontal.demands).toEqual({ 'agent-status': 4 })
+    expect(snapshot?.byLayout.horizontal.demands).toEqual({ 'stub-a': 4 })
     expect(snapshot?.byLayout.horizontal.windowCells).toBe(4)
-    expect(snapshot?.byLayout.vertical.demands).toEqual({ 'agent-status': 4, extra: 2 })
+    expect(snapshot?.byLayout.vertical.demands).toEqual({ 'stub-a': 4, extra: 2 })
   })
 
   it('ignores disabled modules', async () => {
@@ -189,47 +185,4 @@ describe('FloatingModuleHost', () => {
     expect(lastCells(wrapper)).toBe(4)
   })
 
-  it('mounts the real agent-status module through the registry', async () => {
-    const pinia = createPinia()
-    setActivePinia(pinia)
-    useFloatingModulesStore().applyConfig(config(false))
-    useAgentStatusStore().applySnapshot({
-      revision: 1,
-      source_health: 'healthy',
-      sessions: [0, 1, 2, 3, 4].map(index => ({
-        key: 'claude:session-' + index,
-        provider: 'claude',
-        session_id: 'session-' + index,
-        phase: 'running',
-        source: 'hook',
-        confidence: 100,
-        started_at_ms: index,
-        last_seen_at_ms: index,
-        completed_at_ms: null,
-        remove_at_ms: null,
-        is_flashing: false,
-        pid: null,
-        error_code: null,
-        base_url: null,
-        upstream_url: null,
-        prompt: null,
-        waiting_reason: null,
-        tokens: null,
-        last_sequence: null,
-        termination_confirmed: false,
-      })),
-    })
-
-    // 不注入 definitions：走真实注册表，验证内置模块与新宿主 / 槽位的契约对得上。
-    const wrapper = mount(FloatingModuleHost, {
-      props: { layoutMode: 'horizontal' },
-      global: { plugins: [pinia] },
-    })
-    await wrapper.vm.$nextTick()
-
-    // 5 个会话 → 5 盏灯；窗口按模块上报的 5 格汇总，分槽也是单模块独占。
-    expect(wrapper.findAll('.agent-status-module__item')).toHaveLength(5)
-    expect(lastCells(wrapper)).toBe(5)
-    expect(wrapper.find('.floating-module-host').attributes('style')).toContain('grid-template-columns: 5fr')
-  })
 })

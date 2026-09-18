@@ -1,6 +1,5 @@
 import type { Component } from 'vue'
 import type { FloatingHoverTarget } from '@/lib/floating-module-context'
-import { invoke } from '@tauri-apps/api/core'
 import {
   ABS_MAX_CELLS,
   ABS_MIN_CELLS,
@@ -9,8 +8,11 @@ import {
   type FloatingLayout,
 } from '@/lib/floating-layout'
 
-/** 模块 id；除内置 `agent-status` 外都可自由扩展，只需在注册表里登记。 */
-export type FloatingModuleId = 'agent-status' | (string & {})
+/**
+ * 模块 id：只允许字母 / 数字 / 短横线（后端会校验），在注册表里登记即生效。
+ * 刻意不写成「已知 id 的联合类型」—— 外壳的类型层不该点名任何具体模块。
+ */
+export type FloatingModuleId = string
 
 /**
  * 悬浮窗模块定义：新增一个组件就是在注册表里加一条这个结构。
@@ -45,6 +47,18 @@ export interface FloatingModuleDefinition {
   settings?: FloatingModuleSettings
   /** 悬停信息卡；不给 = 悬停该模块不弹提示窗（如纯展示型模块）。 */
   tooltip?: FloatingModuleTooltip
+  /**
+   * 模块的生命周期：外壳在每个窗口挂载时调用一次（悬浮窗 / 主窗 / 提示窗都调）。
+   *
+   * 模块自己在这里订阅跨窗口数据（`listen`）、启动它自己的 store —— **外壳不该知道**
+   * 任何模块的数据源，所以「谁需要先 start」这件事必须写在模块自己身上。
+   * 返回一个清理函数（可选），窗口卸载时调用（外壳按逆序执行）。
+   *
+   * ⚠️ 必须挂在这里而不是组件 `onMounted`：提示窗的 `tooltip.hasContent` 在内容组件挂载
+   * **之前**就要问「有没有内容」，数据晚一步到就永远弹不出来（鸡生蛋死锁）。
+   * 需要按窗口区分行为时，模块自己去读 `getCurrentWindow().label`。
+   */
+  activate?: () => void | (() => void)
 }
 
 /**
@@ -63,7 +77,7 @@ export interface FloatingModuleSection {
   /**
    * 该分区是否要**占满内容区高度**（默认 false = 内容纵向流动，滚外层）。
    *
-   * 列表 / 编辑器这类分区（信息卡拓展、会话记录）要为 true：左右两列各自撑满、各自滚动，
+   * 列表 / 编辑器这类分区（左右两列各自撑满、各自滚动）要为 true：
    * 外层不滚 —— 否则高度链断掉，面板会退化成「有多高算多高 + 整页滚动」。
    */
   fill?: boolean
@@ -96,7 +110,7 @@ export interface FloatingModuleTooltip {
    */
   size?: { width: number; height: number }
   /**
-   * 该悬停目标此刻是否有内容可展示（如会话数据已到达本窗口）。
+   * 该悬停目标此刻是否有内容可展示（如该模块的数据已到达本窗口）。
    * 省略 = 只要有悬停目标就弹窗；返回 false 时不弹，避免先弹一个空框再填内容。
    */
   hasContent?: (target: FloatingHoverTarget) => boolean
@@ -114,6 +128,35 @@ export function hasModuleSettings(definition: FloatingModuleDefinition): boolean
   return (definition.settings?.sections.length ?? 0) > 0
 }
 
+/**
+ * 启动注册表里所有模块的生命周期（外壳在每个窗口挂载时调一次）。
+ *
+ * 返回值是「停掉全部」的函数：按启动的**逆序**调用各模块交回来的清理函数。
+ * 单个模块抛错不影响其它模块（外壳只警告，不让一个坏模块带崩整窗）。
+ */
+export function activateModules(definitions: readonly FloatingModuleDefinition[]): () => void {
+  const disposers: (() => void)[] = []
+  for (const definition of definitions) {
+    try {
+      const dispose = definition.activate?.()
+      if (typeof dispose === 'function') {
+        disposers.push(dispose)
+      }
+    } catch (error) {
+      console.warn(`failed to activate floating module ${definition.id}`, error)
+    }
+  }
+  return () => {
+    for (const dispose of disposers.reverse()) {
+      try {
+        dispose()
+      } catch (error) {
+        console.warn('failed to dispose floating module', error)
+      }
+    }
+  }
+}
+
 /** 四种形态的固定顺序；遍历形态（预览 / 汇总）时用它，避免各处各写一遍。 */
 export const FLOATING_LAYOUTS: readonly FloatingLayout[] = ['square', 'corner', 'horizontal', 'vertical']
 
@@ -125,37 +168,19 @@ export interface MaxCellsByLayout {
   vertical: number
 }
 
-/**
- * token 展示单位，与 Rust 侧 `TokenUnit` 的序列化值一一对应。
- * - `tokens`：原始计数，如 `1,261,847`
- * - `m_tokens`：以百万为单位，如 `1.26M`
- */
-export type TokenUnit = 'tokens' | 'm_tokens'
-
-/** token 单位默认值：保持原始计数，与加入该设置之前的行为一致。 */
-export const DEFAULT_TOKEN_UNIT: TokenUnit = 'tokens'
-
-/** 代理解析器下拉项：id 存进配置并作 value，label 供 UI 展示。与 Rust `ProxyResolverInfo` 对应。 */
-export interface ProxyResolverInfo {
-  id: string
-  label: string
-}
-
-/** 不解析（直连）的固定 id，与 Rust `NONE_RESOLVER` 一致。 */
-export const NONE_PROXY_RESOLVER = 'none'
-
 export interface FloatingModuleConfig {
   schema_version: number
   revision: number
   modules: FloatingModuleConfigEntry[]
-  completed_retention_ms: number
-  /** Running 无新 hook 时的超时（毫秒）；超时后移除绿灯。 */
-  running_timeout_ms: number
+  /** 各形态的格子上限；那是整个悬浮窗的尺寸参数，同级组件共享。 */
   max_cells_by_layout: MaxCellsByLayout
-  /** token 展示单位；主窗口可切换。 */
-  token_unit: TokenUnit
-  /** 选中的代理解析器 id；`none` = 不解析。 */
-  proxy_resolver: string
+  /**
+   * 各组件自己的配置块，键 = 组件 id，值 = 该组件自己解释的对象。
+   *
+   * 外壳**只负责原样存取**，不认识里面任何字段 —— 所以新增组件的配置项
+   * 不需要改外壳（也不需要迁移配置：读不到键就回落组件自己的默认值）。
+   */
+  module_settings: Record<string, unknown>
 }
 
 /** 四形态同值的格子上限；非法取值夹到 [ABS_MIN_CELLS, ABS_MAX_CELLS]。 */
@@ -184,7 +209,7 @@ export function moduleDemand(definition: FloatingModuleDefinition, layout: Float
  *
  * 各模块同级共享同一个窗口，所以需求相加：横条按宽度、竖条按高度、方形/四角按网格面积。
  * 结果夹在 [默认格子数, 该形态上限]；到顶后窗口不再变大，各模块按需求比例等分收缩
- * （模块要自行处理「分到的比需求的少」，如状态灯退化成 +N 溢出格）。
+ * （模块要自行处理「分到的比需求的少」，如退化成「+N」溢出格）。
  */
 export function resolveWindowCells(demands: readonly number[], layoutMax: number): number {
   const max = clampCells(layoutMax, ABS_MIN_CELLS, ABS_MAX_CELLS)
@@ -216,10 +241,6 @@ export function isModuleEnabled(config: FloatingModuleConfig | null, id: string,
   return config?.modules.find(module => module.id === id)?.enabled ?? defaultEnabled
 }
 
-/** 向后端拉取可用的代理解析器列表（含 `none`）。 */
-export function fetchProxyResolvers(): Promise<ProxyResolverInfo[]> {
-  return invoke<ProxyResolverInfo[]>('get_proxy_resolvers')
-}
 
 /** 把 id 列表里的 `from` 项移动到 `to` 位置，返回新数组（越界自动夹住）。 */
 export function reorderIds(ids: readonly string[], from: number, to: number): string[] {

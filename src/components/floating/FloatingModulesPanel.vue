@@ -7,7 +7,7 @@
  * 与悬浮窗里的先后顺序是同一个字段。齿轮与「点悬浮窗上的组件」都打开同一个设置页。
  */
 import { computed, ref } from 'vue'
-import { FLOATING_MODULE_DEFINITIONS } from './modules'
+import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import FloatingShapePreview from './FloatingShapePreview.vue'
 import {
   hasModuleSettings,

@@ -10,31 +10,38 @@ use tauri::{
 // release 里整个模块不参与编译，省掉一份没人用的解析代码。
 #[cfg(debug_assertions)]
 mod devtools;
-mod endpoint_profiles;
-mod flow;
-mod module_config;
+/// 悬浮窗外壳（Rust 侧）：组件的配置存取与转发 —— 不认识任何组件。
+mod floating;
+/// 悬浮窗组件在 Rust 侧的家：一个组件一个目录（与前端 `src/modules/` 一一对应）。
+mod modules;
 mod mouse;
-mod proxy;
-mod session_store;
-mod status;
 
-use endpoint_profiles::{
-    add_endpoint_profile, delete_endpoint_profile, get_endpoint_profiles, EndpointProfileState,
+// 组合根：只有这里点名具体组件（登记它的配置钩子、运行时状态与命令），
+// 外壳与其它组件都不认识它。
+use floating::module_config::{
+    get_floating_module_config, set_floating_module_config, ModuleState,
 };
-use flow::{
-    delete_flow_secret, get_flow_results, get_flow_snapshot, run_flow_test, save_endpoint_flow,
-    set_flow_secret, FlowState, KeyringSecrets, UreqFetch,
+/// 状态 hook 二进制（`ufo --status-hook`）的入口，由 `main.rs` 调用，故从 crate 根导出。
+pub use modules::agent_status::status::try_run_status_hook;
+use modules::agent_status::{
+    endpoint_profiles::{
+        add_endpoint_profile, delete_endpoint_profile, get_endpoint_profiles, EndpointProfileState,
+    },
+    flow::{
+        delete_flow_secret, get_flow_results, get_flow_snapshot, run_flow_test, save_endpoint_flow,
+        set_flow_secret, spawn_worker, FlowState, KeyringSecrets, UreqFetch,
+    },
+    proxy::ProxyState,
+    session_store::{
+        clear_session_records, delete_session_record, get_session_records, SessionStoreState,
+    },
+    settings::{adopt_legacy_fields, config_hook, AgentStatusSettings},
+    status::{
+        dismiss_status_session, get_proxy_resolvers, get_status_snapshot, now_ms,
+        set_tooltip_interactive, spawn_monitor, StatusState,
+    },
 };
-use module_config::ModuleState;
 use mouse::is_left_mouse_pressed;
-use session_store::{
-    clear_session_records, delete_session_record, get_session_records, SessionStoreState,
-};
-pub use status::try_run_status_hook;
-use status::{
-    dismiss_status_session, get_proxy_resolvers, get_status_snapshot, now_ms,
-    set_tooltip_interactive, spawn_monitor, StatusState,
-};
 
 const MAIN_WINDOW: &str = "main";
 /// 悬浮窗 label。除被 `UFO_DEVTOOLS` 点名开 devtools 外没有别处用到，故限定调试构建。
@@ -70,10 +77,16 @@ pub fn run() {
             let app_data = app.path().app_data_dir()?;
             let status_dir = app_data.join("status");
             let module_config_path = app_data.join("floating-modules.json");
-            let module_state = ModuleState::load(module_config_path);
+            // 组件配置：外壳只负责存盘 + 转发，旧版扁平字段由各组件自己认领
+            // （见 modules/agent_status/settings.rs）。
+            let module_state = ModuleState::load(module_config_path, &[adopt_legacy_fields]);
+            // 组件配置联动：外壳不认识任何组件字段，各自在组合根登记「配置变了要做什么」。
+            module_state.on_config_change(config_hook());
+            // 已落盘的组件配置在启动时先取一次（此刻 StatusState 还没建好，钩子会空转）。
+            let agent_status_settings = AgentStatusSettings::from_config(&module_state.snapshot());
             // 代理解析器：注册表 + 初值（从已存配置读出，避免重启后回落 none）。
-            let proxy_state = proxy::ProxyState::new(None);
-            proxy_state.set_selected(&module_state.proxy_resolver());
+            let proxy_state = ProxyState::new(None);
+            proxy_state.set_selected(&agent_status_settings.proxy_resolver);
             // endpoint 档案登记表（主窗口「信息卡拓展」的数据源），与 StatusState 共享同一份。
             let profile_state = EndpointProfileState::load(app_data.join("endpoint-profiles.json"));
             // 会话存档（SQLite）：跨重启续档。load 打开库、回填缓存并做一次过期清理。
@@ -85,8 +98,8 @@ pub fn run() {
                 FlowState::new(Arc::new(UreqFetch), Arc::new(KeyringSecrets));
             let status_state = StatusState::new(
                 status_dir,
-                module_state.retention_ms(),
-                module_state.running_timeout_ms(),
+                agent_status_settings.completed_retention_ms,
+                agent_status_settings.running_timeout_ms,
                 proxy_state,
                 profile_state.clone(),
                 session_store.clone(),
@@ -98,7 +111,7 @@ pub fn run() {
             app.manage(module_state);
             app.manage(flow_state.clone());
             spawn_monitor(app.handle().clone(), status_state);
-            flow::spawn_worker(app.handle().clone(), flow_state, flow_rx);
+            spawn_worker(app.handle().clone(), flow_state, flow_rx);
 
             let show = MenuItemBuilder::with_id(SHOW_MENU_ITEM, "打开主体").build(app)?;
             let hide = MenuItemBuilder::with_id(HIDE_MENU_ITEM, "隐藏主体").build(app)?;
@@ -207,8 +220,8 @@ pub fn run() {
             delete_session_record,
             clear_session_records,
             is_left_mouse_pressed,
-            module_config::get_floating_module_config,
-            module_config::set_floating_module_config,
+            get_floating_module_config,
+            set_floating_module_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

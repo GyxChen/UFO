@@ -1,0 +1,756 @@
+/*
+ * ⚠️ `@reference` 让本文件能解析 `@apply`：Tailwind v4 只给「入口 CSS」注入主题与工具类，
+ * 模块把样式拆成独立文件后必须显式引用同一份入口（`src/assets/main.css`，含 `@theme` 与 token）。
+ * 它只提供编译上下文，不会把入口的样式再输出一遍。
+ */
+@reference "../../assets/main.css";
+
+/*
+ * Agent 状态灯模块自己的样式：从 src/assets/main.css 搬进来，只在模块被注册表加载时生效。
+ *
+ * 归属口径：外壳只留「窗口外壳 / 宿主 / 公共控件 / 公共信息卡行与分组」（.main-* / .floating-* /
+ * .ufo-* / .module-catalog / .shape-preview / .tooltip-shell|row|section），其余凡是本模块的视图、
+ * 信息卡内容、两个设置面板（.agent-status-* / .ep-* / .sr-* / .flow-editor* / 信息卡内的
+ * .tooltip-close|dot|prompt|provider-icon|reason|stamp）都归这里。
+ */
+.agent-status-module {
+  @apply grid h-full w-full content-center justify-items-center gap-1 overflow-hidden p-1;
+  /* 网格列行由组件按形态与格子数内联设置，适配方形 / 横条 / 竖条。 */
+}
+
+.agent-status-module__item {
+  @apply flex h-full w-full min-h-0 min-w-0 items-center justify-center gap-1;
+}
+
+.agent-status-module__identity {
+  @apply flex min-h-0 min-w-0 shrink-0 items-center justify-center;
+  height: 42%;
+  width: auto;
+  aspect-ratio: 1;
+}
+
+.agent-status-module__icon {
+  @apply block h-full w-full object-contain;
+}
+
+.agent-status-module__dot {
+  @apply block shrink-0 rounded-full border border-white/40 shadow-sm;
+  height: 28%;
+  width: auto;
+  aspect-ratio: 1;
+}
+
+.agent-status-module__item--green .agent-status-module__dot {
+  background: var(--ufo-status-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-green) 28%, transparent);
+}
+
+.agent-status-module__item--yellow .agent-status-module__dot {
+  background: var(--ufo-status-yellow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-yellow) 28%, transparent);
+}
+
+.agent-status-module__item--red .agent-status-module__dot {
+  background: var(--ufo-status-red);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-red) 28%, transparent);
+}
+
+.agent-status-module__item.is-flashing .agent-status-module__dot {
+  animation: agent-status-flash 1s ease-in-out infinite;
+}
+
+/* 溢出格：与灯同尺寸，居中显示 +N */
+.agent-status-module__item--overflow {
+  @apply text-white/90;
+}
+
+.agent-status-module__overflow {
+  @apply font-semibold tabular-nums leading-none;
+}
+
+@keyframes agent-status-flash {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.78);
+  }
+}
+
+.tooltip-close {
+  @apply flex shrink-0 items-center justify-center rounded-full border-0 p-0;
+  width: 22px;
+  aspect-ratio: 1;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.tooltip-close img {
+  @apply block;
+  width: 58%;
+  height: 58%;
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.tooltip-close:hover {
+  background: color-mix(in srgb, var(--ufo-danger) 22%, transparent);
+  transform: scale(1.05);
+}
+
+.tooltip-close:hover img,
+.tooltip-close:focus-visible img {
+  opacity: 1;
+}
+
+.tooltip-close:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+/* head 行里的「等待理由」：占据中间剩余宽度，窄了用省略号，完整原文在 title 上。 */
+.tooltip-reason {
+  @apply min-w-0 flex-1 truncate text-[11px];
+  color: var(--ufo-muted);
+}
+
+.tooltip-provider-icon {
+  @apply block h-3.5 w-3.5 shrink-0 object-contain;
+}
+
+/* 提问区块：标签在上、正文在下，正文最多 4 行后省略。 */
+.tooltip-prompt {
+  @apply mt-auto flex min-h-0 flex-col gap-1;
+  border-top: 1px solid var(--ufo-border-strong);
+  padding-top: 6px;
+}
+
+.tooltip-prompt__text {
+  @apply m-0 min-h-0 text-[11px] leading-snug;
+  color: var(--ufo-text);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * 有拓展字段时提问最多显示 3 行，把剩余高度让给字段行 + 更新时间标注。
+ * ⚠️ tooltip 固定高（tauri.conf.json 260）：字段（≤4）+ 标注 + 分组分隔线已占掉约 86px，
+ * 通过 line-clamp 限制提问高度，避免内容溢出 tooltip。
+ */
+.tooltip-prompt--compact .tooltip-prompt__text {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+/* 拓展字段刷新标注：小字次文本色，紧跟字段、让在提问块之前。 */
+.tooltip-stamp {
+  @apply m-0 shrink-0 truncate text-[10px] leading-tight tabular-nums;
+  color: var(--ufo-muted);
+}
+
+.tooltip-dot {
+  @apply block h-2 w-2 shrink-0 rounded-full;
+}
+
+.tooltip-dot--green {
+  background: var(--ufo-status-green);
+}
+
+.tooltip-dot--yellow {
+  background: var(--ufo-status-yellow);
+}
+
+.tooltip-dot--red {
+  background: var(--ufo-status-red);
+}
+
+.ep-panel {
+  @apply grid w-full min-h-0 flex-1 gap-3;
+  /* 两列填满主窗口剩余高度，各自的内容区域独立滚动。 */
+  @apply items-stretch;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 1.4fr);
+}
+
+/* 拓展面板要撑满宽列，覆盖 .ufo-card 的 max-w-md。 */
+.ep-panel > .ufo-card {
+  @apply max-w-none;
+}
+
+@media (max-width: 720px) {
+  .ep-panel {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ep-list-card,
+.ep-detail {
+  @apply my-0 min-h-0 min-w-0 h-full;
+}
+
+/*
+ * 左侧 endpoint 列表卡：高度固定（与右侧编辑器的内容高度无关），宽度随网格列伸缩。
+ * 覆盖 .ufo-card 的 grid：改成 flex 列，让列表自身吃掉剩余高度并内部滚动，
+ * 底部「手动添加」表单始终贴在卡片底部。
+ */
+.ep-list-card {
+  @apply flex flex-col;
+}
+
+/* 右侧配置区独立滚动，左侧列表的滚动由 .ep-list 负责。 */
+.ep-detail {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+/* 头部与底部表单/提示不参与压缩：只有列表在固定高度内滚动。 */
+.ep-list-card > :not(.ep-list),
+.sr-list-card > :not(.sr-list) {
+  @apply shrink-0;
+}
+
+.ep-list {
+  @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
+  @apply grid gap-1.5;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.ep-list__item {
+  @apply flex items-stretch gap-1;
+}
+
+/* 行本身即按钮：整行可点选，避免要点一小块文字。 */
+.ep-list__row {
+  @apply flex min-w-0 flex-1 flex-col items-start gap-1 rounded-[10px] border px-3 py-2 text-left transition-colors duration-150 ease-out;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+  color: var(--ufo-text);
+  cursor: pointer;
+}
+
+.ep-list__row:hover {
+  border-color: var(--ufo-border-strong);
+  background: #383838;
+}
+
+.ep-list__row--active {
+  border-color: color-mix(in srgb, var(--ufo-accent) 55%, transparent);
+  background: var(--ufo-accent-soft);
+}
+
+/* URL 下方一行元信息：启用标记 + 发现时间。 */
+.ep-list__meta {
+  @apply flex w-full min-w-0 items-center gap-2;
+}
+
+/* 「已启用流程脚本」标记。 */
+.ep-list__tag {
+  @apply shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold;
+  background: var(--ufo-accent-soft);
+  color: var(--ufo-accent);
+}
+
+.ep-list__row:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+/* URL 可能很长：按字符断行优先，其次省略号，保证窄列下也能看到关键片段。 */
+.ep-list__url {
+  @apply w-full text-[12.5px] leading-snug;
+  overflow-wrap: anywhere;
+}
+
+.ep-list__time {
+  @apply text-[11px] tabular-nums;
+  color: var(--ufo-muted);
+}
+
+/* 移除按钮：常态是低调的图标，二次确认时变成带文字的红色按钮。 */
+.ep-list__remove {
+  @apply flex w-9 shrink-0 items-center justify-center rounded-[10px] border text-[11px];
+  background: transparent;
+  border-color: transparent;
+  color: var(--ufo-muted);
+  cursor: pointer;
+}
+
+.ep-list__remove img {
+  @apply block h-3 w-3 opacity-45;
+  pointer-events: none;
+}
+
+.ep-list__remove:hover img {
+  opacity: 0.9;
+}
+
+.ep-list__remove:hover {
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.ep-list__remove--armed {
+  width: 3rem;
+  background: rgba(248, 113, 113, 0.2);
+  border-color: color-mix(in srgb, var(--ufo-danger) 55%, transparent);
+  color: var(--ufo-danger);
+  font-weight: 600;
+}
+
+.ep-list__remove-text {
+  @apply whitespace-nowrap;
+}
+
+.ep-list__remove:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+.ep-list__empty {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+.ep-list__feedback {
+  @apply m-0 text-[11px] leading-snug;
+  color: var(--ufo-muted);
+}
+
+/* 手动添加：输入框占满剩余宽度，按钮固定宽度。 */
+.ep-add {
+  @apply flex items-end gap-2 border-t pt-3;
+  border-color: var(--ufo-border);
+}
+
+.ep-add__field {
+  @apply flex min-w-0 flex-1 flex-col gap-1.5;
+}
+
+.ep-add__field > span {
+  @apply text-[12px];
+  color: var(--ufo-muted);
+}
+
+.ep-add__btn {
+  @apply shrink-0;
+}
+
+.ep-detail__endpoint {
+  @apply max-w-[55%] truncate;
+  overflow-wrap: anywhere;
+}
+
+.ep-detail__placeholder {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+/*
+ * 信息卡拓展右侧：流程脚本编辑器（EndpointFlowEditor）。
+ * 全部走 Matte token，不新增硬编码灰色；紧凑按钮统一由 BaseButton 的 sm 尺寸承担。
+ */
+.flow-editor {
+  @apply grid min-w-0 gap-3;
+}
+
+.flow-editor__lead,
+.flow-editor__hint {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+.flow-editor__row {
+  @apply flex flex-wrap items-end gap-3;
+}
+
+.flow-editor__toggle {
+  @apply flex items-center gap-2 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__num {
+  @apply flex min-w-[120px] flex-1 flex-col gap-1 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__field {
+  @apply flex min-w-0 flex-col gap-1.5 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__actions {
+  @apply flex items-center gap-2;
+}
+
+.flow-editor__feedback {
+  @apply m-0 text-[11px] leading-snug;
+  color: var(--ufo-muted);
+}
+
+/* 后台轮询最近一次失败的原因（成功时不占位）。 */
+.flow-editor__lastfail {
+  @apply m-0 text-[11px] leading-snug;
+  color: var(--ufo-danger);
+}
+
+.flow-editor__test {
+  @apply grid gap-2 rounded-[10px] border p-2.5;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+}
+
+.flow-editor__test-error {
+  @apply m-0 text-[12px];
+  color: var(--ufo-danger);
+}
+
+.flow-editor__test-empty {
+  @apply m-0 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__preview {
+  @apply m-0 grid list-none gap-1 p-0;
+}
+
+.flow-editor__preview-row {
+  @apply flex items-baseline justify-between gap-3 text-[12px];
+}
+
+.flow-editor__preview-label {
+  @apply shrink-0;
+  color: var(--ufo-muted);
+}
+
+.flow-editor__preview-value {
+  @apply min-w-0 truncate text-right;
+  color: var(--ufo-text);
+}
+
+.flow-editor__preview-value.is-green {
+  color: var(--ufo-status-green);
+}
+
+.flow-editor__preview-value.is-yellow {
+  color: var(--ufo-status-yellow);
+}
+
+.flow-editor__preview-value.is-red {
+  color: var(--ufo-status-red);
+}
+
+.flow-editor__preview-value.is-muted {
+  color: var(--ufo-muted);
+}
+
+/* console 回显：固定高度内滚动，避免长日志把面板撑爆。 */
+.flow-editor__logs {
+  @apply m-0 max-h-[140px] overflow-y-auto rounded-[8px] p-2 text-[11px] leading-snug whitespace-pre-wrap;
+  background: var(--ufo-input);
+  color: var(--ufo-muted);
+  font-family: var(--font-mono);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.flow-editor__secrets {
+  @apply grid gap-2 border-t pt-3;
+  border-color: var(--ufo-border);
+}
+
+.flow-editor__subhead {
+  @apply m-0 text-[13px] font-semibold;
+  color: var(--ufo-text);
+}
+
+.flow-editor__secret-list {
+  @apply m-0 grid list-none gap-1.5 p-0;
+}
+
+.flow-editor__secret-row {
+  @apply flex items-center justify-between gap-3 rounded-[10px] border px-3 py-1.5;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+}
+
+.flow-editor__secret-name {
+  @apply min-w-0 truncate text-[12px];
+  font-family: var(--font-mono);
+  color: var(--ufo-text);
+}
+
+.flow-editor__secret-empty {
+  @apply m-0 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.flow-editor__secret-add {
+  @apply flex items-center gap-2;
+}
+
+.flow-editor__secret-add .base-input {
+  @apply min-w-0 flex-1;
+}
+
+.flow-editor__ref {
+  @apply rounded-[10px] border p-2.5;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+}
+
+.flow-editor__ref summary {
+  @apply cursor-pointer text-[12px] font-semibold;
+  color: var(--ufo-text);
+}
+
+/* API 参考：逐项 dl，说明文字要能自然换行；旧版整块 pre 会在窄列里横向溢出。 */
+.flow-editor__ref-list {
+  @apply m-0 mt-2 grid gap-2;
+}
+
+.flow-editor__ref-item dt {
+  @apply flex flex-wrap gap-1;
+}
+
+.flow-editor__ref-item code {
+  @apply rounded-[6px] px-1 py-0.5 text-[11px];
+  background: var(--ufo-input);
+  color: var(--ufo-text);
+  font-family: var(--font-mono);
+}
+
+.flow-editor__ref-item dd {
+  @apply m-0 mt-1 text-[11.5px] leading-relaxed;
+  color: var(--ufo-muted);
+  overflow-wrap: anywhere;
+}
+
+.flow-editor__ref-item dd code {
+  @apply rounded-[4px] px-1 py-0 text-[11px];
+  background: var(--ufo-input);
+  color: var(--ufo-text);
+  font-family: var(--font-mono);
+}
+
+.flow-editor__ref-item dd em {
+  @apply not-italic font-semibold;
+  color: var(--ufo-text);
+}
+
+/* 示例代码：保留换行，但超宽时换行而非溢出（长 URL 常见）。 */
+.flow-editor__ref-body {
+  @apply m-0 mt-2 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-all rounded-[8px] p-2 text-[11px] leading-relaxed;
+  color: var(--ufo-muted);
+  background: var(--ufo-input);
+  font-family: var(--font-mono);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.flow-editor__ref .flow-editor__hint {
+  @apply mt-2;
+}
+
+.flow-editor__ref .flow-editor__hint code {
+  @apply rounded-[4px] px-1 py-0 text-[11px];
+  background: var(--ufo-input);
+  color: var(--ufo-text);
+  font-family: var(--font-mono);
+}
+
+/*
+ * 「会话记录」面板：左侧 SQLite 存档列表 + 右侧详情。
+ * 复用信息卡拓展（ep-*）的行 / 移除按钮样式，这里只补本面板特有的部分。
+ */
+.sr-panel {
+  @apply grid w-full min-h-0 flex-1 gap-3;
+  /* 两列填满主窗口剩余高度，各自的内容区域独立滚动。 */
+  @apply items-stretch;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 1.4fr);
+}
+
+/* 面板要撑满宽列，覆盖 .ufo-card 的 max-w-md。 */
+.sr-panel > .ufo-card {
+  @apply max-w-none;
+}
+
+@media (max-width: 720px) {
+  .sr-panel {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.sr-list-card,
+.sr-detail {
+  @apply my-0 min-h-0 min-w-0 h-full;
+}
+
+/*
+ * 左侧会话记录列表卡：与右侧详情高度分开算，卡片自身固定高度（同 ep-list-card），
+ * 列表吃满剩余高度并内部滚动 —— 否则行多时会把底部「清除全部」挤出可视区。
+ */
+.sr-list-card {
+  @apply flex flex-col;
+}
+
+/* 右侧详情独立滚动，左侧列表的滚动由 .sr-list 负责。 */
+.sr-detail {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+/* 列表可滚动：行数上限 200，不封顶会把右侧详情挤下去。 */
+.sr-list {
+  @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
+  @apply grid gap-1.5;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.sr-list__item {
+  @apply flex items-stretch gap-1;
+}
+
+/* 整行可点选（与信息卡拓展一致），两行内容：标识行 + 提问摘要。 */
+.sr-list__row {
+  @apply flex min-w-0 flex-1 flex-col items-start gap-1 rounded-[10px] border px-3 py-2 text-left transition-colors duration-150 ease-out;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+  color: var(--ufo-text);
+  cursor: pointer;
+}
+
+.sr-list__row:hover {
+  border-color: color-mix(in srgb, var(--ufo-accent) 25%, transparent);
+  background: var(--ufo-accent-soft);
+}
+
+.sr-list__row--active {
+  border-color: color-mix(in srgb, var(--ufo-accent) 55%, transparent);
+  background: var(--ufo-accent-soft);
+}
+
+.sr-list__row:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+.sr-list__line {
+  @apply flex w-full min-w-0 items-center gap-1.5;
+}
+
+.sr-list__icon {
+  @apply h-3.5 w-3.5 shrink-0;
+}
+
+/* 存活标记：与指示灯同色的实心小圆点，不写文字以免挤掉 session id。 */
+.sr-list__live {
+  @apply h-2 w-2 shrink-0 rounded-full;
+  background: var(--ufo-status-green);
+}
+
+.sr-list__id {
+  @apply shrink-0 font-mono text-[12.5px];
+}
+
+.sr-list__time {
+  @apply ml-auto shrink-0 text-[11px] tabular-nums;
+  color: var(--ufo-muted);
+}
+
+/* 提问摘要只给一行：省略号收尾，完整内容在右侧详情看。 */
+.sr-list__prompt {
+  @apply w-full line-clamp-2 text-[11px];
+  color: var(--ufo-muted);
+}
+
+.sr-list__empty {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+.sr-list__feedback {
+  @apply m-0 text-[11px] leading-snug;
+  color: var(--ufo-muted);
+}
+
+.sr-actions {
+  @apply flex items-center justify-end border-t pt-3;
+  border-color: var(--ufo-border);
+}
+
+/* 详情：紧凑的 label / value 两列，长值按字符断行。 */
+.sr-detail__fields {
+  @apply m-0 grid gap-1.5;
+}
+
+.sr-detail__fields > div {
+  @apply flex items-baseline gap-2;
+}
+
+.sr-detail__fields dt {
+  @apply w-16 shrink-0 text-[11px];
+  color: var(--ufo-muted);
+}
+
+.sr-detail__fields dd {
+  @apply m-0 min-w-0 flex-1 text-[12.5px];
+  overflow-wrap: anywhere;
+}
+
+/* Endpoint 行的本地代理副标注：上游后面用小字灰显「经本地代理 <地址>」。 */
+.sr-detail__endpoint-local {
+  @apply ml-1 text-[11px];
+  color: var(--ufo-muted);
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.sr-detail__prompt {
+  @apply grid gap-1 rounded-[10px] border p-2.5;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border);
+}
+
+.sr-detail__prompt-label {
+  @apply text-[11px];
+  color: var(--ufo-muted);
+}
+
+.sr-detail__prompt-text {
+  @apply m-0 max-h-[22vh] overflow-y-auto whitespace-pre-wrap text-[12.5px] leading-relaxed;
+  color: var(--ufo-text);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+/* 存活会话的提醒：说清「清除后该行还会回来」，避免被当成 bug。 */
+.sr-detail__note {
+  @apply m-0 text-[11px] leading-relaxed;
+  color: var(--ufo-status-yellow);
+}
+
+.sr-detail__placeholder {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}

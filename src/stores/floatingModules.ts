@@ -3,18 +3,13 @@ import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
 import { ABS_MAX_CELLS, ABS_MIN_CELLS } from '@/lib/floating-layout'
 import {
-  DEFAULT_TOKEN_UNIT,
-  NONE_PROXY_RESOLVER,
   applyModuleOrder,
   defaultMaxCellsByLayout,
-  fetchProxyResolvers,
   isModuleEnabled,
   type FloatingLayout,
   type FloatingModuleConfig,
   type FloatingRuntimeSnapshot,
   type MaxCellsByLayout,
-  type ProxyResolverInfo,
-  type TokenUnit,
 } from '@/lib/floating-modules'
 import {
   FLOATING_RUNTIME_EVENT,
@@ -26,21 +21,15 @@ const MODULE_CONFIG_EVENT = 'floating-module-config'
 let stopListener: UnlistenFn | undefined
 let stopRuntimeListener: UnlistenFn | undefined
 
-/** Running 无事件超时默认 60 秒。 */
-const DEFAULT_RUNNING_TIMEOUT_SECONDS = 60
-/** Running 超时可选范围：1 分钟 ..= 60 分钟。 */
-const MIN_RUNNING_TIMEOUT_SECONDS = 60
-const MAX_RUNNING_TIMEOUT_SECONDS = 60 * 60
-
 const fallbackConfig: FloatingModuleConfig = {
   schema_version: 1,
   revision: 0,
-  modules: [{ id: 'agent-status', enabled: true, order: 0 }],
-  completed_retention_ms: 30_000,
-  running_timeout_ms: DEFAULT_RUNNING_TIMEOUT_SECONDS * 1000,
+  // 兜底配置不列任何模块：启用状态一律回落到定义里的 defaultEnabled，
+  // 外壳不点名具体模块（后端配置到达后立刻被 applyConfig 覆盖）。
+  modules: [],
   max_cells_by_layout: defaultMaxCellsByLayout(),
-  token_unit: DEFAULT_TOKEN_UNIT,
-  proxy_resolver: NONE_PROXY_RESOLVER,
+  // 也不预置任何组件配置块：组件读不到自己的键就回落自己的默认值。
+  module_settings: {},
 }
 
 function clampLayoutMax(value: number): number {
@@ -52,8 +41,7 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
     config: fallbackConfig as FloatingModuleConfig | null,
     connection: 'starting' as 'starting' | 'connected' | 'degraded',
     started: false,
-    /** 后端注册的代理解析器选项（含 `none`）；主窗口下拉据此渲染。 */
-    resolvers: [] as ProxyResolverInfo[],
+
     /** 悬浮窗广播来的运行时快照（各形态的格子需求与窗口大小）；主窗口预览据此渲染。 */
     runtime: null as FloatingRuntimeSnapshot | null,
   }),
@@ -67,15 +55,15 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
       state =>
       (id: string, defaultEnabled = false): boolean =>
         isModuleEnabled(state.config, id, defaultEnabled),
-    retentionSeconds: state => Math.round((state.config?.completed_retention_ms ?? 30_000) / 1000),
-    /** 当前选中的代理解析器 id，默认 `none`（不解析）。 */
-    proxyResolver: (state): string => state.config?.proxy_resolver ?? NONE_PROXY_RESOLVER,
-    /** Running 无新 hook 超时（秒），默认 60。 */
-    runningTimeoutSeconds: state =>
-      Math.round((state.config?.running_timeout_ms ?? DEFAULT_RUNNING_TIMEOUT_SECONDS * 1000) / 1000),
     maxCellsByLayout: (state): MaxCellsByLayout => state.config?.max_cells_by_layout ?? defaultMaxCellsByLayout(),
-    /** token 展示单位，默认原始计数。 */
-    tokenUnit: (state): TokenUnit => state.config?.token_unit ?? DEFAULT_TOKEN_UNIT,
+    /**
+     * 取某个组件自己的配置块（原样返回，不解释内容）；没配置过时返回空对象。
+     * 组件自己的 `settings.ts` 负责把它解析成强类型值 —— 外壳不知道里面有什么。
+     */
+    moduleSettings:
+      state =>
+      (id: string): Record<string, unknown> =>
+        state.config?.module_settings?.[id] ?? {},
 
     /** 配置里的模块顺序（order 升序，order 相同按 id）；组件列表的排序与拖拽都用它。 */
     orderedModuleIds: (state): string[] =>
@@ -129,7 +117,6 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
           this.applyConfig(event.payload)
         })
         this.applyConfig(await invoke<FloatingModuleConfig>('get_floating_module_config'))
-        this.resolvers = await fetchProxyResolvers()
       } catch (error) {
         this.config = fallbackConfig
         this.connection = 'degraded'
@@ -174,33 +161,25 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
       }
     },
 
-    async updateRetentionSeconds(seconds: number) {
+    /**
+     * 更新某个组件自己的配置块（浅合并；组件负责传它认识的字段与合法取值）。
+     * 外壳只做「贴到 module_settings[id] 上再落盘」，不解释里面任何内容 ——
+     * 因此新增组件的配置项不需要改这里。
+     */
+    async updateModuleSettings(id: string, patch: Record<string, unknown>) {
       const current = this.config ?? fallbackConfig
-      const bounded = Math.min(86_400, Math.max(1, Math.round(seconds)))
-      try {
-        this.applyConfig(
-          await invoke<FloatingModuleConfig>('set_floating_module_config', {
-            config: { ...current, completed_retention_ms: bounded * 1000 },
-          })
-        )
-      } catch (error) {
-        console.warn('failed to update completed retention', error)
-        throw error
+      const next = {
+        ...current.module_settings,
+        [id]: { ...((current.module_settings?.[id] as Record<string, unknown> | undefined) ?? {}), ...patch },
       }
-    },
-
-    /** 更新 Running 无新 hook 超时（秒）；慢 agent 可拉长避免绿灯被误清。 */
-    async updateRunningTimeoutSeconds(seconds: number) {
-      const current = this.config ?? fallbackConfig
-      const bounded = Math.min(MAX_RUNNING_TIMEOUT_SECONDS, Math.max(MIN_RUNNING_TIMEOUT_SECONDS, Math.round(seconds)))
       try {
         this.applyConfig(
           await invoke<FloatingModuleConfig>('set_floating_module_config', {
-            config: { ...current, running_timeout_ms: bounded * 1000 },
+            config: { ...current, module_settings: next },
           })
         )
       } catch (error) {
-        console.warn('failed to update running timeout', error)
+        console.warn(`failed to update module settings for ${id}`, error)
         throw error
       }
     },
@@ -219,36 +198,6 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
         )
       } catch (error) {
         console.warn('failed to update max cells by layout', error)
-        throw error
-      }
-    },
-
-    /** 更新 token 展示单位（tokens / M tokens）。 */
-    async updateTokenUnit(unit: TokenUnit) {
-      const current = this.config ?? fallbackConfig
-      try {
-        this.applyConfig(
-          await invoke<FloatingModuleConfig>('set_floating_module_config', {
-            config: { ...current, token_unit: unit },
-          })
-        )
-      } catch (error) {
-        console.warn('failed to update token unit', error)
-        throw error
-      }
-    },
-
-    /** 更新选中的代理解析器（下拉的 value=id）；后端会即时同步给状态监测。 */
-    async updateProxyResolver(id: string) {
-      const current = this.config ?? fallbackConfig
-      try {
-        this.applyConfig(
-          await invoke<FloatingModuleConfig>('set_floating_module_config', {
-            config: { ...current, proxy_resolver: id },
-          })
-        )
-      } catch (error) {
-        console.warn('failed to update proxy resolver', error)
         throw error
       }
     },
