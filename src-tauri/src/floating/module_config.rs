@@ -13,6 +13,24 @@ const SCHEMA_VERSION: u16 = 1;
 const MIN_CELLS: u8 = 4;
 const MAX_CELLS: u8 = 8;
 
+/// 一格边长的默认值（物理像素）：与 `tauri.conf.json` 里 floating 窗口的初值一致。
+/// 窗口启动瞬间就是这个尺寸，配置读出来之后再按 `cell_px` 重新吸附。
+const DEFAULT_CELL_PX: u16 = 45;
+/// 一格边长的可选下限（物理像素）：再小灯点与图标就糊成一团了。
+const MIN_CELL_PX: u16 = 32;
+/// 一格边长的可选上限（物理像素）：8 格的横条按它算最长 768px，再大就撑满半屏。
+const MAX_CELL_PX: u16 = 96;
+
+/// 缺省格边长（`#[serde(default = ...)]` 用）：旧配置文件里没有 `cell_px` 时回落它。
+fn default_cell_px() -> u16 {
+    DEFAULT_CELL_PX
+}
+
+/// 把格边长夹进 [MIN_CELL_PX, MAX_CELL_PX]。
+fn clamp_cell_px(value: u16) -> u16 {
+    value.clamp(MIN_CELL_PX, MAX_CELL_PX)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FloatingModuleEntry {
     pub id: String,
@@ -85,6 +103,12 @@ pub struct FloatingModuleConfig {
     pub modules: Vec<FloatingModuleEntry>,
     /// 各形态的格子上限：那是**整个悬浮窗**的尺寸参数，同级组件共享，故留在外壳。
     pub max_cells_by_layout: MaxCellsByLayout,
+    /// 一格的边长（物理像素）：同样**整个悬浮窗**的尺寸基准，同级组件共享，故留在外壳。
+    ///
+    /// `serde(default)` 是为了旧的配置文件 —— 缺字段时按 `DEFAULT_CELL_PX` 走，
+    /// 因此**不得**为它递增 `SCHEMA_VERSION`。
+    #[serde(default = "default_cell_px")]
+    pub cell_px: u16,
     /// 各组件自己的配置块（见 [`ModuleSettingsMap`]）。
     #[serde(default)]
     pub module_settings: ModuleSettingsMap,
@@ -101,6 +125,9 @@ struct FloatingModuleConfigWire {
     max_cells_by_layout: Option<MaxCellsByLayout>,
     #[serde(default)]
     max_visible_sessions: Option<u8>,
+    /// 一格边长；缺省（旧配置）时在 `into_config` 里补成默认值。
+    #[serde(default)]
+    cell_px: Option<u16>,
     /// 组件自己的配置块（当前形态）。
     #[serde(default)]
     module_settings: ModuleSettingsMap,
@@ -119,6 +146,7 @@ impl FloatingModuleConfigWire {
             Some(cells) => cells.clamp_each(),
             None => MaxCellsByLayout::filled(self.max_visible_sessions.unwrap_or(MAX_CELLS)),
         };
+        let cell_px = clamp_cell_px(self.cell_px.unwrap_or(DEFAULT_CELL_PX));
         let mut module_settings = self.module_settings;
         let mut adopted = false;
         for migration in migrations {
@@ -131,6 +159,7 @@ impl FloatingModuleConfigWire {
                 revision: self.revision,
                 modules: self.modules,
                 max_cells_by_layout,
+                cell_px,
                 module_settings,
             },
             adopted,
@@ -147,6 +176,7 @@ impl Default for FloatingModuleConfig {
             revision: 1,
             modules: Vec::new(),
             max_cells_by_layout: MaxCellsByLayout::default(),
+            cell_px: DEFAULT_CELL_PX,
             module_settings: ModuleSettingsMap::new(),
         }
     }
@@ -159,6 +189,7 @@ impl FloatingModuleConfig {
             return Err("unsupported module config schema".to_string());
         }
         self.max_cells_by_layout = self.max_cells_by_layout.clamp_each();
+        self.cell_px = clamp_cell_px(self.cell_px);
         for module in &self.modules {
             if module.id.len() > 64 || module.id.contains(['/', '\\']) {
                 return Err("invalid module id".to_string());
@@ -296,6 +327,49 @@ mod tests {
     fn default_max_cells_are_eight() {
         let config = FloatingModuleConfig::default();
         assert_eq!(config.max_cells_by_layout, MaxCellsByLayout::filled(MAX_CELLS));
+    }
+
+    #[test]
+    fn default_cell_size_matches_the_window_initial_size() {
+        // 默认格边长就是 tauri.conf.json 里 floating 的 45×45 初值。
+        let config = FloatingModuleConfig::default();
+        assert_eq!(config.cell_px, DEFAULT_CELL_PX);
+    }
+
+    #[test]
+    fn missing_cell_size_falls_back_to_default() {
+        // 旧配置文件没有 cell_px：必须回落默认值，而不是反序列化失败或变成 0（0 会让窗口塌成一条线）。
+        let json = r#"{
+            "schema_version": 1,
+            "revision": 2,
+            "modules": [{"id":"stub","enabled":true,"order":0}]
+        }"#;
+        let wire: FloatingModuleConfigWire = serde_json::from_str(json).unwrap();
+        let (config, adopted) = wire.into_config(&[]);
+        assert!(!adopted);
+        assert_eq!(config.cell_px, DEFAULT_CELL_PX);
+    }
+
+    #[test]
+    fn validate_clamps_cell_size() {
+        let mut too_small = FloatingModuleConfig::default();
+        too_small.cell_px = 1;
+        assert_eq!(too_small.validate().unwrap().cell_px, MIN_CELL_PX);
+
+        let mut too_large = FloatingModuleConfig::default();
+        too_large.cell_px = 4000;
+        assert_eq!(too_large.validate().unwrap().cell_px, MAX_CELL_PX);
+    }
+
+    #[test]
+    fn cell_size_roundtrips_through_the_wire() {
+        // 组件配置块照旧整块透传，新增的外壳字段也必须原样存回。
+        let mut config = FloatingModuleConfig::default();
+        config.cell_px = 64;
+        let json = serde_json::to_string(&config).unwrap();
+        let wire: FloatingModuleConfigWire = serde_json::from_str(&json).unwrap();
+        let (restored, _) = wire.into_config(&[]);
+        assert_eq!(restored.cell_px, 64);
     }
 
     #[test]

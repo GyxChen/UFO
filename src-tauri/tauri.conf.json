@@ -14,8 +14,8 @@
       {
         "label": "floating",
         "title": "tauri-app launcher",
-        "width": 56,
-        "height": 56,
+        "width": 45,
+        "height": 45,
         "x": 24,
         "y": 24,
         "visible": true,

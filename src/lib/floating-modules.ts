@@ -4,6 +4,8 @@ import {
   ABS_MAX_CELLS,
   ABS_MIN_CELLS,
   DEFAULT_WINDOW_CELLS,
+  FLOATING_BASE_CELL_PX,
+  clampCellPx,
   clampCells,
   type FloatingLayout,
 } from '@/lib/floating-layout'
@@ -175,6 +177,13 @@ export interface FloatingModuleConfig {
   /** 各形态的格子上限；那是整个悬浮窗的尺寸参数，同级组件共享。 */
   max_cells_by_layout: MaxCellsByLayout
   /**
+   * 一格的边长（物理像素）：整个悬浮窗的尺寸基准，同级组件共享，因此由外壳解释。
+   *
+   * 可选是有意的 —— 旧配置文件里没有这个键（Rust 侧 `#[serde(default)]` 兜底），
+   * 所以读的时候一律走 `configCellPx()`，不要直接取字段。
+   */
+  cell_px?: number
+  /**
    * 各组件自己的配置块，键 = 组件 id，值 = 该组件自己解释的对象。
    *
    * 外壳**只负责原样存取**，不认识里面任何字段 —— 所以新增组件的配置项
@@ -192,6 +201,14 @@ export function defaultMaxCellsByLayout(value: number = ABS_MAX_CELLS): MaxCells
     horizontal: cells,
     vertical: cells,
   }
+}
+
+/**
+ * 配置里的一格边长（物理像素）；没配过或取值非法时回落到 `FLOATING_BASE_CELL_PX`。
+ * 与 `defaultMaxCellsByLayout` 同一条口径：外壳只在这里把配置翻译成能用的数。
+ */
+export function configCellPx(config: FloatingModuleConfig | null): number {
+  return clampCellPx(config?.cell_px ?? FLOATING_BASE_CELL_PX)
 }
 
 /** 单个模块的格子权重：至少 1 格；非有限值（NaN / Infinity）按 1 格算。 */

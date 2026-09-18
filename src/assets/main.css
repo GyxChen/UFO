@@ -329,6 +329,8 @@ html.is-tooltip-window #app {
   user-select: none;
 }
 
+/* 一格 45px：外壳只留「1px 描边 + p-0.5 内边距」当呼吸位 —— 组件内容不贴边，也不会被四角圆角切到；
+   余量全给组件（本项目的 --spacing 是 3.5px，p-0.5 ≈ 1.75px，可用内容 ≈ 39.5px）。 */
 .floating-shell {
   @apply relative h-screen w-screen overflow-hidden rounded-2xl p-0.5;
   background-color: var(--ufo-bg);
@@ -341,14 +343,28 @@ html.is-tooltip-window #app {
 
 /* 模块宿主：各模块同级共享整块窗口，轨道由宿主按各模块上报的格子需求内联设置（fr 分槽）。
    横条左右并排、竖条 / 方形 / 四角上下堆叠；这里只兜底轨道与间距。 */
+/* 宿主只做分槽：inset 0 贴满外壳内边距以内，1px 间隙仅用来分开同级模块。 */
+/*
+ * 模块宿主：按权重铺 fr 轨道分槽。
+ * ⚠️ 行内还带两个「一格尺寸」变量（`--floating-cell-px` / `--floating-cell-scale`，由
+ * FloatingModuleHost.vue 按配置的 `cell_px` 写入），模块用它们把写死的设计像素等比放大 ——
+ * 否则用户调大格子后，百分比尺寸跟着长、写死的字号与描边却停在 45px 的设计值上。
+ */
 .floating-module-host {
-  @apply absolute inset-1 z-0 grid gap-0.5;
+  @apply absolute inset-0 z-0 grid gap-px;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
 }
 
+/*
+ * 槽位 = 模块的「容器查询」基准。宿主按 fr 把窗口切给同级模块，未贴边的方形整窗只有 1 格、
+ * 还要被切一刀，模块必须能按槽位的真实像素降级排版。声明为 size 容器后，
+ * 模块可用 @container floating-slot (...) 与 cqh / cqw 单位自适应（规范见 reference/doc/floating-module-guide.md）。
+ */
 .floating-module-slot {
   @apply relative min-h-0 min-w-0 overflow-hidden;
+  container-type: size;
+  container-name: floating-slot;
 }
 
 /*
@@ -635,6 +651,17 @@ html.is-tooltip-window #app {
 .module-catalog__summary {
   @apply m-0 text-[11px];
   color: var(--ufo-muted);
+}
+
+/* 格子大小：滑块吃掉剩余宽度，右侧跟数值与「默认」按钮（按钮宽度固定，拖动时不会抖）。 */
+.module-catalog__cell-size {
+  @apply flex items-center gap-2.5;
+}
+
+.module-catalog__cell-value {
+  @apply shrink-0 text-right text-[12px] tabular-nums;
+  min-width: 42px;
+  color: var(--ufo-text);
 }
 
 /* 三形态预览：真实比例等比缩放进卡片，每个色块按需求比例分配。 */

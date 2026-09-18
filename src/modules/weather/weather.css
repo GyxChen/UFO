@@ -1,6 +1,22 @@
 @reference "../../assets/main.css";
 
-/* 和风天气悬浮窗与 Tooltip 样式 */
+/*
+ * 和风天气悬浮窗与 Tooltip 样式。
+ *
+ * ⚠️ 悬浮窗里的尺寸一律写成 `clamp(下限, Xcqh, 上限)`：槽位 `.floating-module-slot` 是 size 容器，
+ * cqh = 槽位高度，所以同一套规则在「未贴边 1 格」与「贴边放大到几格」下都按比例走，不用为每种
+ * 格子数再写一套像素。万一组件被渲染在没有槽位容器的地方（主窗口预览、单测），cqh 退化成视口单位，
+ * clamp 会取到上限 —— 也就是设计尺寸，不会失控。
+ *
+ * ⚠️ **上限也要跟着格子大小缩放**：上限若是写死的 px，用户把「格子大小」调大后 cqh 变大、
+ * clamp 却在上限处停住 —— 组件就不跟着窗口长大了。所以每个上限都写成
+ * `calc(<设计像素> * var(--floating-cell-scale, 1))`：该变量由宿主按配置的 `cell_px` 相对于
+ * 设计基准 45px 算出（1 = 设计尺寸，2 = 两倍大），间隙 / 城市名上限等同理。
+ * 变量缺失时回落 1，即设计尺寸 —— 与「没有槽位容器时 clamp 取上限」的行为一致。
+ *
+ * 槽位矮到 33px 以下（未贴边的方形被同级模块再切一刀）走文件末尾的紧凑兜底。
+ * 那条 33px 是**绝对可读性阈值**（不是设计尺寸），所以它不乘缩放倍率。
+ */
 
 .weather-module {
   display: flex;
@@ -22,88 +38,95 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: calc(2px * var(--floating-cell-scale, 1));
   color: var(--ufo-muted);
-  font-size: 10px;
+  font-size: clamp(11px, 30cqh, calc(14px * var(--floating-cell-scale, 1)));
   cursor: pointer;
+}
+
+.weather-module--empty .weather-icon {
+  width: clamp(14px, 50cqh, calc(26px * var(--floating-cell-scale, 1)));
+  height: clamp(14px, 50cqh, calc(26px * var(--floating-cell-scale, 1)));
 }
 
 .weather-module--empty:hover {
   color: var(--ufo-accent);
 }
 
-/* 1. Square: 默认未贴边 56x56 等比压缩容器 */
+/* 1. Square：未贴边整窗只有 1 格（45px 见方，扣掉描边与外壳内边距后 39px），图标 + 温度上下顶满 */
 .weather-module--square,
 .weather-module--constrained {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(2px * var(--floating-cell-scale, 1));
+}
+
+.weather-module--square .weather-icon,
+.weather-module--constrained .weather-icon {
+  width: clamp(12px, 55cqh, calc(24px * var(--floating-cell-scale, 1)));
+  height: clamp(12px, 55cqh, calc(24px * var(--floating-cell-scale, 1)));
+  color: var(--ufo-accent);
+}
+
+.weather-module--square .weather-temp,
+.weather-module--constrained .weather-temp {
+  font-size: clamp(11px, 38cqh, calc(16px * var(--floating-cell-scale, 1)));
+  font-weight: 700;
+  line-height: 1;
+  font-family: var(--font-sans);
+}
+
+/* 2. Corner：四角贴边放大方形；上下两行（图标+天气 / 温度+城市），每行约占半个槽位 */
+.weather-module--corner {
+  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 1px;
 }
 
-.weather-module--square .weather-icon,
-.weather-module--constrained .weather-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--ufo-accent);
-}
-
-.weather-module--square .weather-temp,
-.weather-module--constrained .weather-temp {
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  font-family: var(--font-sans);
-}
-
-/* 2. Corner: 四角贴边放大方形 */
-.weather-module--corner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-around;
-  padding: 4px;
-}
-
 .weather-module--corner .weather-top {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: calc(3px * var(--floating-cell-scale, 1));
 }
 
 .weather-module--corner .weather-icon {
-  width: 22px;
-  height: 22px;
+  width: clamp(12px, 40cqh, calc(34px * var(--floating-cell-scale, 1)));
+  height: clamp(12px, 40cqh, calc(34px * var(--floating-cell-scale, 1)));
   color: var(--ufo-accent);
 }
 
 .weather-module--corner .weather-text {
-  font-size: 12px;
+  font-size: clamp(10px, 15cqh, calc(14px * var(--floating-cell-scale, 1)));
+  line-height: 1.1;
   color: var(--ufo-muted);
 }
 
 .weather-module--corner .weather-bottom {
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: calc(4px * var(--floating-cell-scale, 1));
 }
 
 .weather-module--corner .weather-temp {
-  font-size: 16px;
+  font-size: clamp(13px, 46cqh, calc(24px * var(--floating-cell-scale, 1)));
   font-weight: 800;
+  line-height: 1.05;
   color: var(--ufo-text);
 }
 
 .weather-module--corner .weather-loc {
-  font-size: 10px;
+  font-size: clamp(9px, 13cqh, calc(12px * var(--floating-cell-scale, 1)));
   color: var(--ufo-muted);
-  max-width: 48px;
+  max-width: calc(60px * var(--floating-cell-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 3. Horizontal: 上下贴边横条（左右两格并排） */
+/* 3. Horizontal：上下贴边横条（左右两格并排，槽位高即列高） */
 .weather-module--horizontal {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -119,18 +142,18 @@
   justify-content: center;
   border-right: 1px solid var(--ufo-border);
   height: 100%;
-  padding: 2px 0;
+  padding: 1px 0;
   gap: 1px;
 }
 
 .weather-module--horizontal .weather-col-left .weather-icon {
-  width: 16px;
-  height: 16px;
+  width: clamp(12px, 52cqh, calc(30px * var(--floating-cell-scale, 1)));
+  height: clamp(12px, 52cqh, calc(30px * var(--floating-cell-scale, 1)));
   color: var(--ufo-accent);
 }
 
 .weather-module--horizontal .weather-col-left .weather-text {
-  font-size: 10px;
+  font-size: clamp(10px, 27cqh, calc(14px * var(--floating-cell-scale, 1)));
   line-height: 1.1;
   color: var(--ufo-muted);
 }
@@ -141,23 +164,23 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  padding: 2px 0;
+  padding: 1px 0;
   gap: 1px;
 }
 
 .weather-module--horizontal .weather-col-right .weather-temp {
-  font-size: 13px;
+  font-size: clamp(14px, 44cqh, calc(28px * var(--floating-cell-scale, 1)));
   font-weight: 700;
-  line-height: 1.1;
+  line-height: 1.05;
 }
 
 .weather-module--horizontal .weather-col-right .weather-sub {
-  font-size: 9px;
+  font-size: clamp(9px, 25cqh, calc(12px * var(--floating-cell-scale, 1)));
   line-height: 1.1;
   color: var(--ufo-muted);
 }
 
-/* 4. Vertical: 左右贴边竖条（上下两格堆叠） */
+/* 4. Vertical：左右贴边竖条（上下两格堆叠，槽位高的一半才是行高，系数按半格算） */
 .weather-module--vertical {
   display: grid;
   grid-template-rows: 1fr 1fr;
@@ -174,18 +197,18 @@
   border-bottom: 1px solid var(--ufo-border);
   width: 100%;
   height: 100%;
-  padding: 2px 0;
-  gap: 2px;
+  padding: 1px 0;
+  gap: calc(2px * var(--floating-cell-scale, 1));
 }
 
 .weather-module--vertical .weather-row-top .weather-icon {
-  width: 26px;
-  height: 26px;
+  width: clamp(12px, 21cqh, calc(34px * var(--floating-cell-scale, 1)));
+  height: clamp(12px, 21cqh, calc(34px * var(--floating-cell-scale, 1)));
   color: var(--ufo-accent);
 }
 
 .weather-module--vertical .weather-row-top .weather-text {
-  font-size: 11px;
+  font-size: clamp(10px, 8cqh, calc(13px * var(--floating-cell-scale, 1)));
   line-height: 1.1;
   color: var(--ufo-muted);
 }
@@ -197,20 +220,65 @@
   justify-content: center;
   width: 100%;
   height: 100%;
-  padding: 2px 0;
-  gap: 2px;
+  padding: 1px 0;
+  gap: calc(2px * var(--floating-cell-scale, 1));
 }
 
 .weather-module--vertical .weather-row-bottom .weather-temp {
-  font-size: 16px;
+  font-size: clamp(14px, 17cqh, calc(22px * var(--floating-cell-scale, 1)));
   font-weight: 700;
-  line-height: 1.1;
+  line-height: 1.05;
 }
 
 .weather-module--vertical .weather-row-bottom .weather-sub {
-  font-size: 10px;
+  font-size: clamp(9px, 7cqh, calc(12px * var(--floating-cell-scale, 1)));
   line-height: 1.1;
   color: var(--ufo-muted);
+}
+
+/*
+ * 紧凑兜底：槽位高 ≤ 33px 时，任何形态的专属排版都摆不下（未贴边的方形被同级模块切一刀后
+ * 只剩十几像素高）。统一退化成「图标 + 温度」一行：信息最少，但任何尺寸都不会被裁切。
+ * ⚠️ 选择器重复类名（.weather-module.weather-module）是为了压过各形态的专属规则（含
+ * `.weather-module--horizontal .weather-col-left .weather-icon` 这类三层选择器）。
+ */
+@container floating-slot (max-height: 33px) {
+  .weather-module.weather-module {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 6cqw;
+    padding: 0;
+  }
+
+  /* 各形态的「行 / 列」包裹层退成透明盒子，让图标与温度直接排成一行。 */
+  .weather-module.weather-module .weather-top,
+  .weather-module.weather-module .weather-bottom,
+  .weather-module.weather-module .weather-col-left,
+  .weather-module.weather-module .weather-col-right,
+  .weather-module.weather-module .weather-row-top,
+  .weather-module.weather-module .weather-row-bottom,
+  .weather-module.weather-module .weather-module--empty {
+    display: contents;
+  }
+
+  /* 次要信息（天气文字 / 城市 / 湿度风力）在十几像素里只会糊成一团，整块隐藏。 */
+  .weather-module.weather-module .weather-text,
+  .weather-module.weather-module .weather-loc,
+  .weather-module.weather-module .weather-sub {
+    display: none;
+  }
+
+  .weather-module.weather-module .weather-icon {
+    width: clamp(10px, 78cqh, calc(24px * var(--floating-cell-scale, 1)));
+    height: clamp(10px, 78cqh, calc(24px * var(--floating-cell-scale, 1)));
+  }
+
+  .weather-module.weather-module .weather-temp {
+    font-size: clamp(11px, 58cqh, calc(19px * var(--floating-cell-scale, 1)));
+    line-height: 1;
+  }
 }
 
 /* Tooltip 专用细节样式 */

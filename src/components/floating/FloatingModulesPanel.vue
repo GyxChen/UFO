@@ -6,9 +6,10 @@
  * 列表里的每一行都来自注册表（新增组件自动出现）；顺序写进配置的 `order`，
  * 与悬浮窗里的先后顺序是同一个字段。齿轮与「点悬浮窗上的组件」都打开同一个设置页。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import FloatingShapePreview from './FloatingShapePreview.vue'
+import { FLOATING_BASE_CELL_PX, MAX_CELL_PX, MIN_CELL_PX, clampCellPx } from '@/lib/floating-layout'
 import {
   hasModuleSettings,
   orderedModuleDefinitions,
@@ -16,7 +17,10 @@ import {
   type FloatingModuleDefinition,
 } from '@/lib/floating-modules'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseSlider from '@/components/ui/BaseSlider.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
+import SettingsField from '@/components/ui/SettingsField.vue'
 import gearIcon from '@/assets/gear.svg'
 
 const emit = defineEmits<{
@@ -39,6 +43,42 @@ const enabledCount = computed(
 )
 /** 组件列表的顺序 id，拖拽 / 键盘排序都改它。 */
 const orderIds = computed(() => definitions.value.map(definition => definition.id))
+
+/**
+ * 格子大小输入值（物理像素）。
+ *
+ * 拖动时只改这个本地值（预览实时跟着变），松手才落盘 —— 否则滑块每动一像素
+ * 都要写一次配置文件、还要让真窗口跟着重新吸附一次。
+ */
+const cellPxInput = ref(modules.cellPx)
+
+// 配置从后端或别的窗口回来时同步滑块（首次加载完成、或取值被后端夹过）。
+watch(
+  () => modules.cellPx,
+  value => {
+    cellPxInput.value = value
+  }
+)
+
+/** 松手 / 键盘调整后落盘；失败或取值没变时把滑块退回后端已知值。 */
+async function commitCellPx() {
+  const next = clampCellPx(cellPxInput.value)
+  if (next === modules.cellPx) {
+    cellPxInput.value = modules.cellPx
+    return
+  }
+  try {
+    await modules.updateCellPx(next)
+  } catch {
+    cellPxInput.value = modules.cellPx
+  }
+}
+
+/** 恢复默认格边长（与 tauri.conf.json 的窗口初值同一口径）。 */
+function resetCellPx() {
+  cellPxInput.value = FLOATING_BASE_CELL_PX
+  void commitCellPx()
+}
 
 /** 正在被拖拽的行 id（HTML5 拖拽）。 */
 const draggingId = ref<string | null>(null)
@@ -188,7 +228,39 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
         <h2 id="module-preview-title" class="ufo-card__title">悬浮窗预览</h2>
         <span class="ufo-card__hint">贴边即变形</span>
       </div>
-      <FloatingShapePreview :snapshot="modules.runtime" :definitions="definitions" />
+      <SettingsField
+        label="格子大小"
+        label-id="floating-cell-size-label"
+        hint="每一格的边长；横条 / 竖条按格数成倍放大，方形与四角保持正方形。拖动时预览实时变化，松手后悬浮窗按新尺寸重新吸附。"
+      >
+        <div class="module-catalog__cell-size">
+          <BaseSlider
+            v-model="cellPxInput"
+            :min="MIN_CELL_PX"
+            :max="MAX_CELL_PX"
+            :step="1"
+            aria-labelledby="floating-cell-size-label"
+            :aria-value-text="`${cellPxInput} 像素`"
+            @change="commitCellPx"
+          />
+          <span class="module-catalog__cell-value">{{ cellPxInput }}px</span>
+          <BaseButton
+            variant="ghost"
+            size="sm"
+            :disabled="cellPxInput === FLOATING_BASE_CELL_PX"
+            title="恢复默认格子大小"
+            @click="resetCellPx"
+          >
+            默认
+          </BaseButton>
+        </div>
+      </SettingsField>
+
+      <FloatingShapePreview
+        :snapshot="modules.runtime"
+        :definitions="definitions"
+        :cell-px="cellPxInput"
+      />
     </section>
   </div>
 </template>

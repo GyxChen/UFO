@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
@@ -7,6 +7,7 @@ import {
   ABS_MAX_CELLS,
   ABS_MIN_CELLS,
   DEFAULT_WINDOW_CELLS,
+  cellSizeOf,
   layoutFromDocked,
   type FloatingLayout,
 } from '@/lib/floating-layout'
@@ -26,6 +27,7 @@ import {
   type TooltipHoverPayload,
 } from '@/lib/tooltip'
 import { showMainWindow } from '@/lib/window'
+import { useFloatingModulesStore } from '@/stores/floatingModules'
 import FloatingModuleHost from './FloatingModuleHost.vue'
 
 const window = getCurrentWindow()
@@ -36,8 +38,11 @@ let snapTimer: ReturnType<typeof setTimeout> | undefined
 let unlistenMoved: (() => void) | undefined
 let unlistenScaleChanged: (() => void) | undefined
 let unlistenTooltipInteraction: UnlistenFn | undefined
-// 悬浮窗的基础尺寸,未贴边时恢复为该尺寸;挂载时读取。
-let baseSize: { width: number; height: number } = { width: 56, height: 56 }
+// 悬浮窗配置（窗口级数据）由外壳 store 持有：这里只读一格边长，不关心谁改的。
+const modules = useFloatingModulesStore()
+// 一格的实际尺寸：未贴边时窗口恢复为它，贴边时按格数成倍放大。
+// 用户在「悬浮窗设置」里调的就是它（配置 `cell_px`），没配过时回落常量。
+const baseSize = computed(() => cellSizeOf(modules.cellPx))
 // 模块申请的格子数；不低于默认，不超过绝对上限。
 let requestedCells = DEFAULT_WINDOW_CELLS
 // 最近一次吸附结果：提示窗定位直接复用，避免 hover 时重复查询窗口几何。
@@ -327,7 +332,7 @@ async function snapWindow() {
   const result = snapToWorkArea(
     { x: position.x, y: position.y },
     { width: size.width, height: size.height },
-    baseSize,
+    baseSize.value,
     {
       position: { x: monitor.workArea.position.x, y: monitor.workArea.position.y },
       size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
@@ -367,6 +372,14 @@ function onMoved() {
 function onScaleChanged() {
   scheduleSnap()
 }
+
+// 主窗改了格子大小：按新尺寸重新吸附（配置由外壳 store 广播过来，这里不关心是谁改的）。
+watch(
+  () => modules.cellPx,
+  () => {
+    scheduleSnap()
+  }
+)
 
 onMounted(async () => {
   // 先同步当前窗口的布局，避免首次显示内容时仍使用未知形态。

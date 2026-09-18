@@ -119,8 +119,8 @@ src-tauri/src/
 |---|---|
 | 窗口尺寸 / 贴边 / 形态推导 | `src/components/floating/FloatingWindow.vue`、`src/lib/snap.ts`、`src/lib/floating-layout.ts` |
 | 模块挂载与分槽 | `FloatingModuleHost.vue`、`FloatingModuleSlot.vue` |
-| 组件启用 / 排序 / 上限 | `src/stores/floatingModules.ts`、`src-tauri/src/floating/module_config.rs` |
-| 组件列表与齿轮入口 | `src/components/floating/FloatingModulesPanel.vue` |
+| 组件启用 / 排序 / 上限 / 一格边长 | `src/stores/floatingModules.ts`、`src-tauri/src/floating/module_config.rs` |
+| 组件列表与齿轮入口、窗口级「格子大小」滑块 | `src/components/floating/FloatingModulesPanel.vue` |
 | 一级 / 二级导航 | `src/components/MainWindow.vue` |
 | tooltip 定位 / 显隐 / 点击穿透 | `src/components/TooltipWindow.vue`、`src/lib/tooltip.ts` |
 | 通用信息卡行与分组 | `src/components/floating/tooltip/{TooltipRow,TooltipSection}.vue` |
@@ -230,7 +230,7 @@ const moduleApi = inject(floatingModuleKey, null)
 
 | layout | 触发条件 | 形状 | 备注 |
 |---|---|---|---|
-| `square` | 未贴边 | 56×56（1×1 格） | 与格子数无关，恒定 |
+| `square` | 未贴边 | 1×1 格（默认 45×45） | 与格子数无关，恒定；一格的边长可配（见 11.1 的 `cell_px`） |
 | `corner` | 贴四角 | 正方形，边长 = `ceil(√cells)` 格 | 空间比 `square` 宽裕，可显示更多 |
 | `horizontal` | 贴上下边 | 横条，宽 = cells × 1 格 | **高度只有 1 格**，纵向极其紧张 |
 | `vertical` | 贴左右边 | 竖条，高 = cells × 1 格 | **宽度只有 1 格**，横向极其紧张 |
@@ -239,7 +239,7 @@ const moduleApi = inject(floatingModuleKey, null)
 
 - ✅ 用 grid / flex 比例、`minmax(0, 1fr)`、`clamp()`、省略号自适应。
 - ✅ 用 `cellsGrid(layout, cells)`（`src/lib/floating-layout.ts`）换算行列，别自己写公式。
-- ❌ 不要写死 `width: 56px` / `height: 240px` 这类固定像素布局。
+- ❌ 不要写死 `width: 45px` / `height: 240px` 这类固定像素布局（要按槽位写 `clamp`，见 5.5）。
 - ❌ 不要假设「窗口一定比我需要的大」。
 - ❌ 不要给元素加 `title`（会触发 Windows 原生提示，和 tooltip 重复且更简陋）；无障碍信息只走 `aria-label`。
 
@@ -261,7 +261,51 @@ const partitioned = computed(() => partitionIndicatorSessions(store.sessions, pr
 - 根节点 class 用 `.<id>-module`，形态修饰类 `.<id>-module--<layout>`（如 `.agent-status-module--horizontal`）。
 - 根节点**不要**自己加 `data-module-id`：那是 `FloatingModuleSlot` 的职责（外壳靠它把「点在我这块」翻译成「打开这个组件的设置」）。
 - 悬停：`@pointerenter="moduleApi?.reportHover(key)"` / `@pointerleave="moduleApi?.reportHover(null)"`。`key` 由组件自己定义与解释，外壳只当字符串转发。
-- 组件不要主动 popup / 弹窗 / 自己定位 tooltip —— 那是外壳的能力。---
+- 组件不要主动 popup / 弹窗 / 自己定位 tooltip —— 那是外壳的能力。
+
+### 5.5 按槽位尺寸自适应（容器查询）
+
+槽位 `.floating-module-slot` 由外壳声明为 **size 容器**（`container-name: floating-slot`），组件因此能知道「宿主这一刀切给我多少像素」，并按槽位的真实尺寸降级 / 放大。这是唯一可靠的依据 —— `allocatedCells` 只说分到几格，而同样 1 格在 `square`（45×45）与 `vertical`（45×h）里宽度相同、高度完全不同。
+
+```css
+/* 槽位矮到摆不下正常排版：退化成「图标 + 一行数值」，任何尺寸都不裁切 */
+@container floating-slot (max-height: 33px) {
+  .demo-module {
+    flex-direction: row;
+    gap: 6cqw;
+  }
+  .demo-module__icon {
+    width: clamp(10px, 78cqh, calc(24px * var(--floating-cell-scale, 1)));
+    height: clamp(10px, 78cqh, calc(24px * var(--floating-cell-scale, 1)));
+  }
+  .demo-module__value {
+    font-size: clamp(11px, 58cqh, calc(19px * var(--floating-cell-scale, 1)));
+  }
+}
+```
+
+规矩：
+
+- ✅ 悬浮窗里的尺寸统一写 `clamp(下限, Xcqh, 上限)`（`cqh` = 槽位高、`cqw` = 槽位宽），一套规则覆盖「未贴边 1 格」到「贴边 8 格」，不用为每种格子数再写一层。
+- ✅ **上限本身也要跟着格子缩放**：上限写死的 px 会让组件在用户调大「格子大小」后停止长大（`cqh` 变大、clamp 却卡住）。宿主按配置的 `cell_px` 在 `.floating-module-host` 上声明两个变量：
+  - `--floating-cell-px`：一格实际多少像素（原始值，便于将来按格数排版）；
+  - `--floating-cell-scale`：相对设计基准 `FLOATING_BASE_CELL_PX`（45px）的倍率，1 = 设计尺寸。
+
+  于是所有**设计像素**（字号、图标上限、描边、光晕、间隙）都写成 `calc(<设计像素> * var(--floating-cell-scale, 1))`。变量缺失时回落 1（= 设计尺寸），正好与「没有槽位容器时 cq 退化、clamp 取到设计上限」的表现对齐，所以在主窗预览 / 单测里也安全。
+  ⚠️ 别把 `var()` 的兜底写成别的数：1 之外的兜底会让「没有外壳」的场景跟设计尺寸对不上。
+- ✅ 降级要有取舍：先丢次要信息（城市、湿度、平台图标），再缩尺寸。- ✅ **百分比尺寸要取「限制轴」的**：槽位宽高不等时（竖条只有一格宽、行高≈一格），百分比只有落在**更短的轴**上才不会溢出。实测竖条 45 格：行宽 39.5px、行高 43.2px，灯点 + 间隙 + 图标按行高算是 42.4px —— 超出的近 3px 被槽位的 `overflow:hidden` 切掉，图标缺一角。做法是按形态换轴、比例不动。
+- ⚠️ 降级查询要覆盖两条轴：`@container (max-height: …)` 管横条 / 方形，`@container (max-width: …)` 管竖条；拆成两个块写（`or` 语法要求较新的内核，拆开在任何版本都不会整块失效）。
+- ⚠️ 形态规则的选择器如果比降级规则更长（如 `.demo-module--vertical .demo-module__dot`），降级块里必须**带上同一条选择器**才盖得住它 —— 否则降级静默失效（灯点该吃满一行时仍是小圆点）。
+- ⚠️ **cq 单位只在有槽位容器的前提下才是「槽位尺寸」**：没有祖先容器时（主窗口预览、单测直接挂组件）`cqh` 会按规范退化成**视口**单位，图标能瞬间撑满整屏。所以规则是「`@container` 块内放心用」+「块外一律用 `clamp(下限, Xcqh, 上限)` 把退化情形夹住」——配上面那条 `--floating-cell-scale` 的兜底 1，退化时就正好是设计尺寸。
+- ⚠️ **绝对可读性阈值不要乘倍率**：`@container (max-height: 32px)` 这类断点的语义是「槽位小于这么多像素就看不清」，跟设计缩放无关；乘了倍率会让大格子下的降级永远不触发。
+- ⚠️ 槽位是 `overflow: hidden`：任何方向都不允许出现滚动条或被裁的元素，宁可降级。
+- ❌ 不要用 `@media`（那是视口，不是槽位）；不要用 JS 量尺寸（外壳不为组件做布局，容器查询在布局期就有答案）。
+- ❌ 不要因为「槽位看起来很小」就把内容整块藏掉 —— 用户什么都看不到，比看得少更糟。
+- 🧪 护栏：`src/components/floating/floating-module-scaling.spec.ts` 会用 `?raw` 读所有模块样式，**`clamp()` 的上限只要是 px 设计值就必须引用 `--floating-cell-scale`**（上限是 cq 单位的不管）；`src/modules/agent-status/agent-status-css.spec.ts` 另外锁住「一行百分比之和 < 100%」与「竖条按行宽取百分比 + 窄槽降级盖得住它」。
+
+参考实现：`src/modules/weather/weather.css`（正常排版按 cqh 缩放 + 矮槽位兜底成一行）、`src/modules/agent-status/agent-status.css`（竖条换成按行宽取百分比；槽位过矮 / 过窄时藏掉平台图标、把灯点吃满一格）。
+
+---
 
 ## 6. 格子需求 `demand`
 
@@ -372,6 +416,9 @@ export function clockSettings(config: FloatingModuleConfig | null): ClockSetting
 - 可滚动容器必须带 `scrollbar-gutter: stable`，滚动条出现时不得挤占内容宽度。
 - 反馈**不得**用 `window.alert` / `window.confirm`（项目装了 `tauri-plugin-prevent-default`，原生对话框会被拦）。一律走 `role="status"` 行内提示；删除类操作走两步确认。
 - 主窗口 `.main-window` 是唯一滚动容器（外壳与 html/body 不滚）。
+- **窗口级参数放「悬浮窗设置」页，组件级参数放组件自己的页**：判据是「换个组件它还成不成立」。一格多少像素、各形态格子上限都属于前者（见 11.1 的 `cell_px` / `max_cells_by_layout`），页面文案要写明这是整个悬浮窗的设置。
+- 滑块（`ui/BaseSlider.vue`）**拖动时只改本地值、松手（change）才落盘**：拖一次会连发几十个 input 事件，每个都写盘 + 触发一次真窗口重新吸附是不可接受的。配套规矩是「预览跟着本地值走」——用户拖的时候必须看得见结果，否则滑块就是个盲操控件。
+- ⚠️ 测试里注意：`@vue/test-utils` 的 `setValue()` 会连发 input + change（等于「拖到底并松手」）。只想模拟拖动就手动改 `element.value` 再 `trigger('input')`。
 
 ---
 
@@ -509,10 +556,13 @@ activate: () => {
 判断方法：这个类的样式，删掉某个组件后还需要吗？需要 → 外壳；不需要 → 组件自己的 `<id>.css`。
 
 ### 10.5 单位陷阱
-Tauri 的窗口尺寸是**物理像素**，CSS 是逻辑像素。高分屏（scale factor 2）下 `setSize(56)` 的窗口在 CSS 里是 28px。因此：
+Tauri 的窗口尺寸是**物理像素**，CSS 是逻辑像素。高分屏（scale factor 2）下 `setSize(45)` 的窗口在 CSS 里是 22.5px。因此：
 
 - 组件布局不要跟窗口尺寸「对数字」，只按比例自适应。
-- 需要精确对齐时，用 `getCurrentWindow().scaleFactor()` 换算，别凭经验乘常数。---
+- 需要精确对齐时，用 `getCurrentWindow().scaleFactor()` 换算，别凭经验乘常数。
+- 槽位内部的比例一律走 `clamp(下限, Xcqh, 上限)`（见 5.5），不要按「一格 45px」反推固定像素。
+
+---
 
 ## 11. 配置持久化与迁移
 
@@ -526,6 +576,7 @@ Tauri 的窗口尺寸是**物理像素**，CSS 是逻辑像素。高分屏（sca
   "revision": 7,                       // 单调递增，用于丢弃迟到 / 乱序的旧配置
   "modules": [{ "id": "agent-status", "enabled": true, "order": 0 }],
   "max_cells_by_layout": { "square": 8, "corner": 8, "horizontal": 8, "vertical": 8 },
+  "cell_px": 45,                       // 一格多少像素（32–96）：窗口级尺寸基准，同级组件共享
   "module_settings": {                 // ★ 组件的家：键 = 组件 id，值 = 组件自己解释的对象
     "agent-status": { "completed_retention_ms": 30000, "token_unit": "tokens" }
   }
@@ -536,6 +587,7 @@ Tauri 的窗口尺寸是**物理像素**，CSS 是逻辑像素。高分屏（sca
 |---|---|---|
 | `modules[].enabled` / `.order` | 外壳 | 仅这两项与具体组件无关，故留外壳 |
 | `max_cells_by_layout` | 外壳 | 整个悬浮窗的尺寸参数，同级组件共享 |
+| `cell_px` | 外壳 | 一格边长（像素，32–96，默认 45）：同样是窗口级基准，同级组件共享。`#[serde(default)]` —— 旧配置缺字段按默认值走，**不得**为它升 `schema_version`。前端读它一律走 `configCellPx()` / `cellSizeOf()`，别直接取字段 |
 | `module_settings[<id>]` | **组件** | 外壳只按 id 原样存取，**不解释**任何字段 |
 
 ### 11.2 写入链路（Rust）
@@ -544,7 +596,7 @@ Tauri 的窗口尺寸是**物理像素**，CSS 是逻辑像素。高分屏（sca
 前端 updateModuleSettings(id, patch)
   → invoke('set_floating_module_config')          [仅 main 窗口有权限]
   → revision = 当前 revision + 1
-  → validate()：校验 schema_version / 模块 id（≤64 字符、不含 / 与 \）/ clamp 格子上限
+  → validate()：校验 schema_version / 模块 id（≤64 字符、不含 / 与 \）/ clamp 格子上限与一格边长（cell_px）
   → persist()：先写 floating-modules.tmp 再 rename（原子，不留半截文件）
   → emit('floating-module-config')                 [三窗口都收，前端 applyConfig]
   → notify()：按登记顺序调用各组件的 config_hook  [组件据此刷新运行时状态，改完即时生效]
@@ -583,7 +635,7 @@ pub fn adopt_legacy_fields(settings: &mut ModuleSettingsMap, legacy: &BTreeMap<S
 
 | 动作 | 要做的事 | 不要做的事 |
 |---|---|---|
-| 加字段 | 前端 `settings.ts` + Rust `settings.rs` 各加一处 + 默认值；组件自己 clamp | 不改 `schema_version`，不改外壳 |
+| 加字段 | 组件字段：前端 `settings.ts` + Rust `settings.rs` 各加一处 + 默认值，组件自己 clamp；**外壳字段**（整个窗口的，如 `cell_px`）：只改 `floating-modules.ts` / `module_config.rs`，加 `#[serde(default)]` + clamp | 不改 `schema_version`；组件字段不得写进外壳 |
 | 改字段语义 | 同时改两份实现与两份单测，写清上限 / 下限 | 不要只改一边（会出现「显示与实际不一致」） |
 | 删字段 | 保留读取兼容（读到就忽略），停止写入 | 不要在 `from_block` 里直接 panic / 报错 |
 | 改名 | 旧名写进 `LEGACY_FLAT_FIELDS` 迁移表 | 不要指望用户手改配置文件 |
@@ -683,7 +735,7 @@ pub fn config_hook() -> ModuleConfigHook { Box::new(|app, config| { … }) }
 
 | label | 用途 | 关键配置 |
 |---|---|---|
-| `floating` | 悬浮窗 | 初始 56×56、transparent、alwaysOnTop、不可缩放 |
+| `floating` | 悬浮窗 | 初始 45×45（= 默认一格；读到配置后按 `cell_px` 重算）、transparent、alwaysOnTop、不可缩放 |
 | `main` | 设置主窗 | 1000×750、`visible: false`、自绘标题栏、关闭 = 隐藏到托盘 |
 | `tooltip` | 悬停信息卡 | 300×260、`visible: false`、`focusable: false`、点击穿透 |
 
@@ -775,10 +827,12 @@ npm run check                      # cargo check（快速编译闸门）
 - [ ] 悬停出信息卡、移开即收；贴边 / 拖拽 / 点击时信息卡立刻消失
 - [ ] 信息卡不会弹空框（`hasContent` 生效）
 - [ ] 主窗口改配置后**即时生效**（不用重启）
+- [ ] 「悬浮窗设置」的格子大小滑块：拖动时预览跟着变，松手后真窗口按新尺寸重算（贴边中也一样）；把值调回来点「默认」能回到 45
 
 ### 15.4 真机回归（只有人能做）
 
 - [ ] 旧配置文件能自动迁移，迁移后旧字段从文件里消失、设置值不丢
+- [ ] 旧配置（没有 `cell_px`）打开后窗口仍是 45，不塌成一条线
 - [ ] 重启 App 后设置仍在
 - [ ] 高分屏（scale factor ≠ 1）下尺寸与命中区域正常
 
@@ -834,11 +888,14 @@ npm run check                      # cargo check（快速编译闸门）
 | 形态枚举 | `square` / `corner` / `horizontal` / `vertical` | `src/lib/floating-layout.ts` |
 | 默认窗口格数 | `DEFAULT_WINDOW_CELLS = 4` | 等于 2×2 或 4×1 |
 | 格子上限范围 | `ABS_MIN_CELLS = 4` / `ABS_MAX_CELLS = 8` | 用户可配，后端也会 clamp |
-| 单格像素 | `FLOATING_BASE_CELL_PX = 56` | 与 floating 窗口初值一致 |
+| 单格像素（默认） | `FLOATING_BASE_CELL_PX = 45` | 与 floating 窗口初值一致（外部另留 1px 描边 + 2px 内边距） |
+| 单格像素范围 | `MIN_CELL_PX = 32` / `MAX_CELL_PX = 96` | 用户可在「悬浮窗设置」的滑块里调；`clampCellPx()` 与 Rust `validate()` 各 clamp 一次 |
+| 单格像素换算 | `cellSizeOf(px)` / `configCellPx(config)` | 前者包成 `{ width, height }`，后者从配置取（缺字段回落默认） |
+| 槽位容器 | `.floating-module-slot`（size 容器，`container-name: floating-slot`） | 组件用 `@container floating-slot (...)` 与 `cqh` / `cqw` 按槽位自适应（见 5.5） |
 | 方形 / 四角 / 横条 / 竖条尺寸 | `floatingWindowSize(layout, cells)` | 主窗预览与贴边共用同一口径 |
 | 悬停延迟 | `SHOW_DELAY_MS = 250`（`FloatingWindow.vue`） | 到点才发 `tooltip-hover` |
 | 提示窗默认尺寸 | 300×260（`tauri.conf.json`） | 组件可用 `tooltip.size` 覆盖 |
 | 事件名 | `ufo-floating-runtime` / `-request` / `ufo-open-module-settings` / `tooltip-hover` / `tooltip-interaction` / `floating-module-config` | `src/lib/floating-bridge.ts`、`src/lib/tooltip.ts` |
 | 窗口 label | `floating` / `main` / `tooltip` | 与 capability 的 `windows` 数组对应 |
-| 配置键 | `modules[].enabled|order`、`max_cells_by_layout`、`module_settings[<id>]` | 外壳只解释前三项 |
+| 配置键 | `modules[].enabled|order`、`max_cells_by_layout`、`cell_px`、`module_settings[<id>]` | 外壳只解释前四项 |
 | 注释要求 | 每个方法写功能；接口 / type 描述字段；关键代码写清在干什么 | AGENTS.md |

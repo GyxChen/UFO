@@ -6,6 +6,7 @@ import BaseButton from './BaseButton.vue'
 import BaseInput from './BaseInput.vue'
 import BaseSegmentedControl from './BaseSegmentedControl.vue'
 import BaseSelect from './BaseSelect.vue'
+import BaseSlider from './BaseSlider.vue'
 import BaseSwitch from './BaseSwitch.vue'
 
 describe('BaseButton', () => {
@@ -43,6 +44,35 @@ describe('BaseInput', () => {
     await wrapper.find('input').setValue('https://api.example.com')
 
     expect(wrapper.emitted('update:modelValue')).toEqual([['https://api.example.com']])
+  })
+})
+
+describe('BaseSlider', () => {
+  it('emits the numeric value on drag and on commit', async () => {
+    const wrapper = mount(BaseSlider, { props: { modelValue: 45, min: 32, max: 96 } })
+    const input = wrapper.get<HTMLInputElement>('input')
+
+    expect(input.attributes('type')).toBe('range')
+    expect(input.attributes('min')).toBe('32')
+    expect(input.attributes('max')).toBe('96')
+
+    // 拖动发 update:modelValue，松手另外发 change —— 页面按这个分工决定何时落盘。
+    await input.setValue('64')
+    expect(wrapper.emitted('update:modelValue')).toEqual([[64]])
+    expect(wrapper.emitted('change')).toHaveLength(1)
+  })
+
+  it('exposes the filled ratio as a css variable', () => {
+    const wrapper = mount(BaseSlider, { props: { modelValue: 45, min: 32, max: 96 } })
+    // (45 − 32) / (96 − 32) = 20.3125%
+    expect(wrapper.get('.base-slider').attributes('style')).toContain('20.3125%')
+  })
+
+  it('reports a full and an empty track at the bounds', () => {
+    const atMin = mount(BaseSlider, { props: { modelValue: 32, min: 32, max: 96 } })
+    expect(atMin.get('.base-slider').attributes('style')).toContain('0%')
+    const atMax = mount(BaseSlider, { props: { modelValue: 96, min: 32, max: 96 } })
+    expect(atMax.get('.base-slider').attributes('style')).toContain('100%')
   })
 })
 

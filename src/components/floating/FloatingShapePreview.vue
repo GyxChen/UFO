@@ -7,15 +7,25 @@
  * 与宿主分槽用的是同一份 `demands`。
  */
 import { computed } from 'vue'
-import { FLOATING_BASE_CELL_PX, floatingWindowSize, type FloatingLayout } from '@/lib/floating-layout'
+import {
+  FLOATING_BASE_CELL_PX,
+  cellSizeOf,
+  floatingWindowSize,
+  type FloatingLayout,
+} from '@/lib/floating-layout'
 import type { FloatingModuleDefinition, FloatingRuntimeSnapshot } from '@/lib/floating-modules'
 
-const props = defineProps<{
-  /** 悬浮窗广播来的运行时快照；还没收到时为 null（显示占位）。 */
-  snapshot: FloatingRuntimeSnapshot | null
-  /** 注册表里的模块定义，用于给色块取名字。 */
-  definitions: readonly FloatingModuleDefinition[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** 悬浮窗广播来的运行时快照；还没收到时为 null（显示占位）。 */
+    snapshot: FloatingRuntimeSnapshot | null
+    /** 注册表里的模块定义，用于给色块取名字。 */
+    definitions: readonly FloatingModuleDefinition[]
+    /** 配置里的一格边长（物理像素）；预览按它换算真实尺寸，默认即兜底值。 */
+    cellPx?: number
+  }>(),
+  { cellPx: FLOATING_BASE_CELL_PX }
+)
 
 /** 每个分组在卡片里的最大绘制尺寸（等比缩放前）。 */
 const MAX_WIDTH = 250
@@ -49,7 +59,7 @@ interface RenderedGroup extends ShapeGroup {
   cells: number
   /** 是否就是悬浮窗此刻的形态 */
   current: boolean
-  /** 尺寸说明（方形分组要额外标出未贴边时的 56×56） */
+  /** 尺寸说明（方形分组要额外标出未贴边时的 1 格尺寸，如 45×45） */
   sizeNote: string
   /** 各模块色块：标签 + 空间权重 + 名字放不放得下 */
   blocks: { id: string; label: string; weight: number; showLabel: boolean }[]
@@ -57,10 +67,13 @@ interface RenderedGroup extends ShapeGroup {
 
 const rendered = computed<RenderedGroup[]>(() => {
   const snapshot = props.snapshot
+  // 一格的实际像素尺寸（已夹取范围），三个分组共用同一份口径。
+  const cell = cellSizeOf(props.cellPx)
   return groups.map(group => {
     const runtime = snapshot?.byLayout[group.layout]
     const cells = runtime?.windowCells ?? 0
-    const size = floatingWindowSize(group.layout, Math.max(cells, 1))
+    // 尺寸口径与真窗口一致：同一格边长 + 同一倍率，只是这里整体等比缩放到卡片里。
+    const size = floatingWindowSize(group.layout, Math.max(cells, 1), cell)
     const scale = Math.min(1, MAX_WIDTH / size.width, MAX_HEIGHT / size.height)
     // 缩放后画出来的窗口尺寸；色块尺寸由它按权重切出来。
     const drawnWidth = size.width * scale
@@ -91,7 +104,7 @@ const rendered = computed<RenderedGroup[]>(() => {
       current: snapshot?.layout ? group.layouts.includes(snapshot.layout) : false,
       sizeNote:
         group.layout === 'corner'
-          ? `${cells} 格 · 未贴边 ${FLOATING_BASE_CELL_PX}×${FLOATING_BASE_CELL_PX} · 贴角 ${size.width}×${size.height}px`
+          ? `${cells} 格 · 未贴边 ${cell.width}×${cell.height} · 贴角 ${size.width}×${size.height}px`
           : `${cells} 格 · ${size.width}×${size.height}px`,
       blocks,
     }

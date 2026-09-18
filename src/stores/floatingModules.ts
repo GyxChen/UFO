@@ -1,9 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
-import { ABS_MAX_CELLS, ABS_MIN_CELLS } from '@/lib/floating-layout'
+import { ABS_MAX_CELLS, ABS_MIN_CELLS, clampCellPx } from '@/lib/floating-layout'
 import {
   applyModuleOrder,
+  configCellPx,
   defaultMaxCellsByLayout,
   isModuleEnabled,
   type FloatingLayout,
@@ -56,6 +57,8 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
       (id: string, defaultEnabled = false): boolean =>
         isModuleEnabled(state.config, id, defaultEnabled),
     maxCellsByLayout: (state): MaxCellsByLayout => state.config?.max_cells_by_layout ?? defaultMaxCellsByLayout(),
+    /** 配置里的一格边长（物理像素）；没配过回落默认 45（见 `configCellPx`）。 */
+    cellPx: (state): number => configCellPx(state.config),
     /**
      * 取某个组件自己的配置块（原样返回，不解释内容）；没配置过时返回空对象。
      * 组件自己的 `settings.ts` 负责把它解析成强类型值 —— 外壳不知道里面有什么。
@@ -198,6 +201,26 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
         )
       } catch (error) {
         console.warn('failed to update max cells by layout', error)
+        throw error
+      }
+    },
+
+    /**
+     * 改一格边长（物理像素）。
+     *
+     * 夹取范围后整份落盘：这是**窗口级**参数，悬浮窗收到配置事件后会按新尺寸重新吸附，
+     * 因此这里不需要通知任何具体组件。
+     */
+    async updateCellPx(px: number) {
+      const current = this.config ?? fallbackConfig
+      try {
+        this.applyConfig(
+          await invoke<FloatingModuleConfig>('set_floating_module_config', {
+            config: { ...current, cell_px: clampCellPx(px) },
+          })
+        )
+      } catch (error) {
+        console.warn('failed to update floating cell size', error)
         throw error
       }
     },

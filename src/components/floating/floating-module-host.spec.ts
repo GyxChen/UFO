@@ -60,7 +60,7 @@ const definitions: FloatingModuleDefinition[] = [
   },
 ]
 
-const config = (extraEnabled: boolean): FloatingModuleConfig => ({
+const config = (extraEnabled: boolean, cellPx?: number): FloatingModuleConfig => ({
   schema_version: 1,
   revision: 5,
   modules: [
@@ -68,17 +68,18 @@ const config = (extraEnabled: boolean): FloatingModuleConfig => ({
     { id: 'extra', enabled: extraEnabled, order: 1 },
   ],
   max_cells_by_layout: { square: 8, corner: 8, horizontal: 8, vertical: 8 },
+  ...(cellPx === undefined ? {} : { cell_px: cellPx }),
   module_settings: {},
 })
 
 /** 装配一次宿主：注入 pinia 与模块清单，并按形态挂载。 */
 function mountHost(
   layoutMode: FloatingLayout,
-  options: { extraEnabled?: boolean; definitions?: FloatingModuleDefinition[] } = {}
+  options: { extraEnabled?: boolean; definitions?: FloatingModuleDefinition[]; cellPx?: number } = {}
 ) {
   const pinia = createPinia()
   setActivePinia(pinia)
-  useFloatingModulesStore().applyConfig(config(options.extraEnabled ?? true))
+  useFloatingModulesStore().applyConfig(config(options.extraEnabled ?? true, options.cellPx))
   return mount(FloatingModuleHost, {
     props: { layoutMode, definitions: options.definitions ?? definitions },
     global: { plugins: [pinia] },
@@ -185,4 +186,36 @@ describe('FloatingModuleHost', () => {
     expect(lastCells(wrapper)).toBe(4)
   })
 
+  it('publishes the cell size to modules as inherited css variables', async () => {
+    // 90px = 设计基准 45px 的两倍：模块用这个倍率把写死的设计像素（字号 / 描边 / 图标上限）等比放大。
+    const wrapper = mountHost('square', { cellPx: 90 })
+    await wrapper.vm.$nextTick()
+
+    const style = wrapper.get<HTMLElement>('.floating-module-host').element.style
+    expect(style.getPropertyValue('--floating-cell-px')).toBe('90px')
+    expect(style.getPropertyValue('--floating-cell-scale')).toBe('2')
+  })
+
+  it('falls back to the design scale when the config has no cell size', async () => {
+    const wrapper = mountHost('square')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get<HTMLElement>('.floating-module-host').element.style.getPropertyValue('--floating-cell-scale')).toBe(
+      '1'
+    )
+  })
+
+  it('republishes the scale when the user changes the cell size', async () => {
+    const wrapper = mountHost('square')
+    await wrapper.vm.$nextTick()
+
+    // 配置变化（主窗口拖滑块）后倍率要立刻跟上，真窗口与模块一起重算。
+    useFloatingModulesStore().applyConfig({ ...config(true, 64), revision: 6 })
+    await wrapper.vm.$nextTick()
+
+    // 64 / 45 ≈ 1.422，保留三位小数。
+    expect(wrapper.get<HTMLElement>('.floating-module-host').element.style.getPropertyValue('--floating-cell-scale')).toBe(
+      '1.422'
+    )
+  })
 })

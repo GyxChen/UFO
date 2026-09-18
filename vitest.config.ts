@@ -14,6 +14,13 @@ export default mergeConfig(
   defineConfig({
     test: {
       globals: true,
+      /*
+       * 只放行「模块 CSS + ?raw」这一种组合：默认 vitest 会把所有 .css 请求打桩成空串，
+       * 于是 import.meta.glob 带 ?raw 去读模块的 .css 时拿到的是空串，读样式内容的护栏测试
+       * （floating-module-scaling.spec.ts）就没法工作。
+       * 其余 CSS 导入（组件 import './x.css'）行为完全不变，仍是空桩 —— 测试环境没有真实排版。
+       */
+      css: { include: [/modules\/.*\.css\?raw/] },
       include: ['tests/unit/**/*.test.ts', 'src/**/*.spec.ts'],
       root: fileURLToPath(new URL('./', import.meta.url)),
       setupFiles: ['./tests/setup/testglobals.ts'],

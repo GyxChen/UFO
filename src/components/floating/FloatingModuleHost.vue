@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import FloatingModuleSlot from './FloatingModuleSlot.vue'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import type { FloatingHoverTarget } from '@/lib/floating-module-context'
-import type { FloatingLayout } from '@/lib/floating-layout'
+import { FLOATING_BASE_CELL_PX, type FloatingLayout } from '@/lib/floating-layout'
 import {
   allocatedCells,
   enabledModuleDefinitions,
@@ -66,6 +66,24 @@ const runtime = computed(() =>
 )
 
 /**
+ * 一格尺寸的 CSS 变量：宿主声明在根节点上，模块继承使用。
+ *
+ * 「格子大小」是用户可调的（配置 `cell_px`），所以模块里写死的**设计像素**（字号、描边、间隙、
+ * 图标上限……）不能就那么冻着 —— 格子调大后槽位变大、百分比尺寸跟着长，写死的那部分却停住，
+ * 比例就散了。约定是模块写成 `calc(<设计像素> * var(--floating-cell-scale, 1))`：
+ *
+ * - `--floating-cell-px`：一格实际多少像素（原始值，便于将来按格数排版）
+ * - `--floating-cell-scale`：相对设计基准 `FLOATING_BASE_CELL_PX` 的倍率，1 = 设计尺寸
+ *
+ * 变量缺失时模块回落 1，即设计尺寸（与「没有槽位容器时 `cqh` 退化、clamp 取到设计上限」一致）。
+ */
+const cellVars = computed(() => ({
+  '--floating-cell-px': `${modules.cellPx}px`,
+  // 保留三位小数就够了：CSS 里只用来乘设计像素，多余的精度只会把 DOM 撑长。
+  '--floating-cell-scale': String(Math.round((modules.cellPx / FLOATING_BASE_CELL_PX) * 1000) / 1000),
+}))
+
+/**
  * 分槽样式：按权重铺 fr 轨道。
  * 横条沿宽度分槽（模块左右并排）；竖条 / 方形 / 四角沿高度分槽（模块上下堆叠）。
  */
@@ -82,7 +100,7 @@ watch(runtime, snapshot => emit('runtime', snapshot), { immediate: true })
 </script>
 
 <template>
-  <div class="floating-module-host" :style="slotStyle">
+  <div class="floating-module-host" :style="[slotStyle, cellVars]">
     <FloatingModuleSlot
       v-for="(definition, index) in activeModules"
       :key="definition.id"

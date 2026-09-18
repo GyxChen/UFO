@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ABS_MAX_CELLS, ABS_MIN_CELLS, DEFAULT_WINDOW_CELLS } from './floating-layout'
+import {
+  ABS_MAX_CELLS,
+  ABS_MIN_CELLS,
+  DEFAULT_WINDOW_CELLS,
+  FLOATING_BASE_CELL_PX,
+  MIN_CELL_PX,
+} from './floating-layout'
 import {
   activateModules,
   allocatedCells,
+  configCellPx,
   defaultMaxCellsByLayout,
   enabledModuleDefinitions,
   isModuleEnabled,
@@ -223,6 +230,17 @@ describe('activateModules', () => {
     expect(calls).toEqual(['start:first', 'start:second'])
     stop()
     expect(calls).toEqual(['start:first', 'start:second', 'stop:second', 'stop:first'])
+  })
+
+  it('falls back to the default cell size when the config has none', () => {
+    // `cell_px` 是可选的：旧配置文件 / 测试夹具里都可能没有这个键。
+    expect(configCellPx(null)).toBe(FLOATING_BASE_CELL_PX)
+    expect(configCellPx({ ...config, cell_px: undefined })).toBe(FLOATING_BASE_CELL_PX)
+  })
+
+  it('reads and clamps the configured cell size', () => {
+    expect(configCellPx({ ...config, cell_px: 64 })).toBe(64)
+    expect(configCellPx({ ...config, cell_px: 0 })).toBe(MIN_CELL_PX)
   })
 
   it('keeps going when a module throws on activate or dispose', () => {

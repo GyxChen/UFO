@@ -15,6 +15,7 @@ declare module 'vue' {
     BaseInput: typeof import('./src/components/ui/BaseInput.vue')['default']
     BaseSegmentedControl: typeof import('./src/components/ui/BaseSegmentedControl.vue')['default']
     BaseSelect: typeof import('./src/components/ui/BaseSelect.vue')['default']
+    BaseSlider: typeof import('./src/components/ui/BaseSlider.vue')['default']
     BaseSwitch: typeof import('./src/components/ui/BaseSwitch.vue')['default']
     BaseTabs: typeof import('./src/components/ui/BaseTabs.vue')['default']
     FloatingModuleHost: typeof import('./src/components/floating/FloatingModuleHost.vue')['default']

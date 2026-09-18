@@ -13,17 +13,28 @@
  * 信息卡内容、两个设置面板（.agent-status-* / .ep-* / .sr-* / .flow-editor* / 信息卡内的
  * .tooltip-close|dot|prompt|provider-icon|reason|stamp）都归这里。
  */
+/*
+ * 按格子缩放（与 weather.css 同一口径）：本模块的尺寸基本是槽位高度的百分比（52.5% / 42%），
+ * 天然跟着「格子大小」走；只有三处写死的像素不会 —— 灯点描边、光晕、+N 字号 ——
+ * 它们都乘 `var(--floating-cell-scale, 1)`（宿主按配置的 cell_px / 设计基准 45px 声明）。
+ * 该变量缺失时回落 1 = 设计尺寸，与没有槽位容器时的表现一致。
+ * ⚠️ 容器查询里的 32px 是**绝对可读性阈值**（槽位矮到 / 窄到看不清图标才降级），不乘倍率。
+ */
+/* 一盏灯占一格：模块与格子都不写内边距，像素全给灯点与平台图标。 */
 .agent-status-module {
-  @apply grid h-full w-full content-center justify-items-center gap-1 overflow-hidden p-1;
+  @apply grid h-full w-full content-center justify-items-center gap-px overflow-hidden p-0;
   /* 网格列行由组件按形态与格子数内联设置，适配方形 / 横条 / 竖条。 */
 }
 
 .agent-status-module__item {
-  @apply flex h-full w-full min-h-0 min-w-0 items-center justify-center gap-1;
+  @apply flex h-full w-full min-h-0 min-w-0 items-center justify-center;
+  /* 百分比间隙随格子一起缩，避免固定 px 在小格子里占掉一成宽度。 */
+  column-gap: 4%;
 }
 
 .agent-status-module__identity {
   @apply flex min-h-0 min-w-0 shrink-0 items-center justify-center;
+  /* 平台图标固定为灯点的 0.8 倍：42% = 0.8 × 52.5%（见 __dot）。 */
   height: 42%;
   width: auto;
   aspect-ratio: 1;
@@ -33,26 +44,51 @@
   @apply block h-full w-full object-contain;
 }
 
+/* 灯点 = 一格高度的 52.5%，是这一格里最大的元素；平台图标按 1 : 0.8 跟着它走（42%）。
+   52.5 + 4(间隙) + 42 = 98.5%，留 1.5% 余量，保证图标不会被挤出格子。 */
 .agent-status-module__dot {
   @apply block shrink-0 rounded-full border border-white/40 shadow-sm;
-  height: 28%;
+  height: 52.5%;
   width: auto;
   aspect-ratio: 1;
+  /* 描边与下面的光晕都按格子倍数加粗：否则格子调大后灯点变大、描边仍是一条细线，比例就散了。 */
+  border-width: calc(1px * var(--floating-cell-scale, 1));
 }
 
+/*
+ * 竖条（左右贴边）必须换成「按行宽」取百分比。
+ *
+ * 竖条窗口只有 1 格宽，一行的横向可用宽度 = 一格 − 外壳留白（45 格时 39.5px），
+ * 比行高（≈ 一格 − 格间隙，45 格时 43.2px）**更窄**。上面按行高算出的
+ * 灯点 52.5% + 间隙 4% + 图标 42% = 42.4px 就超出了那 39.5px，
+ * 槽位的 overflow:hidden 会把图标右侧切掉一截（实测裁掉约 1.4px，视觉上就是「状态没显示完整」）。
+ *
+ * 竖条下改用行宽作基准：比例一字不改（52.5% : 42%，合计 98.5%），横向必定放得下，
+ * 纵向由 __item 的 items-center 居中 —— 灯点大小也与方形 / 横条形态对齐（都是「一格的 52.5%」）。
+ * 方形 / 四角 / 横条不受影响（那里的行宽 ≥ 行高，按行高算本来就不会溢出）。
+ */
+.agent-status-module--vertical .agent-status-module__dot {
+  height: auto;
+  width: 52.5%;
+}
+
+.agent-status-module--vertical .agent-status-module__identity {
+  height: auto;
+  width: 42%;
+}
 .agent-status-module__item--green .agent-status-module__dot {
   background: var(--ufo-status-green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-green) 28%, transparent);
+  box-shadow: 0 0 0 calc(2px * var(--floating-cell-scale, 1)) color-mix(in srgb, var(--ufo-status-green) 28%, transparent);
 }
 
 .agent-status-module__item--yellow .agent-status-module__dot {
   background: var(--ufo-status-yellow);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-yellow) 28%, transparent);
+  box-shadow: 0 0 0 calc(2px * var(--floating-cell-scale, 1)) color-mix(in srgb, var(--ufo-status-yellow) 28%, transparent);
 }
 
 .agent-status-module__item--red .agent-status-module__dot {
   background: var(--ufo-status-red);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ufo-status-red) 28%, transparent);
+  box-shadow: 0 0 0 calc(2px * var(--floating-cell-scale, 1)) color-mix(in srgb, var(--ufo-status-red) 28%, transparent);
 }
 
 .agent-status-module__item.is-flashing .agent-status-module__dot {
@@ -66,6 +102,60 @@
 
 .agent-status-module__overflow {
   @apply font-semibold tabular-nums leading-none;
+  /* 12px 是「设计格 45px」下的字号；格子调大要跟着长，否则用户把格子调到 96 时
+     灯点长大一倍、+N 还是一样小。倍率由宿主按 cell_px 声明（见文件头「按格子缩放」）。 */
+  font-size: calc(12px * var(--floating-cell-scale, 1));
+}
+
+/*
+ * 槽位感知（容器查询）：宿主分给本模块的槽位可能被同级模块压得很小
+ * （未贴边的方形最容易出现：整窗就 1 格，还要按需求再切一刀），此时一格只有十几像素，
+ * 平台图标会小到看不清。降级策略是「灯色优先」—— 藏掉图标，把灯点吃满格子。
+ * 槽位容器由外壳在 `.floating-module-slot` 上声明（container-type: size）。
+ *
+ * 两条查询按「哪条轴在限制」拆开，不用 `or` 合并：or 语法要求较新的内核，
+ * 拆开在任何版本都不会整块失效。
+ * - 高度分支：横条 / 方形 / 四角 —— 限制轴是行高；
+ * - 宽度分支：竖条（窗口只有一格宽）—— 限制轴是行宽。
+ * 竖条下灯点的尺寸被上面那条 `.agent-status-module--vertical` 规则接管（选择器更长），
+ * 因此宽度分支里要带同一条选择器才盖得住它；其余形态两边等长（方形）或行宽充裕（横条），
+ * 灯点仍旧按行高算，不受影响。
+ */
+@container floating-slot (max-height: 32px) {
+  .agent-status-module__item {
+    column-gap: 0;
+  }
+
+  .agent-status-module__identity {
+    display: none;
+  }
+
+  .agent-status-module__dot {
+    height: 86%;
+  }
+
+  .agent-status-module__overflow {
+    font-size: calc(9px * var(--floating-cell-scale, 1));
+  }
+}
+
+@container floating-slot (max-width: 32px) {
+  .agent-status-module__item {
+    column-gap: 0;
+  }
+
+  .agent-status-module__identity {
+    display: none;
+  }
+
+  .agent-status-module--vertical .agent-status-module__dot {
+    width: 86%;
+    height: auto;
+  }
+
+  .agent-status-module__overflow {
+    font-size: calc(9px * var(--floating-cell-scale, 1));
+  }
 }
 
 @keyframes agent-status-flash {
