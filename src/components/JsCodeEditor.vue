@@ -12,6 +12,7 @@
  */
 import { onBeforeUnmount, nextTick, ref, watch } from 'vue'
 import type { EditorCaret } from '@/lib/js-editor'
+import BaseButton from './ui/BaseButton.vue'
 import JsCodeFrame from './JsCodeFrame.vue'
 
 // 不在 script 里读 props（模板里直接用名字），因此不接返回值，避免落一个死变量。
@@ -26,7 +27,7 @@ withDefaults(
     /** 弹窗标题栏文案（一般是「编辑脚本 · <endpoint>」） */
     title?: string
   }>(),
-  { ariaLabel: '脚本源码', placeholder: '', title: '编辑脚本' },
+  { ariaLabel: '脚本源码', placeholder: '', title: '编辑脚本' }
 )
 
 const emit = defineEmits<{
@@ -77,7 +78,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 // 只在弹窗打开期间监听 Esc：常驻全局监听会与其它面板的快捷键互相干扰。
-watch(expanded, (value) => {
+watch(expanded, value => {
   if (value) window.addEventListener('keydown', onKeydown)
   else window.removeEventListener('keydown', onKeydown)
 })
@@ -103,18 +104,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       整窗弹窗：铺满窗口的实色哑光面板（与主窗同 token，不用毛玻璃）。
       @wheel.stop 拦住滚轮冒泡：否则光标停在标题栏上滚动时，滚的是背后的主窗内容。
     -->
-    <div
-      v-if="expanded"
-      class="jse-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label="整窗编辑脚本"
-      @wheel.stop
-    >
+    <div v-if="expanded" class="jse-modal" role="dialog" aria-modal="true" aria-label="整窗编辑脚本" @wheel.stop>
       <header class="jse-modal__bar">
         <span class="jse-modal__title">{{ title }}</span>
         <span class="jse-modal__hint">改了脚本点「完成」返回，再运行测试或保存。</span>
-        <button class="ufo-btn ufo-btn--primary" type="button" @click="close">完成</button>
+        <BaseButton variant="primary" @click="close">完成</BaseButton>
       </header>
 
       <div class="jse-modal__body">

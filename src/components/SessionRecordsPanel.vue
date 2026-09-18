@@ -16,6 +16,7 @@ import { formatRecordTime, recordEndpoint, recordLocalNote, type SessionRecord }
 import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { useSessionRecordsStore } from '@/stores/sessionRecords'
+import BaseButton from './ui/BaseButton.vue'
 import claudeIcon from '@/assets/claude.svg'
 import codexIcon from '@/assets/codex.svg'
 import closeIcon from '@/assets/close.svg'
@@ -40,11 +41,11 @@ const feedback = ref('')
 const CLEARED_FEEDBACK = '已清除全部会话记录'
 
 /** 此刻还活着的会话 key 集合：按它给存档行打「存活」标记。 */
-const liveKeys = computed(() => new Set(agentStatus.sessions.map((session) => session.key)))
+const liveKeys = computed(() => new Set(agentStatus.sessions.map(session => session.key)))
 
 /** 选中项；列表会因后端刷盘而变化，故按 key 现算而非缓存对象。 */
 const selected = computed<SessionRecord | null>(
-  () => records.records.find((record) => record.key === selectedKey.value) ?? null,
+  () => records.records.find(record => record.key === selectedKey.value) ?? null
 )
 
 // 选中项被删除、或首次采集到数据时，把选中态落到第一条 —— 右侧不应停在已消失的 key 上。
@@ -52,7 +53,7 @@ const selected = computed<SessionRecord | null>(
 // 重新刷回时会变成一次点击就删。
 watch(
   () => records.records,
-  (list) => {
+  list => {
     pendingRemoval.value = null
     // 列表一变（含自己清空 / 后端刷盘），旧的「确认清除全部」armed 态即失效。
     pendingClearAll.value = false
@@ -60,11 +61,11 @@ watch(
     if (list.length && feedback.value === CLEARED_FEEDBACK) {
       feedback.value = ''
     }
-    if (!list.some((record) => record.key === selectedKey.value)) {
+    if (!list.some(record => record.key === selectedKey.value)) {
       selectedKey.value = list[0]?.key ?? null
     }
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 onMounted(() => {
@@ -101,7 +102,7 @@ function onRemove(record: SessionRecord) {
     .then(() => {
       feedback.value = ''
     })
-    .catch((error) => {
+    .catch(error => {
       feedback.value = `移除失败：${error}`
     })
 }
@@ -119,7 +120,7 @@ function onClearAll() {
     .then(() => {
       feedback.value = CLEARED_FEEDBACK
     })
-    .catch((error) => {
+    .catch(error => {
       feedback.value = `清除失败：${error}`
     })
 }
@@ -179,15 +180,9 @@ function onClearAll() {
       </ul>
 
       <div class="sr-actions">
-        <button
-          class="ufo-btn ufo-btn--danger"
-          :class="{ 'ufo-btn--armed': pendingClearAll }"
-          type="button"
-          :disabled="!records.records.length"
-          @click="onClearAll"
-        >
+        <BaseButton variant="danger" :armed="pendingClearAll" :disabled="!records.records.length" @click="onClearAll">
           {{ pendingClearAll ? '确认清除' : '清除全部' }}
-        </button>
+        </BaseButton>
       </div>
       <p v-if="feedback" class="sr-list__feedback" role="status">{{ feedback }}</p>
     </section>

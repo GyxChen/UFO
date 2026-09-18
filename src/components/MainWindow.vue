@@ -4,6 +4,11 @@ import type { FloatingLayout, MaxCellsByLayout, TokenUnit } from '@/lib/floating
 import { hideMainWindow, startCurrentWindowDrag } from '@/lib/window'
 import { useAgentStatusStore } from '@/stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import BaseButton from './ui/BaseButton.vue'
+import BaseInput from './ui/BaseInput.vue'
+import BaseSegmentedControl from './ui/BaseSegmentedControl.vue'
+import BaseSelect from './ui/BaseSelect.vue'
+import BaseSwitch from './ui/BaseSwitch.vue'
 import EndpointExtensionPanel from './EndpointExtensionPanel.vue'
 import SessionRecordsPanel from './SessionRecordsPanel.vue'
 import closeIcon from '@/assets/close.svg'
@@ -87,42 +92,42 @@ const layoutLabels: { key: FloatingLayout; label: string }[] = [
 
 watch(
   () => modules.retentionSeconds,
-  (seconds) => {
+  seconds => {
     retentionInput.value = seconds
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 watch(
   () => modules.runningTimeoutSeconds,
-  (seconds) => {
+  seconds => {
     runningTimeoutInput.value = seconds
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 watch(
   () => modules.maxCellsByLayout,
-  (value) => {
+  value => {
     Object.assign(maxCellsInput, value)
   },
-  { immediate: true, deep: true },
+  { immediate: true, deep: true }
 )
 
 watch(
   () => modules.tokenUnit,
-  (unit) => {
+  unit => {
     tokenUnitInput.value = unit
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 watch(
   () => modules.proxyResolver,
-  (id) => {
+  id => {
     proxyResolverInput.value = id
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 /** 切换 Agent 状态灯模块启用状态；失败时回滚 checkbox。 */
@@ -216,7 +221,7 @@ async function saveTimeouts() {
       <button
         v-for="(tab, index) in tabs"
         :key="tab.key"
-        :ref="(el) => setTabRef(el, index)"
+        :ref="el => setTabRef(el, index)"
         type="button"
         role="tab"
         class="main-tabs__tab"
@@ -240,159 +245,127 @@ async function saveTimeouts() {
       id="main-tab-panel-settings"
       aria-labelledby="main-tab-settings"
     >
-    <header class="main-window__hero">
-      <h1 class="main-window__title">悬浮窗设置</h1>
-      <div class="main-window__badge">Agent Status</div>
-    </header>
+      <header class="main-window__hero">
+        <h1 class="main-window__title">悬浮窗设置</h1>
+        <div class="main-window__badge">Agent Status</div>
+      </header>
 
-    <section class="ufo-card module-settings" aria-labelledby="module-settings-title">
-      <div class="ufo-card__header">
-        <h2 id="module-settings-title" class="ufo-card__title">悬浮窗模块</h2>
-        <span class="ufo-card__hint">即时生效</span>
-      </div>
-
-      <div class="module-settings__toggle">
-        <div class="module-settings__toggle-copy">
-          <span class="module-settings__toggle-label">Agent 状态灯</span>
-          <span class="module-settings__toggle-hint">在悬浮窗显示会话指示灯</span>
+      <section class="ufo-card module-settings" aria-labelledby="module-settings-title">
+        <div class="ufo-card__header">
+          <h2 id="module-settings-title" class="ufo-card__title">悬浮窗模块</h2>
+          <span class="ufo-card__hint">即时生效</span>
         </div>
-        <label class="ufo-switch" title="启用 Agent 状态灯">
-          <input
-            type="checkbox"
-            :checked="modules.agentStatusEnabled"
+
+        <div class="module-settings__toggle">
+          <div class="module-settings__toggle-copy">
+            <span class="module-settings__toggle-label">Agent 状态灯</span>
+            <span class="module-settings__toggle-hint">在悬浮窗显示会话指示灯</span>
+          </div>
+          <BaseSwitch
+            :model-value="modules.agentStatusEnabled"
             aria-label="启用 Agent 状态灯"
+            title="启用 Agent 状态灯"
             @change="toggleAgentStatus"
           />
-          <span class="ufo-switch__track" aria-hidden="true" />
+        </div>
+
+        <label class="module-settings__retention">
+          <span>完成灯保留（秒）</span>
+          <BaseInput
+            v-model.number="retentionInput"
+            type="number"
+            min="1"
+            max="86400"
+            step="1"
+            @change="updateRetention"
+          />
         </label>
-      </div>
 
-      <label class="module-settings__retention">
-        <span>完成灯保留（秒）</span>
-        <input
-          v-model.number="retentionInput"
-          class="ufo-input"
-          type="number"
-          min="1"
-          max="86400"
-          step="1"
-          @change="updateRetention"
-        />
-      </label>
+        <label class="module-settings__retention">
+          <span>执行中超时（秒）</span>
+          <BaseInput
+            v-model.number="runningTimeoutInput"
+            type="number"
+            min="60"
+            max="3600"
+            step="30"
+            title="Running 无新 hook 时移除绿灯；慢 agent 可拉长"
+            @change="updateRunningTimeout"
+          />
+        </label>
+        <p class="module-settings__field-hint">绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。</p>
 
-      <label class="module-settings__retention">
-        <span>执行中超时（秒）</span>
-        <input
-          v-model.number="runningTimeoutInput"
-          class="ufo-input"
-          type="number"
-          min="60"
-          max="3600"
-          step="30"
-          title="Running 无新 hook 时移除绿灯；慢 agent 可拉长"
-          @change="updateRunningTimeout"
-        />
-      </label>
-      <p class="module-settings__field-hint">
-        绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。
-      </p>
+        <div class="module-settings__retention">
+          <span id="token-unit-label">Token 单位</span>
+          <BaseSegmentedControl
+            v-model="tokenUnitInput"
+            name="token-unit"
+            :options="tokenUnitOptions"
+            aria-labelledby="token-unit-label"
+            @change="updateTokenUnit"
+          />
+        </div>
+        <p class="module-settings__field-hint">
+          悬浮窗提示行里的 token 总量写法：Tokens 显示原始计数，M tokens 以百万为单位。
+        </p>
 
-      <div class="module-settings__retention">
-        <span id="token-unit-label">Token 单位</span>
-        <div class="ufo-segmented" role="radiogroup" aria-labelledby="token-unit-label">
-          <label
-            v-for="option in tokenUnitOptions"
-            :key="option.value"
-            class="ufo-segmented__option"
-          >
-            <input
-              v-model="tokenUnitInput"
-              type="radio"
-              name="token-unit"
-              :value="option.value"
-              @change="updateTokenUnit"
+        <div class="module-settings__retention">
+          <span id="proxy-resolver-label">代理解析器</span>
+          <BaseSelect v-model="proxyResolverInput" aria-labelledby="proxy-resolver-label" @change="updateProxyResolver">
+            <option v-for="option in modules.resolvers" :key="option.id" :value="option.id">
+              {{ option.label }}
+            </option>
+          </BaseSelect>
+        </div>
+        <p class="module-settings__field-hint">
+          选了代理工具后，会把它监听的本地地址（如 127.0.0.1）反查成真正的上游 endpoint 显示在提示窗；
+          不解析时按原样显示。
+        </p>
+
+        <div class="module-settings__caps" aria-label="各形态格子上限">
+          <label v-for="item in layoutLabels" :key="item.key" class="module-settings__field">
+            <span>{{ item.label }}</span>
+            <BaseInput
+              v-model.number="maxCellsInput[item.key]"
+              type="number"
+              min="4"
+              max="8"
+              step="1"
+              @change="updateMaxCells(item.key)"
             />
-            {{ option.label }}
           </label>
         </div>
-      </div>
-      <p class="module-settings__field-hint">
-        悬浮窗提示行里的 token 总量写法：Tokens 显示原始计数，M tokens 以百万为单位。
+
+        <div class="module-settings__actions">
+          <BaseButton variant="ghost" @click="resetMaxCells"> 重置 </BaseButton>
+          <BaseButton variant="primary" @click="saveTimeouts"> 保存 </BaseButton>
+        </div>
+      </section>
+
+      <p class="agent-session-list__meta">
+        每个 CLI 会话对应一盏独立状态灯；窗口在默认 4 格之上按数量放大，上限由各形态配置决定。
       </p>
 
-      <div class="module-settings__retention">
-        <span id="proxy-resolver-label">代理解析器</span>
-        <select
-          v-model="proxyResolverInput"
-          class="ufo-input ufo-select"
-          aria-labelledby="proxy-resolver-label"
-          @change="updateProxyResolver"
-        >
-          <option v-for="option in modules.resolvers" :key="option.id" :value="option.id">
-            {{ option.label }}
-          </option>
-        </select>
-      </div>
-      <p class="module-settings__field-hint">
-        选了代理工具后，会把它监听的本地地址（如 127.0.0.1）反查成真正的上游 endpoint 显示在提示窗；
-        不解析时按原样显示。
-      </p>
-
-      <div class="module-settings__caps" aria-label="各形态格子上限">
-        <label
-          v-for="item in layoutLabels"
-          :key="item.key"
-          class="module-settings__field"
-        >
-          <span>{{ item.label }}</span>
-          <input
-            v-model.number="maxCellsInput[item.key]"
-            class="ufo-input"
-            type="number"
-            min="4"
-            max="8"
-            step="1"
-            @change="updateMaxCells(item.key)"
-          />
-        </label>
-      </div>
-
-      <div class="module-settings__actions">
-        <button class="ufo-btn ufo-btn--ghost" type="button" @click="resetMaxCells">
-          重置
-        </button>
-        <button class="ufo-btn ufo-btn--primary" type="button" @click="saveTimeouts">
-          保存
-        </button>
-      </div>
-    </section>
-
-    <p class="agent-session-list__meta">
-      每个 CLI 会话对应一盏独立状态灯；窗口在默认 4 格之上按数量放大，上限由各形态配置决定。
-    </p>
-
-    <section class="ufo-card agent-session-list" aria-labelledby="agent-session-list-title">
-      <div class="ufo-card__header">
-        <h2 id="agent-session-list-title" class="ufo-card__title">Agent 会话</h2>
-        <span class="ufo-card__hint">
-          {{ agentStatus.sessions.length ? `${agentStatus.sessions.length} 个活跃` : '暂无' }}
-        </span>
-      </div>
-      <p v-if="!agentStatus.sessions.length" class="agent-session-list__empty">
-        当前没有已登记的会话
-      </p>
-      <ul v-else>
-        <li v-for="session in agentStatus.sessions" :key="session.key">
-          <span
-            class="agent-session-list__dot"
-            :class="`agent-session-list__dot--${agentStatus.sessionColor(session)}`"
-            aria-hidden="true"
-          />
-          <span>{{ session.provider }} · {{ session.session_id.slice(0, 12) }}</span>
-          <span>{{ session.phase }}</span>
-        </li>
-      </ul>
-    </section>
+      <section class="ufo-card agent-session-list" aria-labelledby="agent-session-list-title">
+        <div class="ufo-card__header">
+          <h2 id="agent-session-list-title" class="ufo-card__title">Agent 会话</h2>
+          <span class="ufo-card__hint">
+            {{ agentStatus.sessions.length ? `${agentStatus.sessions.length} 个活跃` : '暂无' }}
+          </span>
+        </div>
+        <p v-if="!agentStatus.sessions.length" class="agent-session-list__empty">当前没有已登记的会话</p>
+        <ul v-else>
+          <li v-for="session in agentStatus.sessions" :key="session.key">
+            <span
+              class="agent-session-list__dot"
+              :class="`agent-session-list__dot--${agentStatus.sessionColor(session)}`"
+              aria-hidden="true"
+            />
+            <span>{{ session.provider }} · {{ session.session_id.slice(0, 12) }}</span>
+            <span>{{ session.phase }}</span>
+          </li>
+        </ul>
+      </section>
     </main>
 
     <main

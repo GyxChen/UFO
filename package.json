@@ -42,6 +42,7 @@
     "eslint": "^10.1.0",
     "eslint-plugin-security": "^4.0.0",
     "eslint-plugin-vue": "^10.8.0",
+    "happy-dom": "^20.14.5",
     "lodash-es": "^4.17.23",
     "prettier": "^3.8.1",
     "tailwindcss": "^4.2.2",

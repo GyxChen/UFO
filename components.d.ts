@@ -12,6 +12,11 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     AgentStatusModule: typeof import('./src/components/AgentStatusModule.vue')['default']
+    BaseButton: typeof import('./src/components/ui/BaseButton.vue')['default']
+    BaseInput: typeof import('./src/components/ui/BaseInput.vue')['default']
+    BaseSegmentedControl: typeof import('./src/components/ui/BaseSegmentedControl.vue')['default']
+    BaseSelect: typeof import('./src/components/ui/BaseSelect.vue')['default']
+    BaseSwitch: typeof import('./src/components/ui/BaseSwitch.vue')['default']
     EndpointExtensionPanel: typeof import('./src/components/EndpointExtensionPanel.vue')['default']
     EndpointFlowEditor: typeof import('./src/components/EndpointFlowEditor.vue')['default']
     FloatingModuleHost: typeof import('./src/components/FloatingModuleHost.vue')['default']

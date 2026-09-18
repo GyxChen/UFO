@@ -13,6 +13,8 @@ import { formatProfileTime, type EndpointProfile } from '@/lib/endpoint-profiles
 import { flowFromExtensions } from '@/lib/flow'
 import { useEndpointProfilesStore } from '@/stores/endpointProfiles'
 import EndpointFlowEditor from './EndpointFlowEditor.vue'
+import BaseButton from './ui/BaseButton.vue'
+import BaseInput from './ui/BaseInput.vue'
 import closeIcon from '@/assets/close.svg'
 
 const profiles = useEndpointProfilesStore()
@@ -31,7 +33,7 @@ const feedback = ref('')
 
 /** 选中项；档案列表可能因后端采集而变化，故按 id 现算而非缓存对象。 */
 const selected = computed<EndpointProfile | null>(
-  () => profiles.profiles.find((profile) => profile.id === selectedId.value) ?? null,
+  () => profiles.profiles.find(profile => profile.id === selectedId.value) ?? null
 )
 
 // 选中项被删除、或首次采集到数据时，把选中态落到第一条 —— 右侧不应停在已消失的 id 上。
@@ -39,13 +41,13 @@ const selected = computed<EndpointProfile | null>(
 // 采集到时会变成一次点击就删。
 watch(
   () => profiles.profiles,
-  (list) => {
+  list => {
     pendingRemoval.value = null
-    if (!list.some((profile) => profile.id === selectedId.value)) {
+    if (!list.some(profile => profile.id === selectedId.value)) {
       selectedId.value = list[0]?.id ?? null
     }
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 onMounted(() => {
@@ -69,7 +71,7 @@ function onRemove(profile: EndpointProfile) {
     .then(() => {
       feedback.value = ''
     })
-    .catch((error) => {
+    .catch(error => {
       feedback.value = `移除失败：${error}`
     })
 }
@@ -86,9 +88,9 @@ function onAdd() {
       draftUrl.value = ''
       feedback.value = ''
     },
-    (error) => {
+    error => {
       feedback.value = `添加失败：${error}`
-    },
+    }
   )
 }
 </script>
@@ -132,11 +134,7 @@ function onAdd() {
             type="button"
             class="ep-list__remove"
             :class="{ 'ep-list__remove--armed': pendingRemoval === profile.id }"
-            :aria-label="
-              pendingRemoval === profile.id
-                ? `确认移除 ${profile.url}`
-                : `移除 ${profile.url}`
-            "
+            :aria-label="pendingRemoval === profile.id ? `确认移除 ${profile.url}` : `移除 ${profile.url}`"
             @click="onRemove(profile)"
           >
             <span v-if="pendingRemoval === profile.id" class="ep-list__remove-text">确认</span>
@@ -148,16 +146,15 @@ function onAdd() {
       <form class="ep-add" @submit.prevent="onAdd">
         <label class="ep-add__field">
           <span>手动添加</span>
-          <input
+          <BaseInput
             v-model="draftUrl"
-            class="ufo-input"
             type="text"
             spellcheck="false"
             placeholder="https://api.example.com"
             aria-label="手动添加 endpoint 地址"
           />
         </label>
-        <button class="ufo-btn ufo-btn--ghost ep-add__btn" type="submit">添加</button>
+        <BaseButton class="ep-add__btn" type="submit">添加</BaseButton>
       </form>
       <p v-if="feedback" class="ep-list__feedback" role="status">{{ feedback }}</p>
     </section>

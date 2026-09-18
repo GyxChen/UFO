@@ -26,6 +26,9 @@ import {
   type FlowTestResult,
 } from '@/lib/flow'
 import JsCodeEditor from './JsCodeEditor.vue'
+import BaseButton from './ui/BaseButton.vue'
+import BaseInput from './ui/BaseInput.vue'
+import BaseSwitch from './ui/BaseSwitch.vue'
 
 const props = defineProps<{ profile: EndpointProfile | null }>()
 
@@ -57,13 +60,13 @@ function reloadOutcome() {
     return
   }
   void fetchFlowResults(id).then(
-    (outcome) => {
+    outcome => {
       // 异步回来时可能已切到别的 endpoint：按 id 核对后再落。
       if (props.profile?.id === id) lastOutcome.value = outcome
     },
     () => {
       lastOutcome.value = null
-    },
+    }
   )
 }
 
@@ -100,7 +103,7 @@ watch(
     secretDraft.value = ''
     reloadOutcome()
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 /** 保存当前草稿为 endpoint 的流程配置。 */
@@ -194,23 +197,18 @@ function clampInt(value: number, min: number, max: number): number {
 
     <div v-else class="flow-editor">
       <p class="flow-editor__lead">
-        写一段脚本（跑在沙盒里），返回值作为该 endpoint 信息卡上的拓展字段。仅在该 endpoint
-        有存活会话时按间隔轮询。
+        写一段脚本（跑在沙盒里），返回值作为该 endpoint 信息卡上的拓展字段。仅在该 endpoint 有存活会话时按间隔轮询。
       </p>
 
       <div class="flow-editor__row">
-        <label class="flow-editor__toggle">
+        <div class="flow-editor__toggle">
           <span>启用</span>
-          <label class="ufo-switch" title="启用该 endpoint 的流程脚本">
-            <input v-model="draft.enabled" type="checkbox" aria-label="启用流程脚本" />
-            <span class="ufo-switch__track" aria-hidden="true" />
-          </label>
-        </label>
+          <BaseSwitch v-model="draft.enabled" aria-label="启用流程脚本" title="启用该 endpoint 的流程脚本" />
+        </div>
         <label class="flow-editor__num">
           <span>间隔（秒）</span>
-          <input
+          <BaseInput
             v-model.number="draft.intervalSec"
-            class="ufo-input"
             type="number"
             :min="MIN_INTERVAL_SEC"
             :max="MAX_INTERVAL_SEC"
@@ -219,14 +217,7 @@ function clampInt(value: number, min: number, max: number): number {
         </label>
         <label class="flow-editor__num">
           <span>超时（毫秒）</span>
-          <input
-            v-model.number="draft.timeoutMs"
-            class="ufo-input"
-            type="number"
-            min="500"
-            max="15000"
-            step="500"
-          />
+          <BaseInput v-model.number="draft.timeoutMs" type="number" min="500" max="15000" step="500" />
         </label>
       </div>
 
@@ -245,22 +236,12 @@ function clampInt(value: number, min: number, max: number): number {
       </div>
 
       <div class="flow-editor__actions">
-        <button
-          class="ufo-btn ufo-btn--ghost"
-          type="button"
-          :disabled="testing"
-          @click="onTest"
-        >
-          {{ testing ? '运行中…' : '运行测试' }}
-        </button>
-        <button
-          class="ufo-btn ufo-btn--primary"
-          type="button"
-          :disabled="saving"
-          @click="onSave"
-        >
-          {{ saving ? '保存中…' : '保存' }}
-        </button>
+        <BaseButton variant="ghost" :loading="testing" @click="onTest">
+          {{ testing ? '运行中' : '运行测试' }}
+        </BaseButton>
+        <BaseButton variant="primary" :loading="saving" @click="onSave">
+          {{ saving ? '保存中' : '保存' }}
+        </BaseButton>
       </div>
 
       <p v-if="feedback" class="flow-editor__feedback" role="status">{{ feedback }}</p>
@@ -292,35 +273,28 @@ function clampInt(value: number, min: number, max: number): number {
         <ul v-if="secretNames.length" class="flow-editor__secret-list">
           <li v-for="name in secretNames" :key="name" class="flow-editor__secret-row">
             <span class="flow-editor__secret-name">{{ name }}</span>
-            <button
-              type="button"
-              class="ufo-btn ufo-btn--ghost ufo-btn--sm"
-              :class="{ 'ufo-btn--armed': pendingSecretRemoval === name }"
-              @click="onRemoveSecret(name)"
-            >
+            <BaseButton variant="danger" size="sm" :armed="pendingSecretRemoval === name" @click="onRemoveSecret(name)">
               {{ pendingSecretRemoval === name ? '确认' : '删除' }}
-            </button>
+            </BaseButton>
           </li>
         </ul>
         <p v-else class="flow-editor__secret-empty">尚未配置密钥。</p>
         <form class="flow-editor__secret-add" @submit.prevent="onAddSecret">
-          <input
+          <BaseInput
             v-model="secretDraft.name"
-            class="ufo-input"
             type="text"
             spellcheck="false"
             placeholder="密钥名，如 ANTHROPIC_KEY"
             aria-label="密钥名"
           />
-          <input
+          <BaseInput
             v-model="secretDraft.value"
-            class="ufo-input"
             type="password"
             placeholder="密钥值"
             aria-label="密钥值"
             autocomplete="off"
           />
-          <button class="ufo-btn ufo-btn--ghost" type="submit">保存</button>
+          <BaseButton type="submit">保存</BaseButton>
         </form>
       </section>
 
@@ -341,28 +315,27 @@ function clampInt(value: number, min: number, max: number): number {
             </dt>
             <dd>
               唯一的出网方式，由 Rust 代发真实请求。<code>opts</code> 可带
-              <code>headers</code>（字符串键值对）、<code>body</code>（字符串或对象，对象按
-              JSON 发送）、<code>timeoutMs</code>（500–15000，默认 5000）。返回
-              <code>{ status, ok, headers, text(), json() }</code>：4xx/5xx
-              <em>不抛异常</em>（余额接口常用 401 表示 key 失效），要自己看
-              <code>status</code>；<code>json()</code> 解析失败才抛「响应不是合法 JSON」。
-              响应体最多读 256KB，超出截断。
+              <code>headers</code>（字符串键值对）、<code>body</code>（字符串或对象，对象按 JSON
+              发送）、<code>timeoutMs</code>（500–15000，默认 5000）。返回
+              <code>{ status, ok, headers, text(), json() }</code>：4xx/5xx <em>不抛异常</em>（余额接口常用 401 表示 key
+              失效），要自己看 <code>status</code>；<code>json()</code> 解析失败才抛「响应不是合法 JSON」。 响应体最多读
+              256KB，超出截断。
             </dd>
           </div>
           <div class="flow-editor__ref-item">
             <dt><code>secrets.get(name)</code></dt>
             <dd>
               按名字从系统凭据管理器取值（值在下面「密钥」区配）。没配这个名字直接
-              <em>抛异常</em>，所以要么先配好、要么自己
-              <code>try/catch</code>。绝没有写入 / 列举接口。
+              <em>抛异常</em>，所以要么先配好、要么自己 <code>try/catch</code>。绝没有写入 / 列举接口。
             </dd>
           </div>
           <div class="flow-editor__ref-item">
             <dt><code>cache.get(name)</code> / <code>cache.set(name, value, ttlMs?)</code></dt>
             <dd>
-              跨次运行的进程内 KV（本 endpoint 独享，不持久化）。用来做「值没变就不重复请求」这类
-              节流。<code>ttlMs</code> 缺省 10 分钟；<code>get</code> 未命中返回
-              <code>undefined</code>。
+              跨次运行的进程内 KV（本 endpoint 独享，不持久化）。用来做「值没变就不重复请求」这类 节流。<code
+                >ttlMs</code
+              >
+              缺省 10 分钟；<code>get</code> 未命中返回 <code>undefined</code>。
             </dd>
           </div>
           <div class="flow-editor__ref-item">
@@ -372,26 +345,28 @@ function clampInt(value: number, min: number, max: number): number {
               <code>format.bytes(n)</code>
             </dt>
             <dd>
-              展示格式化：千分位（<code>12345 → 12,345</code>）、百分比（<code>0.42 →
-              42%</code>）、字节（<code>1536 → 1.50 KB</code>，最大到 GB）。
+              展示格式化：千分位（<code>12345 → 12,345</code>）、百分比（<code>0.42 → 42%</code>）、字节（<code
+                >1536 → 1.50 KB</code
+              >，最大到 GB）。
             </dd>
           </div>
           <div class="flow-editor__ref-item">
             <dt><code>ctx.endpoint</code> / <code>ctx.session</code> / <code>ctx.lastResult</code></dt>
             <dd>
-              只读上下文。<code>ctx.endpoint = { id, url }</code>；<code>ctx.session = {
-              provider, phase, prompt, tokens }</code>（无存活会话时为 <code>null</code>，<em>不要</em>
-              直接取字段，先判空）；<code>ctx.lastResult</code> 是上次成功的返回值（脚本源码没改时才给，
-              改了就是 <code>null</code>），可用来对比上一次做增量。
+              只读上下文。<code>ctx.endpoint = { id, url }</code>；<code
+                >ctx.session = { provider, phase, prompt, tokens }</code
+              >（无存活会话时为 <code>null</code>，<em>不要</em> 直接取字段，先判空）；<code>ctx.lastResult</code>
+              是上次成功的返回值（脚本源码没改时才给， 改了就是 <code>null</code>），可用来对比上一次做增量。
             </dd>
           </div>
           <div class="flow-editor__ref-item">
             <dt><code>return</code> 的形态</dt>
             <dd>
-              <code>[{ label, value, color? }]</code>（也接受 <code>{ fields: [...] }</code>
-              或单个对象）。<code>value</code> 能给数字/布尔，会转成文本；<code>color</code> 只认
-              <code>green / yellow / red / muted</code>。最多 4 条、label 24 字、value 120 字，超出裁掉。
-              <code>console.log</code> 只在「运行测试」回显，正式轮询不外传。
+              <code>[{ label, value, color? }]</code>（也接受 <code>{ fields: [...] }</code> 或单个对象）。<code
+                >value</code
+              >
+              能给数字/布尔，会转成文本；<code>color</code> 只认 <code>green / yellow / red / muted</code>。最多 4
+              条、label 24 字、value 120 字，超出裁掉。 <code>console.log</code> 只在「运行测试」回显，正式轮询不外传。
             </dd>
           </div>
         </dl>
@@ -403,7 +378,8 @@ function clampInt(value: number, min: number, max: number): number {
         </p>
 
         <!-- 可复制的最小可用示例：脚本作者最常要的是「带 key 查一次再返回字段」。 -->
-        <pre class="flow-editor__ref-body">const res = await http.get('https://api.example.com/v1/usage', {
+        <pre class="flow-editor__ref-body">
+const res = await http.get('https://api.example.com/v1/usage', {
   headers: { Authorization: `Bearer ${secrets.get('TOKEN')}` },
 })
 if (!res.ok) return [{ label: '查询失败', value: `HTTP ${res.status}`, color: 'red' }]
@@ -412,7 +388,8 @@ const data = res.json()
 return [
   { label: '余额', value: `$${data.balance}`, color: data.balance &lt; 1 ? 'red' : 'green' },
   { label: '已用', value: format.pct(data.used / data.quota), color: 'muted' },
-]</pre>
+]</pre
+        >
       </details>
     </div>
   </section>
