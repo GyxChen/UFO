@@ -33,6 +33,7 @@ UI设计请使用:ui-ux-pro-max-skill
 - 悬浮窗：`transparent: true`；`.floating-shell` 用半透明 `--ufo-bg` + blur（毛玻璃）
 - 主窗：`transparent: true` 仅用于圆角裁切；`.main-shell` 用实色 `--ufo-bg-main`（`#3D3D3D`），**不加** backdrop-filter / 不加 alpha
 - 主窗：外壳与 html/body/#app 不滚动；仅内部 `.main-window` 滚动，并使用 Matte 细滚动条
+- 滚动条槽位：所有可滚动容器（列表 / 详情面板 / 日志 / JS 编辑框）都必须带 `scrollbar-gutter: stable`，滚动条出现时不得挤占内容宽度；JS 编辑框另把槽宽写进 `--jse-gutter`，让高亮层与输入层的内容盒重合
 - 主窗去边框后需自绘标题栏并调用 `startDragging`；关闭按钮走隐藏到托盘
 
 ### 文本与强调

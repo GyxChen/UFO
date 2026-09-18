@@ -251,6 +251,13 @@ html.is-tooltip-window #app {
   background: transparent;
 }
 
+/*
+ * 滚动条槽位约定：所有可滚动容器都必须带 `scrollbar-gutter: stable`。
+ * 滚动条「出现 / 消失」因此不再改变内容盒宽度 —— 否则列表行、表单会在滚动条出现的那一刻
+ * 被挤窄，长文本跟着重新折行（同一份内容看上去在跳动）。
+ * ⚠️ 新增任何 `overflow-y: auto` 的容器时，把这一条一起带上。
+ */
+
 .main-window__hero {
   @apply flex w-full max-w-md flex-col gap-1.5;
 }
@@ -721,6 +728,7 @@ html.is-tooltip-window #app {
 /* 右侧配置区独立滚动，左侧列表的滚动由 .ep-list 负责。 */
 .ep-detail {
   overflow-y: auto;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
@@ -734,6 +742,7 @@ html.is-tooltip-window #app {
 .ep-list {
   @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
   @apply grid gap-1.5;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
@@ -945,20 +954,26 @@ html.is-tooltip-window #app {
 }
 
 /*
- * 高亮层：宽度跟随外壳，长行溢出到壳外由 .jse 的 overflow:hidden 裁掉。
+ * 高亮层：按 `--jse-gutter` 收窄，宽度与输入层的内容盒逐像素一致（槽宽由
+ * JsCodeFrame.syncGutter 量出来写进变量），自身 overflow:hidden 裁掉长行尾，
+ * 文字不会画进滚动条槽里。
  * 滚动同步用 transform 位移（见 JsCodeFrame.syncScroll）而不是 scrollTop ——
- * textarea 的滚动条会吃掉自己的内容宽度，两者最大可滚动距离不同，横滚到底会错开一截。
+ * 两层可滚动的最大距离不同，但位移量永远一致，字符才不会错位。
  */
 .jse__highlight {
-  @apply absolute top-0 left-0 w-full;
+  @apply absolute top-0 left-0;
+  width: calc(100% - var(--jse-gutter, 0px));
+  overflow: hidden;
   color: var(--ufo-text);
   pointer-events: none;
 }
 
 /*
  * 输入层：铺满、文字透明，只留光标与选区。
- * 滚动条轨道用编辑区底色而非 transparent：轨道压在高亮层之上，实色才能盖住
- * 「textarea 已裁掉、高亮层还画着」的那一条（约一个滚动条宽）。
+ * `scrollbar-gutter: stable` 常驻一条滚动条槽：滚动条出现时不再挤占内容宽度，
+ * 编辑区不会随脚本长短左右跳动（高亮层按同一槽宽收窄，见上方）。槽宽随缩放变化，
+ * 由 JsCodeFrame.syncGutter 量出后写进 --jse-gutter。
+ * 滚动条轨道仍用编辑区底色：滑块是半透明的，轨道实色才不会透出下层高亮。
  */
 .jse__input {
   @apply absolute inset-0 h-full w-full outline-none;
@@ -966,6 +981,7 @@ html.is-tooltip-window #app {
   color: transparent;
   caret-color: var(--ufo-text);
   resize: none;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) var(--ufo-input);
 }
@@ -1151,6 +1167,7 @@ html.is-tooltip-window #app {
   background: var(--ufo-input);
   color: var(--ufo-muted);
   font-family: var(--font-mono);
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
@@ -1249,6 +1266,7 @@ html.is-tooltip-window #app {
   color: var(--ufo-muted);
   background: var(--ufo-input);
   font-family: var(--font-mono);
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
@@ -1303,6 +1321,7 @@ html.is-tooltip-window #app {
 /* 右侧详情独立滚动，左侧列表的滚动由 .sr-list 负责。 */
 .sr-detail {
   overflow-y: auto;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
@@ -1311,6 +1330,7 @@ html.is-tooltip-window #app {
 .sr-list {
   @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
   @apply grid gap-1.5;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
@@ -1428,6 +1448,7 @@ html.is-tooltip-window #app {
 .sr-detail__prompt-text {
   @apply m-0 max-h-[22vh] overflow-y-auto whitespace-pre-wrap text-[12.5px] leading-relaxed;
   color: var(--ufo-text);
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }

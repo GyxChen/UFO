@@ -9,10 +9,13 @@
  *
  * ⚠️ 两层文本必须逐字符一致（`renderJsHighlight` 补的尾换行是刻意的，见其注释），
  * 且字体 / 字号 / 行高 / 内边距必须完全一致，否则光标与字符会错位。
- * ⚠️ 滚动同步用 `transform: translate()` 而不是 `scrollTop` 对齐：textarea 的滚动条会
- * 吃掉它的内容宽度，两者可滚到的最大值不同，横向滚到底会错开一个滚动条宽度。
+ * ⚠️ 滚动同步用 `transform: translate()` 而不是 `scrollTop` 对齐：两层可滚到的最大值不同
+ * （输入层比高亮层多一条滚动条槽），位移量则永远一致。
+ * ⚠️ 输入层常驻滚动条槽（`scrollbar-gutter: stable`），否则滚动条一出现就吃掉编辑区宽度、
+ * 脚本长短不同时编辑区宽度还会跳；槽宽由 `syncGutter` 量给 `--jse-gutter`，高亮层
+ * 据此收窄同一份宽度，两层的内容盒始终逐像素重合。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { renderJsHighlight } from '@/lib/js-highlight'
 import { indentLines, outdentLines, type EditorCaret } from '@/lib/js-editor'
 
@@ -43,9 +46,39 @@ const emit = defineEmits<{
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 /** 高亮层：只读展示，靠 transform 跟随输入层滚动。 */
 const highlightEl = ref<HTMLElement | null>(null)
+/** 外壳：滚动条槽宽以 CSS 变量写在它身上，两个文本层共用。 */
+const frameEl = ref<HTMLElement | null>(null)
+/** 外壳尺寸的观察器：缩放后滚动条槽宽会变，得跟着重量。 */
+let frameObserver: ResizeObserver | null = null
 
 /** 着色后的 HTML；只在源码变化时重算。 */
 const highlightHtml = computed(() => renderJsHighlight(props.modelValue))
+
+/**
+ * 把输入层的滚动条槽宽同步到外壳的 `--jse-gutter`。
+ * 输入层用 `scrollbar-gutter: stable` 常驻一条槽（滚动条出现与否都不改变内容宽度），
+ * 高亮层没法自己量，只能靠这里量完再用 CSS 变量收窄同一份宽度；量不到时留 0，退回满宽。
+ * `offsetWidth - clientWidth` 即槽宽：输入层 border 为 0，不会掺进边框。
+ */
+function syncGutter() {
+  const input = inputEl.value
+  const frame = frameEl.value
+  if (!input || !frame) return
+  frame.style.setProperty('--jse-gutter', `${input.offsetWidth - input.clientWidth}px`)
+}
+
+onMounted(() => {
+  syncGutter()
+  // jsdom 等环境没有 ResizeObserver，缺了就只保留挂载时量到的那一次。
+  if (typeof ResizeObserver === 'undefined') return
+  frameObserver = new ResizeObserver(syncGutter)
+  if (frameEl.value) frameObserver.observe(frameEl.value)
+})
+
+onBeforeUnmount(() => {
+  frameObserver?.disconnect()
+  frameObserver = null
+})
 
 /**
  * 让高亮层跟随输入层的滚动。
@@ -96,7 +129,11 @@ function onKeydown(event: KeyboardEvent) {
 watch(
   () => props.modelValue,
   () => {
-    void nextTick(syncScroll)
+    void nextTick(() => {
+      // 先重量槽宽再对位移：槽宽变了却没跟上，两层的内容盒就对不齐。
+      syncGutter()
+      syncScroll()
+    })
   },
 )
 
@@ -132,7 +169,7 @@ defineExpose({ readCaret, restoreCaret })
 </script>
 
 <template>
-  <div class="jse" :class="{ 'jse--fill': fill }">
+  <div ref="frameEl" class="jse" :class="{ 'jse--fill': fill }">
     <!-- 高亮层：aria-hidden，读屏与表单语义只认下面的 textarea，避免同一段文本被读两遍。 -->
     <pre
       ref="highlightEl"
