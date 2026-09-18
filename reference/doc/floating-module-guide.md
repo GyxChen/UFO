@@ -120,7 +120,7 @@ src-tauri/src/
 | 窗口尺寸 / 贴边 / 形态推导 | `src/components/floating/FloatingWindow.vue`、`src/lib/snap.ts`、`src/lib/floating-layout.ts` |
 | 模块挂载与分槽 | `FloatingModuleHost.vue`、`FloatingModuleSlot.vue` |
 | 组件启用 / 排序 / 上限 / 一格边长 | `src/stores/floatingModules.ts`、`src-tauri/src/floating/module_config.rs` |
-| 组件列表与齿轮入口、窗口级「格子大小」滑块 | `src/components/floating/FloatingModulesPanel.vue` |
+| 组件列表与齿轮入口、窗口级「格子大小」卡（左列，组件列表下方） | `src/components/floating/FloatingModulesPanel.vue` |
 | 一级 / 二级导航 | `src/components/MainWindow.vue` |
 | tooltip 定位 / 显隐 / 点击穿透 | `src/components/TooltipWindow.vue`、`src/lib/tooltip.ts` |
 | 通用信息卡行与分组 | `src/components/floating/tooltip/{TooltipRow,TooltipSection}.vue` |
@@ -293,7 +293,8 @@ const partitioned = computed(() => partitionIndicatorSessions(store.sessions, pr
 
   于是所有**设计像素**（字号、图标上限、描边、光晕、间隙）都写成 `calc(<设计像素> * var(--floating-cell-scale, 1))`。变量缺失时回落 1（= 设计尺寸），正好与「没有槽位容器时 cq 退化、clamp 取到设计上限」的表现对齐，所以在主窗预览 / 单测里也安全。
   ⚠️ 别把 `var()` 的兜底写成别的数：1 之外的兜底会让「没有外壳」的场景跟设计尺寸对不上。
-- ✅ 降级要有取舍：先丢次要信息（城市、湿度、平台图标），再缩尺寸。- ✅ **百分比尺寸要取「限制轴」的**：槽位宽高不等时（竖条只有一格宽、行高≈一格），百分比只有落在**更短的轴**上才不会溢出。实测竖条 45 格：行宽 39.5px、行高 43.2px，灯点 + 间隙 + 图标按行高算是 42.4px —— 超出的近 3px 被槽位的 `overflow:hidden` 切掉，图标缺一角。做法是按形态换轴、比例不动。
+- ✅ 降级要有取舍：先丢次要信息（城市、湿度、平台图标），再缩尺寸。
+- ✅ **百分比尺寸要取「限制轴」的**：槽位宽高不等时（竖条只有一格宽、行高≈一格），百分比只有落在**更短的轴**上才不会溢出。实测竖条 45 格：行宽 39.5px、行高 43.2px，灯点 + 间隙 + 图标按行高算是 42.4px —— 超出的近 3px 被槽位的 `overflow:hidden` 切掉，图标缺一角。做法是按形态换轴、比例不动；竖条另外按格子倍数留左右内边距，别让灯点贴住边框（一格宽的形态没有额外余量，光靠居中不够），内边距同样按 `--floating-cell-scale` 缩放。
 - ⚠️ 降级查询要覆盖两条轴：`@container (max-height: …)` 管横条 / 方形，`@container (max-width: …)` 管竖条；拆成两个块写（`or` 语法要求较新的内核，拆开在任何版本都不会整块失效）。
 - ⚠️ 形态规则的选择器如果比降级规则更长（如 `.demo-module--vertical .demo-module__dot`），降级块里必须**带上同一条选择器**才盖得住它 —— 否则降级静默失效（灯点该吃满一行时仍是小圆点）。
 - ⚠️ **cq 单位只在有槽位容器的前提下才是「槽位尺寸」**：没有祖先容器时（主窗口预览、单测直接挂组件）`cqh` 会按规范退化成**视口**单位，图标能瞬间撑满整屏。所以规则是「`@container` 块内放心用」+「块外一律用 `clamp(下限, Xcqh, 上限)` 把退化情形夹住」——配上面那条 `--floating-cell-scale` 的兜底 1，退化时就正好是设计尺寸。

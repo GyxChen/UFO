@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 主窗「悬浮窗设置」页（方案 C）：左边是组件列表（启用开关 / 需求 / 顺序 / 齿轮），
+ * 主窗「悬浮窗设置」页（方案 C）：左边是组件列表（启用开关 / 需求 / 顺序 / 齿轮）+ 格子大小卡，
  * 右边是悬浮窗在三种形态下的实时预览。
  *
  * 列表里的每一行都来自注册表（新增组件自动出现）；顺序写进配置的 `order`，
@@ -153,108 +153,120 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
 
 <template>
   <div class="module-catalog">
-    <section class="ufo-card module-catalog__list" aria-labelledby="module-catalog-title">
-      <div class="ufo-card__header">
-        <h2 id="module-catalog-title" class="ufo-card__title">悬浮窗组件</h2>
-        <span class="ufo-card__hint">{{ enabledCount }} / {{ definitions.length }} 已启用</span>
-      </div>
+    <div class="module-catalog__column">
+      <section class="ufo-card module-catalog__list" aria-labelledby="module-catalog-title">
+        <div class="ufo-card__header">
+          <h2 id="module-catalog-title" class="ufo-card__title">悬浮窗组件</h2>
+          <span class="ufo-card__hint">{{ enabledCount }} / {{ definitions.length }} 已启用</span>
+        </div>
 
-      <ul class="module-catalog__rows">
-        <li
-          v-for="(definition, index) in definitions"
-          :key="definition.id"
-          class="module-row"
-          :class="{
-            'module-row--off': !modules.moduleEnabled(definition.id, definition.defaultEnabled),
-            'module-row--dragging': draggingId === definition.id,
-            'module-row--drop-target': dragOverIndex === index && draggingId !== definition.id,
-          }"
-          @dragover="onDragOver(index, $event)"
-          @drop="onDrop(index)"
+        <ul class="module-catalog__rows">
+          <li
+            v-for="(definition, index) in definitions"
+            :key="definition.id"
+            class="module-row"
+            :class="{
+              'module-row--off': !modules.moduleEnabled(definition.id, definition.defaultEnabled),
+              'module-row--dragging': draggingId === definition.id,
+              'module-row--drop-target': dragOverIndex === index && draggingId !== definition.id,
+            }"
+            @dragover="onDragOver(index, $event)"
+            @drop="onDrop(index)"
+          >
+            <span class="module-row__order" aria-hidden="true">
+              {{ modules.moduleEnabled(definition.id, definition.defaultEnabled) ? index + 1 : '–' }}
+            </span>
+
+            <div class="module-row__copy">
+              <span class="module-row__label">{{ definition.label }}</span>
+              <span class="module-row__hint">{{ definition.description }}</span>
+            </div>
+
+            <span class="module-row__demand">
+              {{ demandOf(definition) === null ? '—' : `${demandOf(definition)} 格` }}
+            </span>
+
+            <button
+              v-if="hasModuleSettings(definition)"
+              type="button"
+              class="module-row__gear"
+              :aria-label="`${definition.label}的设置`"
+              :title="`${definition.label}的设置`"
+              @click="emit('open-settings', definition.id)"
+            >
+              <img :src="gearIcon" alt="" aria-hidden="true" />
+            </button>
+
+            <BaseSwitch
+              :model-value="modules.moduleEnabled(definition.id, definition.defaultEnabled)"
+              :aria-label="`启用 ${definition.label}`"
+              :title="`启用 ${definition.label}`"
+              @change="toggleModule(definition, $event)"
+            />
+
+            <button
+              type="button"
+              class="module-row__handle"
+              aria-label="拖拽排序（或用上下方向键）"
+              title="拖拽排序（或用上下方向键）"
+              draggable="true"
+              @dragstart="onDragStart(definition, $event)"
+              @dragend="onDragEnd"
+              @keydown="onHandleKeydown(index, $event)"
+            >
+              ⋮⋮
+            </button>
+          </li>
+        </ul>
+
+        <p class="module-catalog__summary" role="status">
+          已启用 {{ enabledCount }} 个组件 · 需求 {{ currentRuntime?.windowCells ?? '—' }} 格 · 窗口尺寸随贴边形态变化
+        </p>
+      </section>
+
+      <!--
+        格子大小自成一卡，紧贴组件列表下方：它是**整个悬浮窗**的尺寸基准（同级组件共享一格边长），
+        不属于任何一个组件，也不只是预览卡的附属项。右卡只留预览。
+      -->
+      <section class="ufo-card module-catalog__cell-card" aria-labelledby="module-cell-size-title">
+        <div class="ufo-card__header">
+          <h2 id="module-cell-size-title" class="ufo-card__title">格子大小</h2>
+          <span class="ufo-card__hint">所有组件共用</span>
+        </div>
+
+        <SettingsField
+          hint="每一格的边长；横条 / 竖条按格数成倍放大，方形与四角保持正方形。拖动时预览实时变化，松手后悬浮窗按新尺寸重新吸附。"
         >
-          <span class="module-row__order" aria-hidden="true">
-            {{ modules.moduleEnabled(definition.id, definition.defaultEnabled) ? index + 1 : '–' }}
-          </span>
-
-          <div class="module-row__copy">
-            <span class="module-row__label">{{ definition.label }}</span>
-            <span class="module-row__hint">{{ definition.description }}</span>
+          <div class="module-catalog__cell-size">
+            <BaseSlider
+              v-model="cellPxInput"
+              :min="MIN_CELL_PX"
+              :max="MAX_CELL_PX"
+              :step="1"
+              aria-labelledby="module-cell-size-title"
+              :aria-value-text="`${cellPxInput} 像素`"
+              @change="commitCellPx"
+            />
+            <span class="module-catalog__cell-value">{{ cellPxInput }}px</span>
+            <BaseButton
+              variant="ghost"
+              size="sm"
+              :disabled="cellPxInput === FLOATING_BASE_CELL_PX"
+              title="恢复默认格子大小"
+              @click="resetCellPx"
+            >
+              默认
+            </BaseButton>
           </div>
-
-          <span class="module-row__demand">
-            {{ demandOf(definition) === null ? '—' : `${demandOf(definition)} 格` }}
-          </span>
-
-          <button
-            v-if="hasModuleSettings(definition)"
-            type="button"
-            class="module-row__gear"
-            :aria-label="`${definition.label}的设置`"
-            :title="`${definition.label}的设置`"
-            @click="emit('open-settings', definition.id)"
-          >
-            <img :src="gearIcon" alt="" aria-hidden="true" />
-          </button>
-
-          <BaseSwitch
-            :model-value="modules.moduleEnabled(definition.id, definition.defaultEnabled)"
-            :aria-label="`启用 ${definition.label}`"
-            :title="`启用 ${definition.label}`"
-            @change="toggleModule(definition, $event)"
-          />
-
-          <button
-            type="button"
-            class="module-row__handle"
-            aria-label="拖拽排序（或用上下方向键）"
-            title="拖拽排序（或用上下方向键）"
-            draggable="true"
-            @dragstart="onDragStart(definition, $event)"
-            @dragend="onDragEnd"
-            @keydown="onHandleKeydown(index, $event)"
-          >
-            ⋮⋮
-          </button>
-        </li>
-      </ul>
-
-      <p class="module-catalog__summary" role="status">
-        已启用 {{ enabledCount }} 个组件 · 需求 {{ currentRuntime?.windowCells ?? '—' }} 格 · 窗口尺寸随贴边形态变化
-      </p>
-    </section>
+        </SettingsField>
+      </section>
+    </div>
 
     <section class="ufo-card module-catalog__preview" aria-labelledby="module-preview-title">
       <div class="ufo-card__header">
         <h2 id="module-preview-title" class="ufo-card__title">悬浮窗预览</h2>
         <span class="ufo-card__hint">贴边即变形</span>
       </div>
-      <SettingsField
-        label="格子大小"
-        label-id="floating-cell-size-label"
-        hint="每一格的边长；横条 / 竖条按格数成倍放大，方形与四角保持正方形。拖动时预览实时变化，松手后悬浮窗按新尺寸重新吸附。"
-      >
-        <div class="module-catalog__cell-size">
-          <BaseSlider
-            v-model="cellPxInput"
-            :min="MIN_CELL_PX"
-            :max="MAX_CELL_PX"
-            :step="1"
-            aria-labelledby="floating-cell-size-label"
-            :aria-value-text="`${cellPxInput} 像素`"
-            @change="commitCellPx"
-          />
-          <span class="module-catalog__cell-value">{{ cellPxInput }}px</span>
-          <BaseButton
-            variant="ghost"
-            size="sm"
-            :disabled="cellPxInput === FLOATING_BASE_CELL_PX"
-            title="恢复默认格子大小"
-            @click="resetCellPx"
-          >
-            默认
-          </BaseButton>
-        </div>
-      </SettingsField>
 
       <FloatingShapePreview
         :snapshot="modules.runtime"

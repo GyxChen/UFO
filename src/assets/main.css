@@ -550,9 +550,15 @@ html.is-tooltip-window #app {
   }
 }
 
-/* 两张卡片都撑满各自的网格列：卡片默认带 max-w-md（14px 根字号下只有 392px），
+/* 左列 = 组件列表 + 格子大小卡，两张卡纵向堆叠；右列只有预览卡。 */
+.module-catalog__column {
+  @apply flex w-full min-w-0 flex-col gap-3;
+}
+
+/* 各列里的卡片都撑满自己的网格列：卡片默认带 max-w-md（14px 根字号下只有 392px），
  * 不放开会在宽容器里留一大片空白。用子选择器提高优先级，压过 .ufo-card 自身的限宽。 */
-.module-catalog > .ufo-card {
+.module-catalog > .ufo-card,
+.module-catalog__column > .ufo-card {
   @apply max-w-none;
 }
 

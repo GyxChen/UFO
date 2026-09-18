@@ -128,6 +128,18 @@ describe('FloatingModulesPanel · 格子大小', () => {
     expect(wrapper.get('.module-catalog__cell-value').text()).toBe(`${FLOATING_BASE_CELL_PX}px`)
   })
 
+  it('keeps the cell-size control in its own card below the module list', () => {
+    const wrapper = mountWith(backendConfig(FLOATING_BASE_CELL_PX))
+    const cards = wrapper.get('.module-catalog__column').findAll('.ufo-card')
+
+    // 左列两张卡：组件列表在上、格子大小在下（尺寸基准不属于任何一个组件）。
+    expect(cards.map(card => card.classes().find(name => name.startsWith('module-catalog__')))).toEqual([
+      'module-catalog__list',
+      'module-catalog__cell-card',
+    ])
+    // 滑块搬出预览卡：预览只负责显示形态，不再夹带尺寸调节。
+    expect(wrapper.get('.module-catalog__preview').find('.base-slider__input').exists()).toBe(false)
+  })
   it('reverts the slider when the write fails', async () => {
     const wrapper = mountWith(backendConfig(FLOATING_BASE_CELL_PX))
     invokeMock.mockRejectedValueOnce(new Error('disk full'))

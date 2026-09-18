@@ -149,9 +149,12 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
 - ✅ 模块按**槽位实际像素**自适应：`.floating-module-slot` 由外壳声明为 size 容器（`container-name: floating-slot`），
   组件用 `@container floating-slot (...)` 做降级 / 放大、用 `cqh` / `cqw` 写随槽位缩放的尺寸；
   ⚠️ cq 单位**只能写在 @container 块内**（块外没有槽位容器时会退化成视口单位）。
-  默认一格 45px：只有外壳留 1px 描边 + `p-0.5` 内边距当呼吸位，宿主与组件一律不留 padding（可用内容 ≈39.5px）；格子大小可调后，模块更要靠 cqh/cqw 而不是写死像素。- ⚠️ **百分比要取「限制轴」的**：窗口宽高不等时（竖条只有一格宽、行高≈一格），百分比只有落在**更短的轴**上才放得下。
+  默认一格 45px：只有外壳留 1px 描边 + `p-0.5` 内边距当呼吸位，宿主与组件一律不留 padding（可用内容 ≈39.5px）；格子大小可调后，模块更要靠 cqh/cqw 而不是写死像素。
+- ⚠️ **百分比要取「限制轴」的**：窗口宽高不等时（竖条只有一格宽、行高≈一格），百分比只有落在**更短的轴**上才放得下。
   实测竖条 45 格：行宽 39.5px、行高 43.2px，灯点 + 间隙 + 图标按行高算是 42.4px，超出的近 3px 会被槽位的 `overflow:hidden` 切掉（图标缺一角，观感就是「状态没显示完整」）。
   所以 `.agent-status-module--vertical` 把灯点 / 图标改成按**行宽**取百分比（比例不变：52.5% : 4% : 42% = 98.5%）；方形 / 四角 / 横条的行宽 ≥ 行高，按行高算本来就不会溢出。
+  竖条另外按格子倍数留左右呼吸位（`padding-inline: calc(1.5px * var(--floating-cell-scale, 1))`）：灯点与图标各退一步、不贴边框，45 格下灯点到边框 4.5px ≈ 原来的 1.5 倍（与横条 / 方形的 4.8px 基本齐平）。
+  ⚠️ 内边距写在模块上（等价于缩窄每一行），这样各行灯点始终左右对齐；内边距本身也要按 `--floating-cell-scale` 缩放，否则大格子下又贴边。
   降级查询也要覆盖两条轴：`max-height` 管横条 / 方形，`max-width` 管竖条（拆成两个 `@container` 写，不用 `or`）。
   护栏：`src/modules/agent-status/agent-status-css.spec.ts`。
 - ⚠️ **写死的设计像素必须跟着格子缩放**：宿主在 `.floating-module-host` 上声明两个变量 ——
@@ -160,7 +163,7 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
   变量缺失时回落 1（= 设计尺寸），与「没有槽位容器时 cq 单位退化、clamp 取到设计上限」的表现一致。
   ⚠️ 不乘倍率的两类：`@container` 里的 px 断点（那是**绝对可读性阈值**：槽位矮于 32/33px 就降级排版，与设计缩放无关）、以及信息卡（另一个固定尺寸的窗口，不参与格子缩放）。
   护栏：`src/components/floating/floating-module-scaling.spec.ts` 扫描所有模块样式，`clamp()` 的上限只要是 px 设计值就必须引用该变量。
-- **一格边长可调**（主窗「悬浮窗设置」页右卡的「格子大小」滑块）：配置字段 `cell_px`（物理像素，32–96，默认 45）。它与 `max_cells_by_layout` 同级 —— 是**整个悬浮窗**的尺寸基准、同级组件共享，因此留在外壳（`FloatingModuleConfig.cell_px`，`#[serde(default = "default_cell_px")]`；⚠️ 加这个字段**不得**升 `SCHEMA_VERSION`）。前端读配置一律走 `configCellPx()` / `cellSizeOf()`（`floating-modules.ts` / `floating-layout.ts`），不要直接取字段。
+- **一格边长可调**（主窗「悬浮窗设置」页左列、组件列表下方的「格子大小」卡）：配置字段 `cell_px`（物理像素，32–96，默认 45）。它与 `max_cells_by_layout` 同级 —— 是**整个悬浮窗**的尺寸基准、同级组件共享，因此留在外壳（`FloatingModuleConfig.cell_px`，`#[serde(default = "default_cell_px")]`；⚠️ 加这个字段**不得**升 `SCHEMA_VERSION`）。前端读配置一律走 `configCellPx()` / `cellSizeOf()`（`floating-modules.ts` / `floating-layout.ts`），不要直接取字段。
   - ⚠️ 滑块**拖动时只改本地值**（预览实时跟随），**松手（change）才落盘**：否则每动一像素就要写一次盘，并让真窗口重新吸附一次。
   - 悬浮窗侧 `baseSize` 取自 store（`FloatingWindow.vue`），配置事件到达后 `scheduleSnap()` 按新尺寸重算 → 贴边中也会就地更新。
   - ⚠️ 原生 range 会把越界值截到边界，所以「落盘前 clamp」这条防线主要挡程序化调用（0 会让窗口塌成一条线），由 `clampCellPx()` 与 Rust 侧 `validate()` 各管一半。
@@ -184,7 +187,7 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
   - 二级（`variant="chips"`，胶囊）= 当前组件自己的设置分区，列它自己的 `settings.sections`。
   - ⚠️ 「悬浮窗设置」**一页到底、没有二级**：它本身就是一块整体（列表 + 预览左右并排），再切一刀会把「改组件」和「看效果」拆开。二级只服务组件设置页。
   - ⚠️ 两级 tabbar 上下相邻，外观必须保持不同（下划线 vs 胶囊），否则看不出哪条是一级。组件名在屏幕上已由两级 tab 表达，组件页里那个 h1 用 `sr-only` 只留给读屏。
-- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **各形态格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 前四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「各形态格子上限」**口径是整个悬浮窗的**（`max_cells_by_layout`，同级组件共享，仍由外壳 store 持有），页面文案已写明。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页右卡**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
+- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **各形态格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 前四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「各形态格子上限」**口径是整个悬浮窗的**（`max_cells_by_layout`，同级组件共享，仍由外壳 store 持有），页面文案已写明。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页左列、组件列表下方的独立卡片**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
 - 打开组件设置有两条路，走同一个事件：① 主窗组件列表行的齿轮；② 点悬浮窗上该组件的区域（槽位根节点的 `data-module-id` + 外壳 `moduleIdAt()` → `emitTo('main', OPEN_MODULE_SETTINGS_EVENT)`，点空白处传 null = 打开组件列表页）。打开后落到该组件**第一个分区**（`activeSections` 变化时重置），不会停在上次看的那一块。⚠️ 顺序必须是「先 showMainWindow 再 emitTo」：窗口还没打开时事件没人接。`pointercancel`（触摸取消）只清状态，**不当点击**，否则会莫名弹主窗。
 - 布局 mock 见 `reference/mock/floating-modules-index.html`（组件选择三套，采用第三套）；两级导航 mock 见 `reference/mock/settings-nav-index.html`（双层横条 / 左侧竖排 / 分段控件，采用第一套 A：二级用胶囊条）。
 
