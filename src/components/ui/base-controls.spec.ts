@@ -47,21 +47,50 @@ describe('BaseInput', () => {
 })
 
 describe('BaseSelect', () => {
-  it('syncs the selected value and forwards aria attributes to the native select', async () => {
+  it('opens the listbox, selects an option and exposes combobox state', async () => {
     const wrapper = mount(BaseSelect, {
       props: {
         modelValue: 'a',
-        'aria-labelledby': 'resolver-label',
-      },
-      slots: {
-        default: '<option value="a">A</option><option value="b">B</option>',
+        ariaLabelledby: 'resolver-label',
+        options: [
+          { value: 'a', label: '解析器 A' },
+          { value: 'b', label: '解析器 B' },
+        ],
       },
     })
 
-    await wrapper.find('select').setValue('b')
+    const trigger = wrapper.get('[role="combobox"]')
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+
+    await trigger.trigger('click')
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    expect(trigger.attributes('aria-labelledby')).toBe('resolver-label')
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(true)
+
+    await wrapper.findAll('[role="option"]')[1].trigger('click')
 
     expect(wrapper.emitted('update:modelValue')).toEqual([['b']])
-    expect(wrapper.find('select').attributes('aria-labelledby')).toBe('resolver-label')
+    expect(wrapper.emitted('change')).toEqual([['b']])
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('supports arrow navigation and Enter selection', async () => {
+    const wrapper = mount(BaseSelect, {
+      props: {
+        modelValue: 'a',
+        options: [
+          { value: 'a', label: '解析器 A' },
+          { value: 'b', label: '解析器 B' },
+        ],
+      },
+    })
+
+    const trigger = wrapper.get('[role="combobox"]')
+    await trigger.trigger('keydown', { key: 'ArrowDown' })
+    await trigger.trigger('keydown', { key: 'ArrowDown' })
+    await trigger.trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([['b']])
   })
 })
 

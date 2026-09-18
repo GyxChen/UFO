@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import type { FloatingLayout, MaxCellsByLayout, TokenUnit } from '@/lib/floating-modules'
 import { hideMainWindow, startCurrentWindowDrag } from '@/lib/window'
 import { useAgentStatusStore } from '@/stores/agentStatus'
@@ -82,6 +82,11 @@ const tokenUnitOptions: { value: TokenUnit; label: string }[] = [
   { value: 'tokens', label: 'Tokens' },
   { value: 'm_tokens', label: 'M tokens' },
 ]
+
+/** 代理解析器下拉选项；只把后端 id/label 映射成通用下拉需要的结构。 */
+const proxyResolverOptions = computed(() =>
+  modules.resolvers.map(option => ({ value: option.id, label: option.label }))
+)
 
 const layoutLabels: { key: FloatingLayout; label: string }[] = [
   { key: 'square', label: '方形上限' },
@@ -311,11 +316,12 @@ async function saveTimeouts() {
 
         <div class="module-settings__retention">
           <span id="proxy-resolver-label">代理解析器</span>
-          <BaseSelect v-model="proxyResolverInput" aria-labelledby="proxy-resolver-label" @change="updateProxyResolver">
-            <option v-for="option in modules.resolvers" :key="option.id" :value="option.id">
-              {{ option.label }}
-            </option>
-          </BaseSelect>
+          <BaseSelect
+            v-model="proxyResolverInput"
+            :options="proxyResolverOptions"
+            aria-labelledby="proxy-resolver-label"
+            @change="updateProxyResolver"
+          />
         </div>
         <p class="module-settings__field-hint">
           选了代理工具后，会把它监听的本地地址（如 127.0.0.1）反查成真正的上游 endpoint 显示在提示窗；
