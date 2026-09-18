@@ -8,3 +8,4 @@
 //! 登记它的配置钩子与命令 —— 与前端「注册表里加一条」对称。
 
 pub mod agent_status;
+pub mod weather;

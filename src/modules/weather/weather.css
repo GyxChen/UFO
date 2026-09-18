@@ -1,0 +1,264 @@
+@reference "../../assets/main.css";
+
+/* 和风天气悬浮窗与 Tooltip 样式 */
+
+.weather-module {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  user-select: none;
+  color: var(--ufo-text);
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 未配置 API Key 占位态 */
+.weather-module--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--ufo-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.weather-module--empty:hover {
+  color: var(--ufo-accent);
+}
+
+/* 1. Square: 默认未贴边 56x56 等比压缩容器 */
+.weather-module--square,
+.weather-module--constrained {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.weather-module--square .weather-icon,
+.weather-module--constrained .weather-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--ufo-accent);
+}
+
+.weather-module--square .weather-temp,
+.weather-module--constrained .weather-temp {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  font-family: var(--font-sans);
+}
+
+/* 2. Corner: 四角贴边放大方形 */
+.weather-module--corner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-around;
+  padding: 4px;
+}
+
+.weather-module--corner .weather-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.weather-module--corner .weather-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--ufo-accent);
+}
+
+.weather-module--corner .weather-text {
+  font-size: 12px;
+  color: var(--ufo-muted);
+}
+
+.weather-module--corner .weather-bottom {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.weather-module--corner .weather-temp {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ufo-text);
+}
+
+.weather-module--corner .weather-loc {
+  font-size: 10px;
+  color: var(--ufo-muted);
+  max-width: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 3. Horizontal: 上下贴边横条（左右两格并排） */
+.weather-module--horizontal {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+}
+
+.weather-module--horizontal .weather-col-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--ufo-border);
+  height: 100%;
+  padding: 2px 0;
+  gap: 1px;
+}
+
+.weather-module--horizontal .weather-col-left .weather-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--ufo-accent);
+}
+
+.weather-module--horizontal .weather-col-left .weather-text {
+  font-size: 10px;
+  line-height: 1.1;
+  color: var(--ufo-muted);
+}
+
+.weather-module--horizontal .weather-col-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 2px 0;
+  gap: 1px;
+}
+
+.weather-module--horizontal .weather-col-right .weather-temp {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.weather-module--horizontal .weather-col-right .weather-sub {
+  font-size: 9px;
+  line-height: 1.1;
+  color: var(--ufo-muted);
+}
+
+/* 4. Vertical: 左右贴边竖条（上下两格堆叠） */
+.weather-module--vertical {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+}
+
+.weather-module--vertical .weather-row-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--ufo-border);
+  width: 100%;
+  height: 100%;
+  padding: 2px 0;
+  gap: 2px;
+}
+
+.weather-module--vertical .weather-row-top .weather-icon {
+  width: 26px;
+  height: 26px;
+  color: var(--ufo-accent);
+}
+
+.weather-module--vertical .weather-row-top .weather-text {
+  font-size: 11px;
+  line-height: 1.1;
+  color: var(--ufo-muted);
+}
+
+.weather-module--vertical .weather-row-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 2px 0;
+  gap: 2px;
+}
+
+.weather-module--vertical .weather-row-bottom .weather-temp {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.weather-module--vertical .weather-row-bottom .weather-sub {
+  font-size: 10px;
+  line-height: 1.1;
+  color: var(--ufo-muted);
+}
+
+/* Tooltip 专用细节样式 */
+.weather-tooltip__now {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.weather-tooltip__icon {
+  width: 16px;
+  height: 16px;
+  color: var(--ufo-accent);
+  flex-shrink: 0;
+}
+
+.weather-tooltip__hourly {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.weather-tooltip__hourly-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 2px;
+  background-color: var(--ufo-surface-2);
+  border: 1px solid var(--ufo-border);
+  border-radius: 6px;
+}
+
+.weather-tooltip__hourly-time {
+  font-size: 10px;
+  color: var(--ufo-muted);
+}
+
+.weather-tooltip__hourly-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--ufo-accent);
+  margin: 2px 0;
+}
+
+.weather-tooltip__hourly-temp {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ufo-text);
+  font-family: var(--font-sans);
+}
