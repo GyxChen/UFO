@@ -114,7 +114,7 @@ const extensionStamp = computed(() => {
   return updated ? `更新于 ${updated}` : ''
 })
 
-/** 有拓展字段时，提问行压缩为单行，把高度让给字段。 */
+/** 有拓展字段时，限制提问最多显示三行，避免字段与提问互相挤压。 */
 const compactPrompt = computed(() => extensionFields.value.length > 0)
 
 /** 定位并显示提示窗；先 setPosition 再 show，避免在旧位置闪一下。 */
@@ -266,7 +266,7 @@ onBeforeUnmount(() => {
         <p v-if="extensionStamp" class="tooltip-stamp">{{ extensionStamp }}</p>
       </div>
 
-      <!-- 用户提问内容：有拓展字段时压到单行，完整内容在 title。 -->
+      <!-- 用户提问内容：有拓展字段时最多显示三行，完整内容在 title。 -->
       <div v-if="session.prompt" class="tooltip-prompt" :class="{ 'tooltip-prompt--compact': compactPrompt }">
         <span class="tooltip-row__label">提问</span>
         <p class="tooltip-prompt__text" :title="session.prompt">{{ session.prompt }}</p>
