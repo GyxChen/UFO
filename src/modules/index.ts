@@ -1,5 +1,6 @@
 import type { FloatingModuleDefinition } from '@/lib/floating-modules'
 import { agentStatusModule } from './agent-status'
+import { todoModule } from './todo'
 import { weatherModule } from './weather'
 
 /**
@@ -11,4 +12,5 @@ import { weatherModule } from './weather'
 export const FLOATING_MODULE_DEFINITIONS: FloatingModuleDefinition[] = [
   agentStatusModule,
   weatherModule,
+  todoModule,
 ]

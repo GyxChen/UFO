@@ -22,6 +22,7 @@
     "allow-get-flow-results",
     "allow-get-session-records",
     "allow-is-left-mouse-pressed",
-    "allow-get-weather-snapshot"
+    "allow-get-weather-snapshot",
+    "allow-get-todo-snapshot"
   ]
 }

@@ -1,0 +1,23 @@
+[[permission]]
+identifier = "allow-get-todo-snapshot"
+description = "Allows reading the current incomplete task snapshot (滴答待办)."
+commands.allow = ["get_todo_snapshot"]
+
+[[permission]]
+identifier = "allow-list-todo-projects"
+description = "Allows listing the user's Dida365 lists for the settings window."
+commands.allow = ["list_todo_projects"]
+
+[[permission]]
+identifier = "allow-test-todo-connection"
+description = "Allows fetching a fresh incomplete task snapshot for the settings window preview."
+commands.allow = ["test_todo_connection"]
+
+[[permission]]
+identifier = "allow-manage-todo-secret"
+description = "Allows storing, clearing, and querying the Dida365 API token in the OS credential store."
+commands.allow = [
+  "set_todo_token",
+  "delete_todo_token",
+  "get_todo_secret_status"
+]
