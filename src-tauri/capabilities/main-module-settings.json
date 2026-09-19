@@ -12,6 +12,9 @@
     "allow-manage-session-records",
     "allow-search-weather-city",
     "allow-test-weather-connection",
-    "allow-manage-weather-secret"
+    "allow-manage-weather-secret",
+    "allow-list-todo-projects",
+    "allow-test-todo-connection",
+    "allow-manage-todo-secret"
   ]
 }

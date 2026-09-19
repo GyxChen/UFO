@@ -1,0 +1,411 @@
+@reference "../../assets/main.css";
+
+/*
+ * 滴答待办：悬浮窗视图 / 信息卡 / 主窗设置预览。
+ *
+ * 形态适配（四种 layout，对用户是三形态）：
+ * - square（未贴边，恒 1 格）：只显示「勾选图标 + 未完成数」徽标；
+ * - corner（贴角，边长 = ceil(√cells) 格）：徽标 + 最多两条任务，空间够时带紧凑截止标注；
+ * - horizontal（贴上下边，宽 = cells 格、高 = 1 格）：徽标 + 第一条任务（横向），第二条让位；
+ * - vertical（贴左右边，高 = cells 格、宽 = 1 格）：徽标 + 最多两条任务（纵向，标题走省略号）。
+ *
+ * 尺寸规矩（见组件开发规范 5.5）：
+ * - 悬浮窗里的尺寸一律 `clamp(下限, Xcqh, 上限)`，上限是设计像素时必须写
+ *   `calc(<设计像素> * var(--floating-cell-scale, 1))`（用户能把一格调到 32–96px）；
+ * - 窄槽位（竖条 / 未贴边方形，宽 ≈ 1 格）改按 `cqw` 取：那里横向才是限制轴，
+ *   按高度算会把图标与计数撑出槽位（实测槽位有 overflow:hidden，超出的部分会被裁掉）；
+ * - `@container` 里的 px 断点是**绝对可读性阈值**（「一格都放不下了」），刻意不乘倍率。
+ */
+
+/* ---- 悬浮窗视图 ---- */
+
+.todo-module {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  gap: clamp(3px, 5cqh, calc(6px * var(--floating-cell-scale, 1)));
+  color: var(--ufo-text);
+  user-select: none;
+}
+
+/* 竖排是默认姿势；横条才改成一行 */
+.todo-module--square,
+.todo-module--corner,
+.todo-module--vertical {
+  flex-direction: column;
+}
+
+.todo-module--horizontal {
+  flex-direction: row;
+}
+
+/* 徽标：勾选图标 + 未完成数。flex:0 0 auto —— 空间不够时压的是任务标题，不是计数 */
+.todo-module__badge {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(2px, 3cqh, calc(4px * var(--floating-cell-scale, 1)));
+}
+
+.todo-module__icon {
+  width: clamp(11px, 46cqh, calc(24px * var(--floating-cell-scale, 1)));
+  height: clamp(11px, 46cqh, calc(24px * var(--floating-cell-scale, 1)));
+  flex: 0 0 auto;
+  color: var(--ufo-accent);
+}
+
+.todo-module__count {
+  font-size: clamp(11px, 42cqh, calc(22px * var(--floating-cell-scale, 1)));
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 有逾期任务：徽标整块转危险色，一眼看出「有欠账」 */
+.todo-module__badge--alert .todo-module__count,
+.todo-module__badge--alert .todo-module__icon {
+  color: var(--ufo-danger);
+}
+
+/* 任务预告：默认不显示（方形放不下两条），由形态类打开 */
+.todo-module__list {
+  display: none;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  gap: clamp(1px, 2cqh, calc(3px * var(--floating-cell-scale, 1)));
+  list-style: none;
+}
+
+.todo-module--corner .todo-module__list,
+.todo-module--vertical .todo-module__list {
+  flex-direction: column;
+}
+
+.todo-module--corner .todo-module__list,
+.todo-module--vertical .todo-module__list,
+.todo-module--horizontal .todo-module__list {
+  display: flex;
+}
+
+/* 横条是一行一条：并排摆放，第一条占满剩下的横向空间 */
+.todo-module--horizontal .todo-module__list {
+  flex-direction: row;
+  align-items: center;
+}
+
+.todo-module__item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: clamp(2px, 2.5cqh, calc(4px * var(--floating-cell-scale, 1)));
+}
+
+/* 截止状态点：红 = 逾期 / 黄 = 今天 / 灰 = 其余 */
+.todo-module__dot {
+  width: clamp(4px, 13cqh, calc(6px * var(--floating-cell-scale, 1)));
+  height: clamp(4px, 13cqh, calc(6px * var(--floating-cell-scale, 1)));
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--ufo-muted);
+}
+
+.todo-module__dot--red {
+  background: var(--ufo-danger);
+}
+
+.todo-module__dot--yellow {
+  background: var(--ufo-status-yellow);
+}
+
+.todo-module__title {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(9px, 26cqh, calc(12px * var(--floating-cell-scale, 1)));
+  line-height: 1.1;
+}
+
+/* 紧凑截止标注只在贴角（宽高都宽裕）时出现：横条 / 竖条里那点宽度要留给标题 */
+.todo-module__due {
+  display: none;
+  flex: 0 0 auto;
+  color: var(--ufo-muted);
+  font-size: clamp(8px, 20cqh, calc(10px * var(--floating-cell-scale, 1)));
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.todo-module--corner .todo-module__due {
+  display: inline-block;
+}
+
+.todo-module__due--red {
+  color: var(--ufo-danger);
+  font-weight: 600;
+}
+
+.todo-module__due--yellow {
+  color: var(--ufo-status-yellow);
+}
+
+/* 未配置 Token / 数据未到：中性图标占位 */
+.todo-module__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ufo-muted);
+}
+
+.todo-module__empty .todo-module__icon {
+  color: var(--ufo-muted);
+}
+
+/*
+ * ② 矮槽位（放不下两行任务：贴角只分到 2 格时约 45px、横条只有一格高约 40px）：
+ * 只留第一条 —— 徽标 + 两行 ≈ 44px，矮槽位里第二行会被 `.floating-module-slot` 的
+ * `overflow: hidden` 切掉半行字。
+ * 判据取「槽位高度」而不是形态：同一形态下窗口格子数一变，槽位高度能差一倍。
+ * ⚠️ 重复类名压过形态专属规则。
+ */
+@container floating-slot (max-height: 59px) {
+  .todo-module.todo-module .todo-module__item:nth-child(n + 2) {
+    display: none;
+  }
+}
+
+/*
+ * ① 窄槽位（竖条 / 未贴边方形，宽 ≈ 1 格）：横向是限制轴。
+ * 徽标改竖排（图标压在计数上方，宽度只剩「较宽的那个」），尺寸按 cqw 取。
+ */
+@container floating-slot (max-width: 60px) {
+  .todo-module.todo-module .todo-module__badge {
+    flex-direction: column;
+    gap: clamp(1px, 1.5cqh, calc(3px * var(--floating-cell-scale, 1)));
+  }
+
+  .todo-module.todo-module .todo-module__icon {
+    width: clamp(10px, 40cqw, calc(20px * var(--floating-cell-scale, 1)));
+    height: clamp(10px, 40cqw, calc(20px * var(--floating-cell-scale, 1)));
+  }
+
+  .todo-module.todo-module .todo-module__count {
+    font-size: clamp(10px, 38cqw, calc(20px * var(--floating-cell-scale, 1)));
+  }
+}
+
+/*
+ * ③ 扁平槽位（高 ≤ 33px：未贴边方形被同级组件切一刀、横条只分到半格）：
+ * 连一行任务都摆不下，退化成「徽标一行居中」。
+ * ⚠️ 重复类名压过形态专属规则。
+ */
+@container floating-slot (max-height: 33px) {
+  .todo-module.todo-module {
+    flex-direction: row;
+    gap: 5cqw;
+  }
+
+  .todo-module.todo-module .todo-module__list {
+    display: none;
+  }
+}
+
+/* ③ 又扁又窄：徽标回到横排，尺寸再收一档（这里的限制轴同样是宽度） */
+@container floating-slot (max-height: 33px) and (max-width: 60px) {
+  .todo-module.todo-module .todo-module__badge {
+    flex-direction: row;
+    gap: clamp(1px, 1.5cqh, calc(2px * var(--floating-cell-scale, 1)));
+  }
+
+  .todo-module.todo-module .todo-module__icon {
+    width: clamp(9px, 34cqw, calc(20px * var(--floating-cell-scale, 1)));
+    height: clamp(9px, 34cqw, calc(20px * var(--floating-cell-scale, 1)));
+  }
+
+  .todo-module.todo-module .todo-module__count {
+    font-size: clamp(9px, 26cqw, calc(18px * var(--floating-cell-scale, 1)));
+  }
+}
+
+/* ---- 信息卡（tooltip）：逐条未完成任务 ---- */
+
+.todo-tooltip__list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.todo-tooltip__task {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--ufo-border);
+}
+
+.todo-tooltip__task:last-child {
+  border-bottom: none;
+}
+
+.todo-tooltip__dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--ufo-muted);
+}
+
+.todo-tooltip__dot--red {
+  background: var(--ufo-danger);
+}
+
+.todo-tooltip__dot--yellow {
+  background: var(--ufo-status-yellow);
+}
+
+.todo-tooltip__title {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ufo-text);
+  font-size: 12px;
+}
+
+.todo-tooltip__meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--ufo-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.todo-tooltip__priority {
+  color: var(--ufo-accent);
+}
+
+.todo-tooltip__due--red {
+  color: var(--ufo-danger);
+  font-weight: 600;
+}
+
+.todo-tooltip__due--yellow {
+  color: var(--ufo-status-yellow);
+}
+
+/* ---- 主窗设置页的「未完成预览」卡片 ----
+   这是主窗卡片，不参与悬浮窗格子缩放（`floating-module-scaling.spec` 只扫模块样式里的
+   clamp 上限），所以这里直接用视口高度 + 最小高，不套 cq 单位。 */
+
+.todo-preview-card {
+  height: 44vh;
+  min-height: 300px;
+}
+
+.todo-preview__list {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 5px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.todo-preview__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--ufo-border);
+  border-radius: 8px;
+  background: var(--ufo-surface-2);
+}
+
+.todo-preview__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--ufo-muted);
+}
+
+.todo-preview__dot--red {
+  background: var(--ufo-danger);
+}
+
+.todo-preview__dot--yellow {
+  background: var(--ufo-status-yellow);
+}
+
+.todo-preview__title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ufo-text);
+  font-size: 12.5px;
+}
+
+.todo-preview__meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--ufo-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.todo-preview__meta--red {
+  color: var(--ufo-danger);
+  font-weight: 600;
+}
+
+.todo-preview__meta--yellow {
+  color: var(--ufo-status-yellow);
+}
+
+.todo-preview__priority {
+  color: var(--ufo-accent);
+}
+
+.todo-preview__scope {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ufo-muted);
+  font-size: 11px;
+}
+
+.todo-preview__empty {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 96px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--ufo-muted);
+  text-align: center;
+}

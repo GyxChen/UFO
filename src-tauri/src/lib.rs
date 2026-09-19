@@ -46,6 +46,10 @@ use modules::weather::{
     delete_weather_secret, get_weather_secret_status, get_weather_snapshot, search_weather_city,
     set_weather_secret, test_weather_connection, WeatherState,
 };
+use modules::todo::{
+    delete_todo_token, get_todo_secret_status, get_todo_snapshot, list_todo_projects,
+    set_todo_token, test_todo_connection, TodoState,
+};
 use mouse::is_left_mouse_pressed;
 
 const MAIN_WINDOW: &str = "main";
@@ -119,6 +123,7 @@ pub fn run() {
             app.manage(module_state);
             app.manage(flow_state.clone());
             app.manage(WeatherState::default());
+            app.manage(TodoState::default());
             spawn_monitor(app.handle().clone(), status_state);
             spawn_worker(app.handle().clone(), flow_state, flow_rx);
 
@@ -237,6 +242,12 @@ pub fn run() {
             set_weather_secret,
             delete_weather_secret,
             get_weather_secret_status,
+            get_todo_snapshot,
+            test_todo_connection,
+            list_todo_projects,
+            set_todo_token,
+            delete_todo_token,
+            get_todo_secret_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
