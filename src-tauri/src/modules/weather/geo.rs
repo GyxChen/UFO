@@ -1,5 +1,5 @@
 use crate::modules::weather::{
-    client::WeatherHttpClient,
+    client::{build_url, WeatherHttpClient},
     models::{CityLookupItem, IpApiResponse, QWeatherCityLookupResponse},
 };
 
@@ -36,8 +36,11 @@ pub fn lookup_city(
         return Err("和风天气 API Key 为空，请先在主窗口设置中配置".to_string());
     }
 
-    let url = format!(
-        "{geo_host}/v2/city/lookup?location={location_query}&key={api_key}"
+    // 关键字与 Key 都要编码：中文城市名不编码会被网关判成 400。
+    let url = build_url(
+        geo_host,
+        "/v2/city/lookup",
+        &[("location", location_query), ("key", api_key)],
     );
 
     let body = WeatherHttpClient::get(&url, 8000)

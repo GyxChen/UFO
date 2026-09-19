@@ -80,8 +80,6 @@ pub struct QWeatherNowData {
     #[serde(default)]
     pub humidity: String,
     #[serde(default)]
-    pub precip: String,
-    #[serde(default)]
     pub pressure: String,
     #[serde(default)]
     pub vis: String,
@@ -130,8 +128,6 @@ pub struct IpApiResponse {
     pub status: String,
     #[serde(default)]
     pub city: String,
-    #[serde(default)]
-    pub region_name: Option<String>,
     pub lat: Option<f64>,
     pub lon: Option<f64>,
 }

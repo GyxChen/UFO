@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::floating::module_config::ModuleState;
 use crate::modules::weather::{
     cache::WeatherCache,
-    client::WeatherHttpClient,
+    client::{build_url, WeatherHttpClient},
     geo::{auto_ip_location, lookup_city},
     models::{
         CityLookupItem, HourlyWeatherItem, QWeatherHourlyResponse, QWeatherNowResponse,
@@ -83,11 +83,11 @@ fn fetch_weather_internal(
     };
 
     // 2. 请求实时天气
-    let now_url = format!(
-        "{}/v7/weather/now?location={}&key={}",
+    // location / key 一律编码后再拼 URL（见 `build_url`）。
+    let now_url = build_url(
         settings.weather_host(),
-        location_id,
-        api_key
+        "/v7/weather/now",
+        &[("location", location_id.as_str()), ("key", api_key)],
     );
     let now_body = WeatherHttpClient::get(&now_url, 8000)
         .map_err(|e| format!("获取实时天气失败: {e}"))?;
@@ -102,11 +102,10 @@ fn fetch_weather_internal(
         .ok_or_else(|| "实时天气数据缺失".to_string())?;
 
     // 3. 请求 24 小时预报
-    let hourly_url = format!(
-        "{}/v7/weather/24h?location={}&key={}",
+    let hourly_url = build_url(
         settings.weather_host(),
-        location_id,
-        api_key
+        "/v7/weather/24h",
+        &[("location", location_id.as_str()), ("key", api_key)],
     );
     let mut hourly_items = Vec::new();
     if let Ok(hourly_body) = WeatherHttpClient::get(&hourly_url, 8000) {
@@ -249,23 +248,31 @@ pub async fn test_weather_connection(
 }
 
 /// Tauri Command: 设置和风 API Key 到 OS 凭据管理器（仅 main 窗口有权调用）
+///
+/// 凭据一旦变化，缓存里的快照就是「用旧 Key 抓的」，必须就地作废：
+/// 否则其它窗口在缓存过期前还会读到旧数据（改密钥后表现为「改了没生效」）。
 #[tauri::command]
-pub async fn set_weather_secret(api_key: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        set_api_key(&api_key)
-    })
-    .await
-    .map_err(|e| format!("保存密钥任务失败: {e}"))?
+pub async fn set_weather_secret(
+    weather_state: State<'_, WeatherState>,
+    api_key: String,
+) -> Result<(), String> {
+    let cache = weather_state.cache.clone();
+    tauri::async_runtime::spawn_blocking(move || set_api_key(&api_key))
+        .await
+        .map_err(|e| format!("保存密钥任务失败: {e}"))??;
+    cache.clear();
+    Ok(())
 }
 
 /// Tauri Command: 从 OS 凭据管理器删除和风 API Key（仅 main 窗口有权调用）
 #[tauri::command]
-pub async fn delete_weather_secret() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        delete_api_key()
-    })
-    .await
-    .map_err(|e| format!("删除密钥任务失败: {e}"))?
+pub async fn delete_weather_secret(weather_state: State<'_, WeatherState>) -> Result<(), String> {
+    let cache = weather_state.cache.clone();
+    tauri::async_runtime::spawn_blocking(delete_api_key)
+        .await
+        .map_err(|e| format!("删除密钥任务失败: {e}"))??;
+    cache.clear();
+    Ok(())
 }
 
 /// Tauri Command: 查询当前是否已存储 API Key（仅返回布尔值，不回显明文）

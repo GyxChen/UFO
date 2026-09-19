@@ -41,6 +41,7 @@ use modules::agent_status::{
         set_tooltip_interactive, spawn_monitor, StatusState,
     },
 };
+use modules::weather::settings::adopt_legacy_fields as adopt_weather_legacy_fields;
 use modules::weather::{
     delete_weather_secret, get_weather_secret_status, get_weather_snapshot, search_weather_city,
     set_weather_secret, test_weather_connection, WeatherState,
@@ -81,9 +82,12 @@ pub fn run() {
             let app_data = app.path().app_data_dir()?;
             let status_dir = app_data.join("status");
             let module_config_path = app_data.join("floating-modules.json");
-            // 组件配置：外壳只负责存盘 + 转发，旧版扁平字段由各组件自己认领
-            // （见 modules/agent_status/settings.rs）。
-            let module_state = ModuleState::load(module_config_path, &[adopt_legacy_fields]);
+            // 组件配置：外壳只负责存盘 + 转发，旧版字段由各组件自己认领
+            // （见 modules/agent_status/settings.rs 与 modules/weather/settings.rs）。
+            let module_state = ModuleState::load(
+                module_config_path,
+                &[adopt_legacy_fields, adopt_weather_legacy_fields],
+            );
             // 组件配置联动：外壳不认识任何组件字段，各自在组合根登记「配置变了要做什么」。
             module_state.on_config_change(config_hook());
             // 已落盘的组件配置在启动时先取一次（此刻 StatusState 还没建好，钩子会空转）。

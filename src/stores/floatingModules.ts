@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
 import { ABS_MAX_CELLS, ABS_MIN_CELLS, clampCellPx } from '@/lib/floating-layout'
+import { retryOnStartupRace } from '@/lib/startup-retry'
 import {
   applyModuleOrder,
   configCellPx,
@@ -21,6 +22,18 @@ import {
 const MODULE_CONFIG_EVENT = 'floating-module-config'
 let stopListener: UnlistenFn | undefined
 let stopRuntimeListener: UnlistenFn | undefined
+
+/**
+ * 读一次后端配置。
+ *
+ * 首帧 IPC 可能早于后端 `setup` 里的 `.manage()`（实测偶发
+ * `state not managed for field state on command get_floating_module_config`），
+ * 一次失败就退化成兜底配置的话整窗会「一个模块都没有」，所以走统一的重试助手；
+ * 重试用尽仍失败才认输（由 `start()` 落到兜底配置 + degraded）。
+ */
+async function fetchModuleConfig(): Promise<FloatingModuleConfig> {
+  return retryOnStartupRace(() => invoke<FloatingModuleConfig>('get_floating_module_config'))
+}
 
 const fallbackConfig: FloatingModuleConfig = {
   schema_version: 1,
@@ -119,7 +132,7 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
         stopListener = await listen<FloatingModuleConfig>(MODULE_CONFIG_EVENT, event => {
           this.applyConfig(event.payload)
         })
-        this.applyConfig(await invoke<FloatingModuleConfig>('get_floating_module_config'))
+        this.applyConfig(await fetchModuleConfig())
       } catch (error) {
         this.config = fallbackConfig
         this.connection = 'degraded'

@@ -1,10 +1,25 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { FloatingHoverTarget } from '@/lib/floating-module-context'
 import TooltipRow from '@/components/floating/tooltip/TooltipRow.vue'
 import TooltipSection from '@/components/floating/tooltip/TooltipSection.vue'
 import { resolveWeatherIcon } from './lib/weather-icons'
 import { formatWeatherUpdatedTime, formatWind } from './lib/weather-format'
 import { useWeatherStore } from './stores/weather'
+
+/**
+ * 和风天气的悬停信息卡。
+ *
+ * 提示窗按注册表挂载本组件并透传悬停目标（`target`）：声明成 prop 才是「组件自己的契约」，
+ * 否则会被当成多余的透传属性 —— fragment 根节点接不住它，控制台每次悬停都报一次警告。
+ * 内容组件用多根节点渲染（`.tooltip-shell` 直接是行级 flex 容器），所以关掉属性透传。
+ */
+defineOptions({ inheritAttrs: false })
+
+defineProps<{
+  /** 悬停目标（哪个模块的哪个对象）；本卡是整块聚合信息，只用它满足提示窗契约。 */
+  target: FloatingHoverTarget
+}>()
 
 const weatherStore = useWeatherStore()
 const snapshot = computed(() => weatherStore.snapshot)

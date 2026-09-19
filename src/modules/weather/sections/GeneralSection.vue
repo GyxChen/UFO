@@ -201,12 +201,13 @@ const locationModeOptions = [
       <!-- 遵循规范第 5.3 & 9.4 节：密钥管理专属交互 -->
       <SettingsField
         label="API Key"
+        label-for="weather-api-key"
         :hint="weatherStore.hasSavedKey ? '当前状态：已保存至凭据管理器。输入新值点击保存可替换。' : '当前状态：未保存。请输入和风天气控制台生成的 Key。'"
-        layout="stacked"
       >
         <div class="space-y-2">
           <BaseInput
             v-model="apiKeyInput"
+            id="weather-api-key"
             placeholder="输入新 Key 进行保存或测试..."
             @keydown.enter="handleSaveKey"
           />
@@ -235,12 +236,13 @@ const locationModeOptions = [
 
       <SettingsField
         label="服务类型"
+        label-id="weather-host-type-label"
         hint="免费个人开发者请选开发版"
-        layout="stacked"
       >
         <BaseSelect
           v-model="hostTypeInput"
           :options="hostOptions"
+          aria-labelledby="weather-host-type-label"
           @update:model-value="saveCommonSettings"
         />
       </SettingsField>
@@ -248,11 +250,12 @@ const locationModeOptions = [
       <SettingsField
         v-if="hostTypeInput === 'custom'"
         label="自定义 Host 前缀"
+        label-for="weather-custom-host"
         hint="如: https://api.your-proxy.com"
-        layout="stacked"
       >
         <BaseInput
           v-model="customHostInput"
+          id="weather-custom-host"
           placeholder="https://..."
           @blur="saveCommonSettings"
           @keydown.enter="saveCommonSettings"
@@ -261,12 +264,14 @@ const locationModeOptions = [
 
       <SettingsField
         label="自动刷新周期（分钟）"
+        label-for="weather-refresh-interval"
         hint="数据拉取间隔，范围 10~60 分钟（防额度耗尽）"
       >
         <div class="flex items-center gap-2">
           <div class="w-24">
             <BaseInput
               v-model="refreshIntervalInput"
+              id="weather-refresh-interval"
               type="number"
               :min="10"
               :max="60"
@@ -304,12 +309,14 @@ const locationModeOptions = [
 
       <SettingsField
         label="定位模式"
+        label-id="weather-location-mode-label"
         hint="推荐网络环境固定时开启自动定位"
-        layout="stacked"
       >
         <BaseSegmentedControl
           v-model="locationModeInput"
+          name="weather-location-mode"
           :options="locationModeOptions"
+          aria-labelledby="weather-location-mode-label"
           @update:model-value="saveCommonSettings"
         />
       </SettingsField>
@@ -318,12 +325,13 @@ const locationModeOptions = [
       <template v-if="locationModeInput === 'manual'">
         <SettingsField
           label="当前指定城市"
+          label-for="weather-city-search"
           :hint="manualLocationNameInput ? `已选中: ${manualLocationNameInput} (ID: ${manualLocationInput})` : '尚未选择城市，请在下方搜索'"
-          layout="stacked"
         >
           <div class="flex gap-2">
             <BaseInput
               v-model="citySearchQuery"
+              id="weather-city-search"
               placeholder="输入城市或区县名，如: 海淀 或 杭州"
               @keydown.enter="handleSearchCity"
             />
