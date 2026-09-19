@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { retryOnStartupRace } from '@/lib/startup-retry'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import {
@@ -46,7 +47,8 @@ export const useAgentStatusStore = defineStore('agent-status', {
       this.started = true
       try {
         stopListener = await listenToAgentStatus((snapshot) => this.applySnapshot(snapshot))
-        this.applySnapshot(await getAgentStatusSnapshot())
+        // 首帧 IPC 可能早于后端 .manage()：重试几次，别让一次竞态退化成「连不上」。
+        this.applySnapshot(await retryOnStartupRace(getAgentStatusSnapshot))
       } catch (error) {
         this.connection = 'degraded'
         console.warn('agent status channel unavailable', error)

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { retryOnStartupRace } from '@/lib/startup-retry'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   emptyFlowSnapshot,
@@ -57,7 +58,8 @@ export const useFlowResultsStore = defineStore('flow-results', {
         stopListener = await listen<FlowSnapshot>(FLOW_RESULTS_EVENT, (event) => {
           if (isFlowSnapshot(event.payload)) this.applySnapshot(event.payload)
         })
-        const initial = await fetchFlowSnapshot()
+        // 首帧 IPC 可能早于后端 .manage()：重试几次，别让一次竞态退化成「没有拓展字段」。
+        const initial = await retryOnStartupRace(fetchFlowSnapshot)
         if (isFlowSnapshot(initial)) this.applySnapshot(initial)
       } catch (error) {
         // 读不到就走空快照：tooltip 不显拓展字段，不影响其它行。
