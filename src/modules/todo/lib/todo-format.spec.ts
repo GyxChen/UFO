@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  countByPriority,
   dueBucket,
   dueTone,
   formatClockTime,
   formatDue,
-  formatDueCompact,
+  formatMonthDay,
   isOverdue,
-  priorityLabel,
+  localDayStartMs,
+  localUtcOffsetMinutes,
+  priorityBucket,
+  priorityGroups,
 } from './todo-format'
 
 /** 参照时刻：本地时间 2026-09-19 10:00（用本地构造，测试不依赖运行机器时区）。 */
@@ -16,13 +20,62 @@ function at(dayOffset: number, hour: number, minute = 0): number {
   return new Date(2026, 8, 19 + dayOffset, hour, minute, 0, 0).getTime()
 }
 
-describe('priorityLabel', () => {
-  it('按滴答的 5 / 3 / 1 取值给出中文标签，其余为空串', () => {
-    expect(priorityLabel(5)).toBe('高')
-    expect(priorityLabel(3)).toBe('中')
-    expect(priorityLabel(1)).toBe('低')
-    expect(priorityLabel(0)).toBe('')
-    expect(priorityLabel(2)).toBe('')
+describe('priorityBucket', () => {
+  it('5 / 3 归高 / 中，1 与 0（无优先级）都归低', () => {
+    expect(priorityBucket(5)).toBe('high')
+    expect(priorityBucket(3)).toBe('medium')
+    expect(priorityBucket(1)).toBe('low')
+    // 「无优先级」必须有归属：界面只给三面小旗，否则这些任务会凭空消失
+    expect(priorityBucket(0)).toBe('low')
+  })
+
+  it('按区间判断：以后滴答补档（4 / 2）也不会掉队', () => {
+    expect(priorityBucket(4)).toBe('medium')
+    expect(priorityBucket(2)).toBe('low')
+    expect(priorityBucket(9)).toBe('high')
+  })
+})
+
+describe('priorityGroups / countByPriority', () => {
+  it('分三档、顺序恒为高 → 中 → 低，标签与颜色成对', () => {
+    const groups = priorityGroups([{ priority: 5 }, { priority: 0 }, { priority: 3 }])
+
+    expect(groups.map(group => group.bucket)).toEqual(['high', 'medium', 'low'])
+    expect(groups.map(group => group.label)).toEqual(['高', '中', '低'])
+    expect(groups.map(group => group.tone)).toEqual(['red', 'yellow', 'blue'])
+    expect(groups.map(group => group.tasks.length)).toEqual([1, 1, 1])
+  })
+
+  it('空档也占位（信息卡骨架不跳）', () => {
+    const groups = priorityGroups([{ priority: 5 }])
+    expect(groups.map(group => group.tasks.length)).toEqual([1, 0, 0])
+  })
+
+  it('三档计数之和 = 任务总数（无优先级不会漏掉）', () => {
+    const tasks = [{ priority: 5 }, { priority: 5 }, { priority: 0 }, { priority: 1 }, { priority: 3 }]
+    const counts = countByPriority(tasks)
+
+    expect(counts).toEqual({ high: 2, medium: 1, low: 2 })
+    expect(counts.high + counts.medium + counts.low).toBe(tasks.length)
+  })
+
+  it('空列表：三档全是 0', () => {
+    expect(countByPriority([])).toEqual({ high: 0, medium: 0, low: 0 })
+    expect(priorityGroups([]).map(group => group.tasks.length)).toEqual([0, 0, 0])
+  })
+})
+
+describe('新建任务用的本机日期换算', () => {
+  it('localDayStartMs 取当地当天零点', () => {
+    expect(localDayStartMs(NOW)).toBe(new Date(2026, 8, 19, 0, 0, 0, 0).getTime())
+  })
+
+  it('localUtcOffsetMinutes 是「本地 = UTC + N」，与 getTimezoneOffset 反号', () => {
+    expect(localUtcOffsetMinutes(NOW)).toBe(-new Date(NOW).getTimezoneOffset())
+  })
+
+  it('formatMonthDay 给出中文月日', () => {
+    expect(formatMonthDay(at(0, 13))).toBe('9月19日')
   })
 })
 
@@ -101,17 +154,6 @@ describe('formatDue', () => {
   it('只到天粒度时不写时分', () => {
     expect(formatDue(at(0, 23), NOW, false)).toBe('今天')
     expect(formatDue(at(3, 0), NOW, false)).toBe('09-22')
-  })
-})
-
-describe('formatDueCompact', () => {
-  it('悬浮窗用的紧凑文案不带时刻', () => {
-    expect(formatDueCompact(at(-1, 23), NOW, true)).toBe('逾期')
-    expect(formatDueCompact(at(0, 9), NOW, true)).toBe('逾期')
-    expect(formatDueCompact(at(0, 23), NOW, true)).toBe('今天')
-    expect(formatDueCompact(at(0, 0), NOW, false)).toBe('今天')
-    expect(formatDueCompact(at(1, 1), NOW, true)).toBe('明天')
-    expect(formatDueCompact(at(9, 1), NOW, true)).toBe('09-28')
   })
 })
 

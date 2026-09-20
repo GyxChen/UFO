@@ -32,6 +32,7 @@
   --color-ufo-status-green: #34d399;
   --color-ufo-status-yellow: #fbbf24;
   --color-ufo-status-red: #f87171;
+  --color-ufo-status-blue: #60a5fa;
   --radius-ufo: 12px;
 }
 
@@ -55,6 +56,7 @@
   --ufo-status-green: #34d399;
   --ufo-status-yellow: #fbbf24;
   --ufo-status-red: #f87171;
+  --ufo-status-blue: #60a5fa;
   --ufo-radius: 12px;
 
   /*
@@ -443,6 +445,10 @@ html.is-tooltip-window #app {
   color: var(--ufo-status-red);
 }
 
+.tooltip-row__value--blue {
+  color: var(--ufo-status-blue);
+}
+
 .tooltip-row__value--muted {
   color: var(--ufo-muted);
 }
@@ -451,6 +457,19 @@ html.is-tooltip-window #app {
   @apply grid w-full max-w-md gap-3 rounded-[var(--ufo-radius)] p-3.5;
   background: var(--ufo-surface);
   border: 1px solid var(--ufo-border);
+}
+
+/*
+ * ⚠️ 卡片是 **grid 容器**（上面那条 `@apply grid` 未分层，压得过 Tailwind 的 `flex` 工具类），
+ * 而 grid 子项的 `min-width` 默认是 `auto` —— 于是卡片里任何 `white-space: nowrap` 的文本都会
+ * 把卡片内部那条轨道顶宽：**内容溢出到卡片外**，而且里面的标题永远等不到省略号
+ * （轨道跟着文本一起长，标题始终"放得下"）。表现为「文字冲出了卡片右边缘」。
+ *
+ * 钉死 `min-width: 0` 之后子项才能被卡片宽度约束，内部的 `text-overflow: ellipsis` 才会生效。
+ * 这里只放开「能不能缩」，不改任何实际宽度，所以对不含长文本的卡片没有任何影响。
+ */
+.ufo-card > * {
+  min-width: 0;
 }
 
 .ufo-card__header {

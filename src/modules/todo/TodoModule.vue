@@ -2,8 +2,9 @@
 import { computed, inject } from 'vue'
 import type { FloatingLayout } from '@/lib/floating-layout'
 import { floatingModuleKey } from '@/lib/floating-module-context'
-import { dueBucket, dueTone, formatDueCompact, isOverdue } from './lib/todo-format'
-import { useTodoStore, type TodoTaskItem } from './stores/todo'
+import { PRIORITY_BUCKETS, countByPriority, priorityBucketLabel, priorityTone } from './lib/todo-format'
+import { useTodoStore } from './stores/todo'
+import flagIcon from '@/assets/flag.svg'
 
 /**
  * 宿主注入的当前贴边形态。
@@ -20,54 +21,65 @@ const moduleApi = inject(floatingModuleKey, null)
 
 const todoStore = useTodoStore()
 
-/** 悬停对象 key：整块待办只对应一份信息卡，用常量即可（外壳只当字符串转发）。 */
+/**
+ * 悬停对象 key：整块待办只对应一份信息卡，用常量即可（外壳只当字符串转发）。
+ */
 const HOVER_KEY = 'todo-list'
 
-/** 悬浮窗里最多预告两条任务：贴角 / 竖条放得下，横条由 CSS 收掉第二条。 */
-const PREVIEW_LIMIT = 2
-
-/** 未完成数展示上限：超过就写 `99+`，避免三位数把窄槽位里的徽标撑破。 */
+/** 计数展示上限：超过就写 `99+`，避免三位数把一格宽的槽位撑破。 */
 const COUNT_DISPLAY_MAX = 99
+
+/**
+ * 三面小旗子的字形（`src/assets/flag.svg`）。
+ *
+ * 图标本身不带颜色：形状以 `mask-image` 用，颜色由 CSS 的 `background-color` 给
+ * （所以一面字形就能出红 / 黄 / 蓝三种旗子，见 `todo.css` 的 `.todo-module__flag`）。
+ * 这里把 URL 声明成自定义属性交给样式表，避免在 CSS 里写资源路径 —— 打包后
+ * 文件名带哈希，只有 `import` 拿得到最终地址。
+ */
+const flagMask = `url("${flagIcon}")`
 
 const snapshot = computed(() => todoStore.snapshot)
 
-/** 徽标里显示的未完成数（超上限写 `99+`）。 */
-const totalLabel = computed(() => {
-  const total = snapshot.value?.total_incomplete ?? 0
-  return total > COUNT_DISPLAY_MAX ? `${COUNT_DISPLAY_MAX}+` : String(total)
-})
+/** 三档未完成数（无优先级归入「低」，三数之和 = 未完成总数）。 */
+const counts = computed(() => countByPriority(snapshot.value?.list ?? []))
 
-/** 悬浮窗里预告的任务（后端已按「截止早 → 优先级高」排好，取前两条即可）。 */
-const previewTasks = computed(() => (snapshot.value?.list ?? []).slice(0, PREVIEW_LIMIT))
-
-/** 逾期条数；> 0 时徽标转危险色，一眼看出「有欠账」。 */
-const overdueCount = computed(() => {
+/**
+ * 悬浮窗的三面小旗子：一档一面，颜色固定为高 = 红 / 中 = 黄 / 低 = 蓝。
+ *
+ * 数据未到时 `count` 是空串（只留灰色旗子）：写 `0` 会让人以为「真的没有任务」，
+ * 而实际只是还没拉到数据 / 还没配 Token。
+ */
+const flags = computed(() => {
   const data = snapshot.value
-  if (!data) return 0
-  return data.list.filter(task => isOverdue(task.due_at_ms, data.updated_at_ms, task.has_time)).length
+  return PRIORITY_BUCKETS.map(bucket => ({
+    bucket,
+    label: priorityBucketLabel(bucket),
+    tone: priorityTone(bucket),
+    count: data ? formatCount(counts.value[bucket]) : '',
+  }))
 })
 
 /**
- * 某条任务在悬浮窗里的紧凑截止文案（不带时刻，宽度可控）。
+ * 无障碍描述：悬浮窗里只有旗子与数字，读屏需要一句话说清三档各多少。
  *
- * @param task 任务
- * @returns 逾期 / 今天 / 明天 / MM-DD；未设置截止时为空串
+ * @returns 如「高 2，中 1，低 3，共 6 个未完成任务」
  */
-function dueText(task: TodoTaskItem): string {
+const ariaLabel = computed(() => {
   const data = snapshot.value
-  if (!data || task.due_at_ms == null) return ''
-  return formatDueCompact(task.due_at_ms, data.updated_at_ms, task.has_time)
-}
+  if (!data) return '滴答待办（等待数据）'
+  const parts = PRIORITY_BUCKETS.map(bucket => `${priorityBucketLabel(bucket)} ${counts.value[bucket]}`)
+  return `${parts.join('，')}，共 ${data.total_incomplete} 个未完成任务`
+})
 
 /**
- * 某条任务的截止语义色（点与文案共用）。
+ * 旗子旁的计数文案。
  *
- * @param task 任务
- * @returns `red`（逾期）/ `yellow`（今天）/ `muted`（其余）
+ * @param value 未完成条数
+ * @returns 条数文本（超过 [`COUNT_DISPLAY_MAX`] 时写 `99+`）
  */
-function dueToneOf(task: TodoTaskItem): string {
-  const data = snapshot.value
-  return dueTone(dueBucket(task.due_at_ms, data?.updated_at_ms ?? Date.now(), task.has_time))
+function formatCount(value: number): string {
+  return value > COUNT_DISPLAY_MAX ? `${COUNT_DISPLAY_MAX}+` : String(value)
 }
 
 /** 指针进入：把「悬停在本模块上」上报给宿主，宿主据此弹出信息卡。 */
@@ -84,80 +96,23 @@ function handlePointerLeave(): void {
 <template>
   <div
     class="todo-module"
-    :class="`todo-module--${props.layoutMode}`"
+    :class="[`todo-module--${props.layoutMode}`, { 'todo-module--empty': !snapshot }]"
     role="region"
-    :aria-label="snapshot ? `${totalLabel} 个未完成任务` : '滴答待办'"
+    :aria-label="ariaLabel"
+    :style="{ '--todo-flag-mask': flagMask }"
     @pointerenter="handlePointerEnter"
     @pointerleave="handlePointerLeave"
   >
-    <template v-if="snapshot">
-      <!-- 徽标：勾选图标 + 未完成数；有逾期任务时整块转危险色 -->
-      <span class="todo-module__badge" :class="{ 'todo-module__badge--alert': overdueCount > 0 }">
-        <svg class="todo-module__icon" viewBox="0 0 24 24" aria-hidden="true">
-          <rect
-            x="3.5"
-            y="3.5"
-            width="17"
-            height="17"
-            rx="4"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          />
-          <path
-            d="m8 12 2.6 2.6L16 9"
-            fill="none"
-            stroke="currentColor"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-          />
-        </svg>
-        <span class="todo-module__count">{{ totalLabel }}</span>
-      </span>
-
-      <!-- 最近两条任务：太小的槽位由 CSS（容器查询）整块收起 -->
-      <ul v-if="previewTasks.length > 0" class="todo-module__list">
-        <li v-for="task in previewTasks" :key="task.id" class="todo-module__item">
-          <span
-            class="todo-module__dot"
-            :class="`todo-module__dot--${dueToneOf(task)}`"
-            aria-hidden="true"
-          />
-          <span class="todo-module__title">{{ task.title }}</span>
-          <span
-            v-if="dueText(task)"
-            class="todo-module__due"
-            :class="`todo-module__due--${dueToneOf(task)}`"
-          >
-            {{ dueText(task) }}
-          </span>
-        </li>
-      </ul>
-    </template>
-
-    <!-- 未配置 Token / 数据未到：只放一个中性图标占位，不显示误导性的 0 -->
-    <span v-else class="todo-module__empty">
-      <svg class="todo-module__icon" viewBox="0 0 24 24" aria-hidden="true">
-        <rect
-          x="3.5"
-          y="3.5"
-          width="17"
-          height="17"
-          rx="4"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        />
-        <path
-          d="m8 12 2.6 2.6L16 9"
-          fill="none"
-          stroke="currentColor"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-        />
-      </svg>
+    <!--
+      三面小旗子 = 高中低三档未完成数。方形 / 四角 / 横条里三组「旗在上、数量在下」横向排开，
+      竖条里换成三行「旗在左、数量在右」上下叠放 —— 轨道方向由 CSS 按形态切换（见 todo.css）。
+      数据未到时数量是空串，但仍占着网格单元 —— 三面灰旗的位置不会跳。
+    -->
+    <span class="todo-module__groups">
+      <template v-for="flag in flags" :key="flag.bucket">
+        <span class="todo-module__flag" :class="`todo-module__flag--${flag.tone}`" aria-hidden="true" />
+        <span class="todo-module__count" aria-hidden="true">{{ flag.count }}</span>
+      </template>
     </span>
   </div>
 </template>

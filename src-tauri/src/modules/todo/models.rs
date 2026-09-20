@@ -8,7 +8,19 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// 一条未完成任务（已完成 / 已放弃的会在 [`build_item`] 里被滤掉）。
+/// 「完成情况」面板里已完成的统计窗口（天）：只展示最近这段时间内完成的任务。
+const COMPLETED_WINDOW_DAYS: i64 = 7;
+
+/// 「完成情况」面板里已完成列表的上限（超出按完成时间淘汰最旧的）。
+const MAX_COMPLETED: usize = 30;
+
+/// 一天有多少毫秒。
+const DAY_MS: i64 = 86_400_000;
+
+/// 滴答 Task 的「已完成」状态码（`status`：-1 已放弃 / 0 未完成 / 2 已完成）。
+const STATUS_COMPLETED: i64 = 2;
+
+/// 一条待办任务（未完成或已完成，视 `completed_at_ms` 而定）。
 ///
 /// 序列化给前端的字段名与前端 `stores/todo.ts` 的 `TodoTaskItem` 一一对应。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -31,15 +43,26 @@ pub struct TodoTaskItem {
     pub items_total: i64,
     /// 子任务已完成条数
     pub items_done: i64,
+    /// 任务完成时刻（epoch 毫秒）；未完成任务为 null
+    pub completed_at_ms: Option<i64>,
+    /// 父任务 id（滴答父子子任务的 `parentId`）；顶层任务为 None。
+    ///
+    /// 滴答的「子目标」是**父子任务**（独立 Task，带 parentId），不是勾选清单的 `items`。
+    pub parent_id: Option<String>,
+    /// 子任务树（嵌套）。后端列表始终是**扁平**的（让三档计数 / 悬浮徽标口径不变），
+    /// 这里只留一个容器：由前端按 `parent_id` 组装树，设置页据此平铺展示子目标结构。
+    pub subtasks: Vec<TodoTaskItem>,
 }
 
-/// 待办快照：未完成列表整体，广播给悬浮窗 / 主窗 / 提示窗。
+/// 待办快照：未完成列表 + 近 7 天完成列表，广播给悬浮窗 / 主窗 / 提示窗。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct TodoSnapshot {
     /// 排好序的未完成任务（见 [`make_snapshot`] 的口径）
     pub list: Vec<TodoTaskItem>,
     /// 未完成任务总数（= `list` 长度；滴答单次最多返回 200 条）
     pub total_incomplete: i64,
+    /// 近 [`COMPLETED_WINDOW_DAYS`] 天完成的任务，按完成时间倒序、截断到 [`MAX_COMPLETED`]
+    pub completed: Vec<TodoTaskItem>,
     /// 快照构建时刻（毫秒）；前端以它为参照算「今天 / 明天 / 已逾期」
     pub updated_at_ms: i64,
 }
@@ -77,21 +100,30 @@ pub struct RawTask {
     /// 是否全天任务（滴答对「只选日期」的任务置 true）
     #[serde(default, rename = "isAllDay")]
     pub is_all_day: bool,
-    /// 状态：-1 已放弃 / 0 未完成 / 2 已完成
+    /// 状态：-1 已放弃 / 0 未完成 / 2 已完成。
+    ///
+    /// ⚠️ 用 `Option` 是为了区分「接口说是未完成」与「接口压根没给这个字段」——
+    /// 两者对「算不算已完成」的结论相反，见 [`is_completed`]。
     #[serde(default)]
-    pub status: i64,
+    pub status: Option<i64>,
     /// 完成时刻；有值即视为已完成
     #[serde(default, rename = "completedTime")]
     pub completed_time: Option<String>,
+    /// 父任务 id（滴答父子子任务的 `parentId`）；顶层任务缺省
+    #[serde(default, rename = "parentId")]
+    pub parent_id: Option<String>,
     /// 子任务（勾选清单）
     #[serde(default)]
     pub items: Vec<RawChecklistItem>,
 }
 
-/// 子任务条目：只关心它有没有被勾掉。
+/// 子目标条目：关心它有没有标题、有没有被勾掉。
 #[derive(Debug, Default, Deserialize)]
 pub struct RawChecklistItem {
-    /// 子任务状态：≥ 2 视为已完成
+    /// 子目标标题（展示用；缺省空串不解析失败）
+    #[serde(default)]
+    pub title: String,
+    /// 子任务状态：≥ 2 视为已勾掉
     #[serde(default)]
     pub status: i64,
 }
@@ -107,14 +139,34 @@ pub struct RawProject {
     pub name: String,
 }
 
-/// 是否不该展示：已完成（状态 ≥ 2，或带完成时刻）或已放弃（状态 < 0）。
+/// 该不该藏起来：已放弃（status < 0）。已完成与未完成都保留，由调用方按
+/// [`is_completed`] 分拣 —— 已完成也是「完成情况」面板要展示的数据。
 fn is_dropped(task: &RawTask) -> bool {
-    let completed = task
-        .completed_time
-        .as_deref()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    completed || task.status < 0 || task.status >= 2
+    task.status.unwrap_or_default() < 0
+}
+
+/// `completedTime` 有没有有效取值（缺失 / 空白 / 字面 `null` 都算没有）。
+fn has_completed_time(task: &RawTask) -> bool {
+    match task.completed_time.as_deref() {
+        Some(value) => {
+            let value = value.trim();
+            !value.is_empty() && !value.eq_ignore_ascii_case("null")
+        }
+        None => false,
+    }
+}
+
+/// 该任务算不算「已完成」。
+///
+/// ⚠️ **以 `status` 为准，不看 `completedTime`**：滴答取消完成后不保证把 completedTime 清掉
+/// （我们自己的「取消完成」就只把 status 置回 0），只看时间戳会让「已取消完成」的任务继续被
+/// 当成已完成 —— 表现就是它在「未完成」组里显示成打勾。
+/// `status` 缺失（老数据 / 某些接口不回这个字段）时才退回「有没有 completedTime」。
+fn is_completed(task: &RawTask) -> bool {
+    match task.status {
+        Some(code) => code >= STATUS_COMPLETED,
+        None => has_completed_time(task),
+    }
 }
 
 /// 天数 → (年, 月, 日)：Howard Hinnant 的 civil_from_days，与 [`days_from_civil`] 互逆。
@@ -232,7 +284,10 @@ fn priority_rank(priority: i64) -> u8 {
     }
 }
 
-/// 把一条原始任务转成展示项；不该展示（已完成 / 已放弃）或标题为空时返回 `None`。
+/// 把一条原始任务转成展示项；该藏起来（已放弃）或标题为空时返回 `None`。
+///
+/// 是否完成的判定走 [`is_completed`]（以 `status` 为准），结果落进 `completed_at_ms`，
+/// 「完成情况」面板要展示它。`subtasks` 照常派生（由调用方决定已完成任务是否保留）。
 fn build_item(task: &RawTask, project_names: &HashMap<String, String>) -> Option<TodoTaskItem> {
     if is_dropped(task) {
         return None;
@@ -267,6 +322,19 @@ fn build_item(task: &RawTask, project_names: &HashMap<String, String>) -> Option
             .iter()
             .filter(|item| item.status >= 2)
             .count() as i64,
+        // 完成时刻**只对已完成的任务**取值：未完成的任务即便带着历史的 completedTime 也是 None
+        completed_at_ms: if is_completed(task) {
+            task.completed_time
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .and_then(parse_due_date_ms)
+        } else {
+            None
+        },
+        parent_id: task.parent_id.clone(),
+        // 后端列表扁平：子任务树由前端按 parent_id 组装，这里只留空容器。
+        subtasks: Vec::new(),
     })
 }
 
@@ -281,21 +349,30 @@ fn fallback_project_name(project_id: &str) -> String {
 
 /// 把原始任务数组组装成快照。
 ///
-/// 排序口径（都按绝对时间，不依赖时区）：
+/// 未完成排序口径（都按绝对时间，不依赖时区）：
 /// 1. 有截止时间的在前，且按截止时间从早到晚 —— 逾期最久的自然排在最上面；
 /// 2. 同一天里优先级高的在前；
 /// 3. 再同则按标题，保证顺序稳定（同样的数据每次渲染顺序一致，列表不会自己跳）。
 ///
-/// @param tasks 滴答返回的原始任务
+/// 已完成口径：只留近 [`COMPLETED_WINDOW_DAYS`] 天内完成（**客户端后置过滤**，对厂商
+/// `fromCompletedTime` 参数不设依赖），按完成时间**倒序**（最新完成在最上），截断到
+/// [`MAX_COMPLETED`]。已完成任务保持**扁平**（不挂子目标树）。
+///
+/// @param open 未完成任务（`/task/filter` status=0）
+/// @param completed 已完成任务（`/task/filter` status=2）
 /// @param project_names 清单 id → 清单名（拿不到就退化成「收件箱」/「清单」）
 /// @param now_ms 快照构建时刻（毫秒）
 pub fn make_snapshot(
-    tasks: &[RawTask],
+    open: &[RawTask],
+    completed: &[RawTask],
     project_names: &HashMap<String, String>,
     now_ms: i64,
 ) -> TodoSnapshot {
-    let mut list: Vec<TodoTaskItem> = tasks
+    let mut list: Vec<TodoTaskItem> = open
         .iter()
+        // 兜底：接口万一没按 status 过滤（或把完成态混进了未完成列表），这里再筛一遍 ——
+        // 「未完成」组里绝不能出现已完成的任务（悬浮窗三档计数也跟着这个口径走）。
+        .filter(|task| !is_completed(task))
         .filter_map(|task| build_item(task, project_names))
         .collect();
 
@@ -311,9 +388,19 @@ pub fn make_snapshot(
             .then_with(|| left.title.cmp(&right.title))
     });
 
+    let window_start = now_ms - COMPLETED_WINDOW_DAYS * DAY_MS;
+    let mut completed_items: Vec<TodoTaskItem> = completed
+        .iter()
+        .filter_map(|task| build_item(task, project_names))
+        .filter(|item| item.completed_at_ms.map(|ms| ms >= window_start).unwrap_or(false))
+        .collect();
+    completed_items.sort_by(|left, right| right.completed_at_ms.cmp(&left.completed_at_ms));
+    completed_items.truncate(MAX_COMPLETED);
+
     TodoSnapshot {
         total_incomplete: list.len() as i64,
         list,
+        completed: completed_items,
         updated_at_ms: now_ms,
     }
 }
@@ -322,15 +409,34 @@ pub fn make_snapshot(
 ///
 /// 只在 `task/undone` 兜底查询里用到（那个接口的起止时间是必填）。
 pub fn format_utc_datetime(ms: i64) -> String {
-    let days = ms.div_euclid(86_400_000);
-    let ms_of_day = ms.rem_euclid(86_400_000);
+    format_offset_datetime(ms, 0)
+}
+
+/// 把 epoch 毫秒按「相对 UTC 的分钟偏移」渲染成滴答接口要的本地时间串。
+///
+/// 新建任务用：滴答的 `dueDate` 要带时区偏移（如 `2026-09-20T00:00:00+0800`），而
+/// 后端拿不到（也不该猜）用户时区 —— 前端把「本机今天零点」的毫秒与当时算出的偏移
+/// 一起传进来，这里只做「按给定偏移渲染」这一件事。
+///
+/// @param ms epoch 毫秒（绝对时刻）
+/// @param offset_minutes 本地相对 UTC 的分钟偏移（东八区 = +480）
+/// @returns `yyyy-MM-ddTHH:mm:ss±HHMM`
+pub fn format_offset_datetime(ms: i64, offset_minutes: i64) -> String {
+    // 先平移成「当地墙上时间」，再按 UTC 那套算法拆年月日时分秒。
+    let shifted = ms + offset_minutes * 60_000;
+    let days = shifted.div_euclid(86_400_000);
+    let ms_of_day = shifted.rem_euclid(86_400_000);
     let (year, month, day) = civil_from_days(days);
     let seconds = ms_of_day / 1_000;
+    let sign = if offset_minutes < 0 { '-' } else { '+' };
+    let abs_minutes = offset_minutes.abs();
     format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}+0000",
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}{sign}{:02}{:02}",
         seconds / 3600,
         (seconds % 3600) / 60,
-        seconds % 60
+        seconds % 60,
+        abs_minutes / 60,
+        abs_minutes % 60
     )
 }
 
@@ -348,6 +454,14 @@ mod tests {
             due_date: due.map(str::to_string),
             ..RawTask::default()
         }
+    }
+
+    /// 造一条「在给定时刻完成」的原始任务（`completed_time` 用可往返的 UTC 串）。
+    fn completed_at(title: &str, at_ms: i64) -> RawTask {
+        let mut raw = task(title, 0, None);
+        raw.status = Some(STATUS_COMPLETED);
+        raw.completed_time = Some(format_utc_datetime(at_ms));
+        raw
     }
 
     fn names() -> HashMap<String, String> {
@@ -393,21 +507,107 @@ mod tests {
     }
 
     #[test]
-    fn drops_completed_abandoned_and_untitled_tasks() {
-        let mut completed = task("已完成", 5, None);
-        completed.status = 2;
+    fn drops_abandoned_and_untitled_from_the_open_list() {
         let mut abandoned = task("已放弃", 5, None);
-        abandoned.status = -1;
-        let mut completed_by_time = task("有完成时刻", 5, None);
-        completed_by_time.completed_time = Some("2026-09-19T10:00:00+0800".to_string());
+        abandoned.status = Some(-1);
         let untitled = task("   ", 0, None);
 
-        let snapshot = make_snapshot(
-            &[completed, abandoned, completed_by_time, untitled],
-            &names(),
-            0,
-        );
+        let snapshot = make_snapshot(&[abandoned, untitled], &[], &names(), 0);
         assert_eq!(snapshot.total_incomplete, 0);
+        assert!(snapshot.completed.is_empty());
+    }
+
+    #[test]
+    fn a_stale_completed_time_does_not_mark_an_open_task_done() {
+        // 滴答取消完成后不保证清掉 completedTime（我们自己的「取消完成」就只把 status 置回 0）：
+        // 只看时间戳的话，这条任务会在「未完成」组里显示成打勾
+        let done_ms = parse_due_date_ms("2026-09-19T10:00:00+0800").unwrap();
+        let mut reopened = task("取消完成过的", 0, None);
+        reopened.status = Some(0);
+        reopened.completed_time = Some(format_utc_datetime(done_ms));
+
+        let snapshot = make_snapshot(&[reopened], &[], &names(), done_ms + DAY_MS);
+
+        assert_eq!(snapshot.list.len(), 1, "未完成列表要留着它");
+        assert_eq!(snapshot.list[0].completed_at_ms, None, "它不该被当成已完成");
+        assert!(snapshot.completed.is_empty());
+    }
+
+    #[test]
+    fn completed_tasks_do_not_leak_into_the_open_list() {
+        // 接口万一没按 status 过滤，未完成列表里也不许出现已完成的任务
+        let done_ms = parse_due_date_ms("2026-09-19T10:00:00+0800").unwrap();
+        let leaked = completed_at("混进来的已完成", done_ms);
+
+        let snapshot = make_snapshot(&[leaked], &[], &names(), done_ms + DAY_MS);
+
+        assert_eq!(snapshot.total_incomplete, 0);
+        assert!(snapshot.list.is_empty());
+    }
+
+    #[test]
+    fn falls_back_to_completed_time_when_status_is_absent() {
+        // 老数据 / 某些接口不回 status：这时才退回「有没有 completedTime」
+        let done_ms = parse_due_date_ms("2026-09-19T10:00:00+0800").unwrap();
+        let mut raw = task("没有 status 的已完成", 0, None);
+        raw.completed_time = Some(format_utc_datetime(done_ms));
+
+        let snapshot = make_snapshot(&[], &[raw], &names(), done_ms + DAY_MS);
+
+        assert_eq!(snapshot.completed.len(), 1);
+        assert_eq!(snapshot.completed[0].completed_at_ms, Some(done_ms));
+    }
+
+    #[test]
+    fn keeps_recently_completed_tasks_in_the_completed_list() {
+        let done_ms = parse_due_date_ms("2026-09-19T10:00:00+0800").unwrap();
+        let snapshot = make_snapshot(&[], &[completed_at("已完成", done_ms)], &names(), done_ms + DAY_MS);
+        assert_eq!(snapshot.completed.len(), 1);
+        assert_eq!(snapshot.completed[0].title, "已完成");
+        assert_eq!(snapshot.completed[0].completed_at_ms, Some(done_ms));
+        assert_eq!(snapshot.total_incomplete, 0);
+    }
+
+    #[test]
+    fn completed_list_is_newest_first_within_window_and_filters_stale() {
+        let now = parse_due_date_ms("2026-09-19T00:00:00+0800").unwrap();
+        let one = completed_at("N1", now - 1 * DAY_MS);
+        let three = completed_at("N3", now - 3 * DAY_MS);
+        let two = completed_at("N2", now - 2 * DAY_MS);
+        // 8 天前完成：超出 7 天窗口，不该出现在「完成情况」里
+        let stale = completed_at("老", now - 8 * DAY_MS);
+
+        let snapshot = make_snapshot(&[], &[one, three, two, stale], &names(), now);
+        let titles: Vec<&str> = snapshot.completed.iter().map(|item| item.title.as_str()).collect();
+        assert_eq!(titles, vec!["N1", "N2", "N3"]);
+    }
+
+    #[test]
+    fn completed_list_is_capped_at_max_completed() {
+        let now = parse_due_date_ms("2026-09-19T00:00:00+0800").unwrap();
+        let hour_ms = DAY_MS / 24;
+        let list = (0..MAX_COMPLETED as i64 + 5)
+            .map(|i| completed_at(&format!("t{i}"), now - i * hour_ms))
+            .collect::<Vec<RawTask>>();
+
+        let snapshot = make_snapshot(&[], &list, &names(), now);
+        assert_eq!(snapshot.completed.len(), MAX_COMPLETED);
+    }
+
+    #[test]
+    fn completed_tasks_carry_no_subtask_detail() {
+        let done_ms = parse_due_date_ms("2026-09-19T10:00:00+0800").unwrap();
+        let mut done = task("带子目标", 0, None);
+        done.completed_time = Some(format_utc_datetime(done_ms));
+        done.items = vec![
+            RawChecklistItem { title: "s1".to_string(), status: 2 },
+            RawChecklistItem { title: "s2".to_string(), status: 0 },
+        ];
+
+        let snapshot = make_snapshot(&[], &[done], &names(), done_ms + DAY_MS);
+        assert_eq!(snapshot.completed.len(), 1);
+        assert!(snapshot.completed[0].subtasks.is_empty());
+        assert_eq!(snapshot.completed[0].items_total, 2);
     }
 
     #[test]
@@ -421,7 +621,7 @@ mod tests {
             task("明天-中", 3, Some("2026-09-20T09:00:00.000+0800")),
         ];
 
-        let snapshot = make_snapshot(&tasks, &names(), 0);
+        let snapshot = make_snapshot(&tasks, &[], &names(), 0);
         let titles: Vec<&str> = snapshot.list.iter().map(|item| item.title.as_str()).collect();
         assert_eq!(
             titles,
@@ -430,20 +630,26 @@ mod tests {
     }
 
     #[test]
-    fn carries_project_name_and_checklist_progress() {
+    fn carries_project_name_checklist_and_parent_id() {
         let mut item = task("写周报", 3, Some("2026-09-19T09:00:00.000+0800"));
         item.items = vec![
-            RawChecklistItem { status: 0 },
-            RawChecklistItem { status: 2 },
-            RawChecklistItem { status: 3 },
+            RawChecklistItem { title: "提纲".to_string(), status: 0 },
+            RawChecklistItem { title: "成稿".to_string(), status: 2 },
         ];
+        // 父子子任务：parentId 指向父任务
+        item.parent_id = Some("parent-1".to_string());
 
-        let snapshot = make_snapshot(&[item], &names(), 1_700_000_000_000);
+        let snapshot = make_snapshot(&[item], &[], &names(), 1_700_000_000_000);
         let first = &snapshot.list[0];
         assert_eq!(first.project_name, "工作");
-        assert_eq!(first.items_total, 3);
-        assert_eq!(first.items_done, 2);
+        assert_eq!(first.items_total, 2);
+        assert_eq!(first.items_done, 1);
         assert!(first.has_time);
+        assert_eq!(first.completed_at_ms, None);
+        // 父子子任务的 parentId 透传给前端（前端据此组装子任务树）。
+        assert_eq!(first.parent_id.as_deref(), Some("parent-1"));
+        // 后端列表是扁平的；子任务树由前端按 parent_id 组装。
+        assert!(first.subtasks.is_empty());
         assert_eq!(snapshot.updated_at_ms, 1_700_000_000_000);
     }
 
@@ -454,10 +660,36 @@ mod tests {
         let mut orphan = task("没名字的清单", 0, None);
         orphan.project_id = "ghost".to_string();
 
-        let snapshot = make_snapshot(&[inbox_task, orphan], &HashMap::new(), 0);
+        let snapshot = make_snapshot(&[inbox_task, orphan], &[], &HashMap::new(), 0);
         let names: Vec<&str> = snapshot.list.iter().map(|item| item.project_name.as_str()).collect();
         assert!(names.contains(&"收件箱"));
         assert!(names.contains(&"清单"));
+    }
+
+    #[test]
+    fn formats_local_datetime_with_the_given_offset() {
+        // 东八区的「9 月 20 日零点」= 2026-09-19T16:00Z（前端传进来的就是这个绝对时刻）
+        let local_midnight = days_from_civil(2026, 9, 20) * 86_400_000 - 480 * 60_000;
+        assert_eq!(
+            format_offset_datetime(local_midnight, 480),
+            "2026-09-20T00:00:00+0800"
+        );
+        // 往返一致：带偏移的日期串解析回来，就是那个绝对时刻
+        assert_eq!(
+            parse_due_date_ms(&format_offset_datetime(local_midnight, 480)),
+            Some(local_midnight)
+        );
+    }
+
+    #[test]
+    fn offset_datetime_handles_negative_offsets_and_rounds_offset_down() {
+        // UTC 零点在西五区是「前一天 19:00」
+        assert_eq!(format_offset_datetime(0, -300), "1969-12-31T19:00:00-0500");
+        // 偏移不是整小时：+05:30
+        assert_eq!(
+            format_offset_datetime(days_from_civil(2026, 9, 20) * 86_400_000, 330),
+            "2026-09-20T05:30:00+0530"
+        );
     }
 
     #[test]

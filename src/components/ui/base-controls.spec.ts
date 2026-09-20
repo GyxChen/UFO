@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import BaseButton from './BaseButton.vue'
 import BaseInput from './BaseInput.vue'
+import BaseLoadingOverlay from './BaseLoadingOverlay.vue'
 import BaseSegmentedControl from './BaseSegmentedControl.vue'
 import BaseSelect from './BaseSelect.vue'
 import BaseSlider from './BaseSlider.vue'
@@ -44,6 +45,26 @@ describe('BaseInput', () => {
     await wrapper.find('input').setValue('https://api.example.com')
 
     expect(wrapper.emitted('update:modelValue')).toEqual([['https://api.example.com']])
+  })
+
+  it('never sets its own margin, so callers can space it', () => {
+    /*
+     * ⚠️ 输入框是组件的**根元素**，根上写 `margin: 0` 会静默吃掉调用方的 `space-y-*`：
+     * 后者编译出来是 `:where(...)`（优先级 0），而组件自己的规则带 `[data-v-…]`（更高）。
+     * 表现为「输入框与下一行按钮贴在一起」。归零交给 Tailwind preflight，间距交给调用方。
+     */
+    const sources = import.meta.glob('./BaseInput.vue', { eager: true, query: '?raw', import: 'default' }) as Record<
+      string,
+      string
+    >
+    const source = Object.values(sources)[0] ?? ''
+    // 只留声明：注释里正解释着「为什么不能写 margin」，不剥掉会误报
+    const rule = source
+      .slice(source.indexOf('.base-input {'), source.indexOf('padding: 0 12px'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+
+    expect(rule, '没读到 .base-input 的样式块').toContain('height: 38px')
+    expect(rule).not.toContain('margin')
   })
 })
 
@@ -138,6 +159,28 @@ describe('BaseSwitch', () => {
     expect(wrapper.emitted('update:modelValue')).toEqual([[true]])
     expect(wrapper.emitted('change')).toHaveLength(1)
     expect(wrapper.find('input').attributes('aria-label')).toBe('启用状态灯')
+  })
+})
+
+describe('BaseLoadingOverlay', () => {
+  it('renders nothing while idle and a status overlay while loading', async () => {
+    const wrapper = mount(BaseLoadingOverlay, { props: { loading: false } })
+    expect(wrapper.find('.base-loading-overlay').exists()).toBe(false)
+
+    await wrapper.setProps({ loading: true, text: '正在加载…' })
+    const overlay = wrapper.get('.base-loading-overlay')
+
+    // role=status 让读屏念出文案；转圈本身只是装饰
+    expect(overlay.attributes('role')).toBe('status')
+    expect(overlay.text()).toContain('正在加载…')
+    expect(wrapper.get('.base-loading-overlay__spinner').attributes('aria-hidden')).toBe('true')
+  })
+
+  it('defaults to the soft tone and drops the label when no text is given', () => {
+    const wrapper = mount(BaseLoadingOverlay, { props: { loading: true } })
+
+    expect(wrapper.get('.base-loading-overlay').classes()).toContain('base-loading-overlay--soft')
+    expect(wrapper.find('.base-loading-overlay__text').exists()).toBe(false)
   })
 })
 

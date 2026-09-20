@@ -21,3 +21,29 @@ commands.allow = [
   "delete_todo_token",
   "get_todo_secret_status"
 ]
+
+[[permission]]
+identifier = "allow-create-todo-task"
+description = "Allows creating a Dida365 task (the settings window's new-task form)."
+commands.allow = ["create_todo_task"]
+
+[[permission]]
+identifier = "allow-complete-todo-task"
+description = "Allows completing a Dida365 task (clicked from the hover card in the tooltip window)."
+commands.allow = ["complete_todo_task"]
+
+[[permission]]
+identifier = "allow-postpone-todo-task"
+description = "Allows pushing Dida365 tasks' due date to today (settings window context menu / postpone all)."
+commands.allow = ["postpone_todo_tasks"]
+
+[[permission]]
+identifier = "allow-delete-todo-task"
+description = "Allows deleting a Dida365 task (settings window context menu)."
+commands.allow = ["delete_todo_task"]
+
+[[permission]]
+identifier = "allow-reopen-todo-task"
+description = "Allows reopening (un-completing) a Dida365 task from the settings window."
+commands.allow = ["reopen_todo_task"]
+

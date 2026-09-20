@@ -46,8 +46,9 @@ use modules::weather::{
     set_weather_secret, test_weather_connection, WeatherState,
 };
 use modules::todo::{
-    delete_todo_token, get_todo_secret_status, get_todo_snapshot, list_todo_projects,
-    set_todo_token, test_todo_connection, TodoState,
+    complete_todo_task, create_todo_task, delete_todo_task, delete_todo_token,
+    get_todo_secret_status, get_todo_snapshot, list_todo_projects, postpone_todo_tasks,
+    reopen_todo_task, set_todo_token, test_todo_connection, TodoState,
 };
 use mouse::is_left_mouse_pressed;
 
@@ -239,6 +240,11 @@ pub fn run() {
             delete_weather_secret,
             get_weather_secret_status,
             get_todo_snapshot,
+            create_todo_task,
+            complete_todo_task,
+            postpone_todo_tasks,
+            delete_todo_task,
+            reopen_todo_task,
             test_todo_connection,
             list_todo_projects,
             set_todo_token,
