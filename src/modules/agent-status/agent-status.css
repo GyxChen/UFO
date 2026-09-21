@@ -14,61 +14,63 @@
  * .tooltip-close|dot|prompt|provider-icon|reason|stamp）都归这里。
  */
 /*
- * 按格子缩放（与 weather.css 同一口径）：本模块的尺寸基本是槽位高度的百分比（52.5% / 42%），
- * 天然跟着「格子大小」走；只有三处写死的像素不会 —— 灯点描边、光晕、+N 字号 ——
+ * 按格子缩放（与 weather.css 同一口径）：状态灯与角标徽章都用「限制轴」的百分比声明，
+ * 天然跟着「格子大小」走；只有几处写死的像素不会 —— 灯点描边、光晕、徽章描边、+N 字号 ——
  * 它们都乘 `var(--floating-cell-scale, 1)`（宿主按配置的 cell_px / 设计基准 45px 声明）。
  * 该变量缺失时回落 1 = 设计尺寸，与没有槽位容器时的表现一致。
  * ⚠️ 容器查询里的 32px 是**绝对可读性阈值**（槽位矮到 / 窄到看不清图标才降级），不乘倍率。
  */
-/* 一盏灯占一格：模块与格子都不写内边距，像素全给灯点与平台图标。 */
+/*
+ * 一盏灯占一格：模块与格子都不写内边距，像素全给状态灯与角标徽章。
+ *
+ * 布局从「灯点 + 平台图标并排」改成「灯点吃满格子 + 图标缩成右下角徽章（badge）」：
+ * 图标不再是灯点旁边独立的一块，而是叠在灯点上的小圆片。原先被图标占掉的横向 / 纵向面积
+ * 因此全还给状态灯 —— 横条（上下贴边，纵向最紧）收益最明显。
+ */
 .agent-status-module {
   @apply grid h-full w-full content-center justify-items-center gap-px overflow-hidden p-0;
   /* 网格列行由组件按形态与格子数内联设置，适配方形 / 横条 / 竖条。 */
 }
 
 /*
- * 竖条左右各留一段呼吸位。
- *
- * 竖条的一行就是「一格宽」：灯点 + 间隙 + 图标几乎顶满整行，灯点左缘离悬浮窗边框只有
- * 外壳留白 + 行内余量 ≈ 2.9px（横条 / 方形那边一格更宽，灯点离边 ≈ 4.9px）。
- * 视觉上就像贴在左边框上，所以这里按格子倍数给左右内边距 —— 灯点与图标在缩窄后的
- * 36.5px 里重新平分（45 格：灯点 19.2px、图标 15.3px，比例仍是 1 : 0.8），
- * 灯点到边框约 4.5px ≈ 原来的 1.5 倍，且随「格子大小」一起长。
- * 内边距写在模块上（等价于缩窄每一行），各行灯点因此始终左右对齐。
+ * 一盏灯 = 一个格子：作为徽章的定位基准（position: relative），flex 只负责把灯点居中。
+ * 图标徽章是绝对定位、不参与 flex 排布，所以这里不再需要横向间隙（旧版灯点与图标并排的那 4%）。
  */
-.agent-status-module--vertical {
-  padding-inline: calc(1.5px * var(--floating-cell-scale, 1));
-}
 .agent-status-module__item {
-  @apply flex h-full w-full min-h-0 min-w-0 items-center justify-center;
-  /* 百分比间隙随格子一起缩，避免固定 px 在小格子里占掉一成宽度。 */
-  column-gap: 4%;
+  @apply relative flex h-full w-full min-h-0 min-w-0 items-center justify-center;
 }
 
-/* 横条（上下贴边）下灯点在上、图标在下，中间保留一格百分比间距。 */
-.agent-status-module--horizontal .agent-status-module__item {
-  flex-direction: column;
-  column-gap: 0;
-  row-gap: 4%;
-}
-
+/* 平台图标徽章：叠在状态灯右下角的小圆片，深色底 + 内部图标，从彩色灯点上"抠"出来。
+   绝对定位、按宽度取百分比 —— 一格在三种形态下宽度都 ≈ 一格边长，徽章大小因此一致。 */
 .agent-status-module__identity {
-  @apply flex min-h-0 min-w-0 shrink-0 items-center justify-center;
-  /* 平台图标固定为灯点的 0.8 倍：42% = 0.8 × 52.5%（见 __dot）。 */
-  height: 42%;
-  width: auto;
+  @apply flex items-center justify-center rounded-full;
+  position: absolute;
+  right: 3%;
+  bottom: 3%;
+  /* 徽章直径约为灯点的 0.5 倍（40% / 80%）：够放图标又不抢灯点的主体。 */
+  width: 40%;
+  height: auto;
   aspect-ratio: 1;
+  /* 深色底让 Claude（橙）/ Codex（白）图标在任意灯色上都读得清；描边把徽章边缘压清楚。 */
+  background: var(--ufo-bg-main);
+  border: calc(1px * var(--floating-cell-scale, 1)) solid rgba(0, 0, 0, 0.28);
 }
 
 .agent-status-module__icon {
-  @apply block h-full w-full object-contain;
+  @apply block object-contain;
+  /* 图标只填徽章的一部分：留出内边距，避免贴死徽章圆边。 */
+  width: 64%;
+  height: 64%;
 }
 
-/* 灯点 = 一格高度的 52.5%，是这一格里最大的元素；平台图标按 1 : 0.8 跟着它走（42%）。
-   52.5 + 4(间隙) + 42 = 98.5%，留 1.5% 余量，保证图标不会被挤出格子。 */
+/*
+ * 状态灯 = 一格限制轴的 80%，是这一格里绝对的主体；四周留约 10% 当呼吸位
+ * （用户要的「占满网格但留点 margin」）。旧版「52.5% 灯点 + 4% 间隙 + 42% 图标并排」
+ * 已废弃，图标改为右下角徽章（见 __identity）。
+ */
 .agent-status-module__dot {
-  @apply block shrink-0 rounded-full border border-white/40 shadow-sm;
-  height: 52.5%;
+  @apply block shrink-0 rounded-full border border-white/40;
+  height: 80%;
   width: auto;
   aspect-ratio: 1;
   /* 描边与下面的光晕都按格子倍数加粗：否则格子调大后灯点变大、描边仍是一条细线，比例就散了。 */
@@ -79,23 +81,15 @@
  * 竖条（左右贴边）必须换成「按行宽」取百分比。
  *
  * 竖条窗口只有 1 格宽，一行的横向可用宽度 = 一格 − 外壳留白（45 格时 39.5px），
- * 比行高（≈ 一格 − 格间隙，45 格时 43.2px）**更窄**。上面按行高算出的
- * 灯点 52.5% + 间隙 4% + 图标 42% = 42.4px 就超出了那 39.5px，
- * 槽位的 overflow:hidden 会把图标右侧切掉一截（实测裁掉约 1.4px，视觉上就是「状态没显示完整」）。
- *
- * 竖条下改用行宽作基准：比例一字不改（52.5% : 42%，合计 98.5%），横向必定放得下，
- * 纵向由 __item 的 items-center 居中 —— 灯点大小也与方形 / 横条形态对齐（都是「一格的 52.5%」）。
+ * 比行高（≈ 一格 − 格间隙，45 格时 43.2px）**更窄**。灯点若按行高给 80% 会超出那 39.5px，
+ * 被槽位的 overflow:hidden 切掉。竖条下改用行宽作基准，横向必定放得下，纵向由 __item 居中。
  * 方形 / 四角 / 横条不受影响（那里的行宽 ≥ 行高，按行高算本来就不会溢出）。
  */
 .agent-status-module--vertical .agent-status-module__dot {
   height: auto;
-  width: 52.5%;
+  width: 80%;
 }
 
-.agent-status-module--vertical .agent-status-module__identity {
-  height: auto;
-  width: 42%;
-}
 .agent-status-module__item--green .agent-status-module__dot {
   background: var(--ufo-status-green);
   box-shadow: 0 0 0 calc(2px * var(--floating-cell-scale, 1)) color-mix(in srgb, var(--ufo-status-green) 28%, transparent);
@@ -130,7 +124,7 @@
 /*
  * 槽位感知（容器查询）：宿主分给本模块的槽位可能被同级模块压得很小
  * （未贴边的方形最容易出现：整窗就 1 格，还要按需求再切一刀），此时一格只有十几像素，
- * 平台图标会小到看不清。降级策略是「灯色优先」—— 藏掉图标，把灯点吃满格子。
+ * 徽章会小到看不清。降级策略是「灯色优先」—— 藏掉徽章，把灯点吃满格子。
  * 槽位容器由外壳在 `.floating-module-slot` 上声明（container-type: size）。
  *
  * 两条查询按「哪条轴在限制」拆开，不用 `or` 合并：or 语法要求较新的内核，
@@ -142,10 +136,7 @@
  * 灯点仍旧按行高算，不受影响。
  */
 @container floating-slot (max-height: 32px) {
-  .agent-status-module__item {
-    column-gap: 0;
-  }
-
+  /* 槽位太矮：藏掉徽章，只留灯色，灯点放大吃满格子。 */
   .agent-status-module__identity {
     display: none;
   }
@@ -160,10 +151,7 @@
 }
 
 @container floating-slot (max-width: 32px) {
-  .agent-status-module__item {
-    column-gap: 0;
-  }
-
+  /* 槽位太窄（竖条）：同样藏掉徽章，灯点按行宽吃满格子。 */
   .agent-status-module__identity {
     display: none;
   }
