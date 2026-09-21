@@ -97,16 +97,6 @@ impl TodoSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
-
-    /// 造一份只有本组件配置块的外壳配置（外壳不认识块里的字段，只当 JSON 搬运工）。
-    fn config_with_block(block: Value) -> FloatingModuleConfig {
-        let mut module_settings = BTreeMap::new();
-        module_settings.insert(MODULE_ID.to_string(), block);
-        let mut config = FloatingModuleConfig::default();
-        config.module_settings = module_settings;
-        config
-    }
 
     #[test]
     fn missing_block_falls_back_to_defaults() {

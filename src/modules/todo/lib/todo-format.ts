@@ -1,5 +1,6 @@
 /**
- * 待办组件的纯格式化逻辑：优先级文案、截止时间的相对描述与语义色。
+ * 待办组件的纯逻辑：优先级三档（高 / 中 / 低）、截止时间的相对描述与语义色，
+ * 以及新建任务要用的本机时区日期换算。
  *
  * 与视图 / store 完全解耦，便于单测。所有「今天 / 明天」的判断都落在**本机时区**，
  * 因此刻意放在前端：Rust 侧只把滴答的时间戳转成绝对的 UTC 毫秒（与时区无关），
@@ -16,25 +17,6 @@ export type DueBucket = 'overdue' | 'today' | 'tomorrow' | 'later' | 'none'
 
 /** 语义色名：与 `todo.css` 里的 `--red / --yellow / --muted` 修饰类一一对应。 */
 export type DueTone = 'red' | 'yellow' | 'muted'
-
-/**
- * 优先级 → 中文标签。
- *
- * @param priority 滴答的优先级数值（0 / 1 / 3 / 5）
- * @returns 「高 / 中 / 低」，无优先级返回空串（界面据此不渲染这个角标）
- */
-export function priorityLabel(priority: number): string {
-  switch (priority) {
-    case PRIORITY_HIGH:
-      return '高'
-    case PRIORITY_MEDIUM:
-      return '中'
-    case PRIORITY_LOW:
-      return '低'
-    default:
-      return ''
-  }
-}
 
 /** 取某个毫秒时间戳所在「本地日」的 00:00 时刻，用于按天比较。 */
 function startOfLocalDay(ms: number): number {
@@ -130,32 +112,6 @@ export function formatDue(dueAtMs: number | null, nowMs: number, hasTime: boolea
 }
 
 /**
- * 悬浮窗专用的紧凑截止文案（不带时刻）。
- *
- * 悬浮窗按 1 格宽 / 一格高排版，`已逾期 08:00` 这种带时刻的写法会把任务标题挤没，
- * 所以这里只保留「哪天」这一层信息；要精确到分钟就悬停看信息卡。
- *
- * @param dueAtMs 截止毫秒时间戳
- * @param nowMs 参考时刻
- * @param hasTime 是否有具体时刻（口径见 `isOverdue`）
- * @returns `逾期` / `今天` / `明天` / `MM-DD`
- */
-export function formatDueCompact(dueAtMs: number, nowMs: number, hasTime: boolean): string {
-  switch (dueBucket(dueAtMs, nowMs, hasTime)) {
-    case 'overdue':
-      return '逾期'
-    case 'today':
-      return '今天'
-    case 'tomorrow':
-      return '明天'
-    default: {
-      const due = new Date(dueAtMs)
-      return `${pad2(due.getMonth() + 1)}-${pad2(due.getDate())}`
-    }
-  }
-}
-
-/**
  * 把毫秒时间戳格式化成 `HH:MM:SS`，用于信息卡的「更新时间」标注。
  *
  * @param ms 毫秒时间戳
@@ -164,4 +120,143 @@ export function formatDueCompact(dueAtMs: number, nowMs: number, hasTime: boolea
 export function formatClockTime(ms: number): string {
   const date = new Date(ms)
   return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
+}
+
+/** 优先级三档：界面（悬浮窗小旗 / 信息卡）只分这三档。 */
+export type PriorityBucket = 'high' | 'medium' | 'low'
+
+/** 三档的展示顺序：高 → 中 → 低（悬浮窗小旗与信息卡里的勾选框配色都按它排）。 */
+export const PRIORITY_BUCKETS: readonly PriorityBucket[] = ['high', 'medium', 'low']
+
+/** 优先级语义色名：与 `todo.css` 里的 `--red / --yellow / --blue` 修饰类一一对应。 */
+export type PriorityTone = 'red' | 'yellow' | 'blue'
+
+/**
+ * 优先级数值 → 三档（高 / 中 / 低）。
+ *
+ * 滴答的取值是 5 高 / 3 中 / 1 低 / 0 无。**「无优先级」归入「低」**：界面只给三面
+ * 小旗，必须让三档计数之和等于未完成总数 —— 否则没标优先级的任务会在这块视图里
+ * 凭空消失（用户看到「一个任务都没有」，实际是有的）。取值用区间判断而不是等值匹配，
+ * 将来滴答新增档位（如 4 / 2）也不会掉出去。
+ *
+ * @param priority 滴答的优先级数值（0 / 1 / 3 / 5）
+ * @returns 所属档位
+ */
+export function priorityBucket(priority: number): PriorityBucket {
+  if (priority >= PRIORITY_HIGH) return 'high'
+  if (priority >= PRIORITY_MEDIUM) return 'medium'
+  return 'low'
+}
+
+/**
+ * 三档 → 中文标签。
+ *
+ * @param bucket 优先级档位
+ * @returns 「高 / 中 / 低」
+ */
+export function priorityBucketLabel(bucket: PriorityBucket): string {
+  switch (bucket) {
+    case 'high':
+      return '高'
+    case 'medium':
+      return '中'
+    default:
+      return '低'
+  }
+}
+
+/**
+ * 三档 → 语义色名（高 = 红 / 中 = 黄 / 低 = 蓝）。
+ *
+ * @param bucket 优先级档位
+ * @returns 语义色名，供视图拼 `--red / --yellow / --blue` 修饰类
+ */
+export function priorityTone(bucket: PriorityBucket): PriorityTone {
+  switch (bucket) {
+    case 'high':
+      return 'red'
+    case 'medium':
+      return 'yellow'
+    default:
+      return 'blue'
+  }
+}
+
+/**
+ * 按三档统计未完成任务数。
+ *
+ * @param tasks 任务列表（只读 `priority` 字段）
+ * @returns 高 / 中 / 低三档各自的条数（三数之和 = 传入任务总数）
+ */
+export function countByPriority(tasks: readonly { priority: number }[]): Record<PriorityBucket, number> {
+  const counts: Record<PriorityBucket, number> = { high: 0, medium: 0, low: 0 }
+  for (const task of tasks) counts[priorityBucket(task.priority)] += 1
+  return counts
+}
+
+/** 一档优先级的分组视图模型：档位 + 文案 + 颜色 + 该档任务。 */
+export interface PriorityGroup<T> {
+  /** 档位 */
+  bucket: PriorityBucket
+  /** 中文标签（高 / 中 / 低） */
+  label: string
+  /** 语义色名 */
+  tone: PriorityTone
+  /** 该档的任务（保持传入顺序） */
+  tasks: T[]
+}
+
+/**
+ * 把任务按三档分组，顺序固定为高 → 中 → 低。
+ *
+ * 空档也会返回（信息卡要显示「高 0 项」这种一致的骨架，列表才不会跳）。
+ *
+ * @param tasks 任务列表（只读 `priority` 字段）
+ * @returns 三档分组，长度恒为 3
+ */
+export function priorityGroups<T extends { priority: number }>(tasks: readonly T[]): PriorityGroup<T>[] {
+  const buckets: Record<PriorityBucket, T[]> = { high: [], medium: [], low: [] }
+  for (const task of tasks) buckets[priorityBucket(task.priority)].push(task)
+
+  return PRIORITY_BUCKETS.map(bucket => ({
+    bucket,
+    label: priorityBucketLabel(bucket),
+    tone: priorityTone(bucket),
+    tasks: buckets[bucket],
+  }))
+}
+
+/**
+ * 本机时区「今天 00:00」的毫秒时间戳（新建任务的默认截止）。
+ *
+ * @param nowMs 参考时刻，默认当前
+ * @returns 当地当天零点的毫秒时间戳
+ */
+export function localDayStartMs(nowMs: number = Date.now()): number {
+  return startOfLocalDay(nowMs)
+}
+
+/**
+ * 本机时区相对 UTC 的分钟偏移（北京 +0800 → 480）。
+ *
+ * `Date.getTimezoneOffset()` 返回的是「UTC − 本地」（+0800 时给 -480），这里取反成
+ * 「本地 = UTC + N 分钟」的口径，后端按它把当地零点写成带偏移的日期串
+ * （滴答要 `2026-09-20T00:00:00+0800` 这种形态，写错时区会让「今天」变成昨天 / 明天）。
+ *
+ * @param nowMs 参考时刻，默认当前
+ * @returns 分钟偏移（东八区为 480）
+ */
+export function localUtcOffsetMinutes(nowMs: number = Date.now()): number {
+  return -new Date(nowMs).getTimezoneOffset()
+}
+
+/**
+ * 把毫秒时间戳格式化成「M月D日」，用于设置页标注新建任务的默认截止。
+ *
+ * @param ms 毫秒时间戳
+ * @returns 中文月日文案
+ */
+export function formatMonthDay(ms: number): string {
+  const date = new Date(ms)
+  return `${date.getMonth() + 1}月${date.getDate()}日`
 }

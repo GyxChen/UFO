@@ -1,20 +1,33 @@
 @reference "../../assets/main.css";
 
 /*
- * 滴答待办：悬浮窗视图 / 信息卡 / 主窗设置预览。
+ * 滴答待办：悬浮窗视图（三面优先级小旗）/ 信息卡（照搬设置页「完成情况」的未完成组，
+ * 可滚动、点勾选框即完成）/ 主窗设置页（新增任务表单 + 授权与服务 + 完成情况树）。
+ *
+ * 「完成情况」的交互口径（设置页与信息卡共用）：
+ * - 优先级画在**勾选框边框**上（统一加粗，高红 / 中黄 / 低蓝），没有单独的优先级圆点；
+ * - **只有勾选框能切换完成态**（标题是纯文字，点它什么都不做），行里不放「完成 / 取消完成」按钮；
+ * - 父目标下有未完成子目标时勾选框转虚线、不可点：最后一个子目标完成时父目标自动完成；
+ * - 已完成的子目标只在进度 `N/M` 里计数，**不占行**（未完成组里不该出现打勾的行）；
+ * - 加载走卡内的 `BaseLoadingOverlay`（盖这块视图，不盖整页）。
+ * ⚠️ 信息卡复用同一套行组件（`sections/TodoTaskRow.vue`）与同一套 `.todo-status__*` 样式，
+ *   所以两处的观感天然一致；差别只有「信息卡不带右键菜单与卡头按钮」这一条。
  *
  * 形态适配（四种 layout，对用户是三形态）：
- * - square（未贴边，恒 1 格）：只显示「勾选图标 + 未完成数」徽标；
- * - corner（贴角，边长 = ceil(√cells) 格）：徽标 + 最多两条任务，空间够时带紧凑截止标注；
- * - horizontal（贴上下边，宽 = cells 格、高 = 1 格）：徽标 + 第一条任务（横向），第二条让位；
- * - vertical（贴左右边，高 = cells 格、宽 = 1 格）：徽标 + 最多两条任务（纵向，标题走省略号）。
+ * - 方形 / 四角 / 横条：三面小旗**横向一排**，每组「旗在上、数量在下」；
+ * - 竖条：三面小旗**竖着叠**，一行一档「旗在左、数量在右」—— 竖条只有一格宽、高反而富余，
+ *   横排三面会挤在一条线上，竖排才排得开（但也不摊满整条，见下面竖条那段）；
+ * - 槽位窄到放不下数字时只留三面小旗（横排 ≤ 60px / 竖排 ≤ 28px），条数交给悬停信息卡。
  *
  * 尺寸规矩（见组件开发规范 5.5）：
- * - 悬浮窗里的尺寸一律 `clamp(下限, Xcqh, 上限)`，上限是设计像素时必须写
+ * - 悬浮窗里的尺寸一律 `clamp(下限, Xcq?, 上限)`，上限是设计像素时必须写
  *   `calc(<设计像素> * var(--floating-cell-scale, 1))`（用户能把一格调到 32–96px）；
- * - 窄槽位（竖条 / 未贴边方形，宽 ≈ 1 格）改按 `cqw` 取：那里横向才是限制轴，
- *   按高度算会把图标与计数撑出槽位（实测槽位有 overflow:hidden，超出的部分会被裁掉）；
- * - `@container` 里的 px 断点是**绝对可读性阈值**（「一格都放不下了」），刻意不乘倍率。
+ * - ⚠️ **尺寸要取「两条轴里更紧的那条」**（`clamp(下限, min(Acqw, Bcqh), 上限)`）：
+ *   槽位形状由宿主的按比例分槽决定，可能是「窄而高」（竖条：宽 1 格、高好几格）或
+ *   「宽而矮」（同级组件把方形态切成横带：实测 283×56）。只看一条轴，另一边必然溢出，
+ *   而槽位有 `overflow: hidden`，观感就是「旗子 / 数字被切掉一截」。
+ * - 数据未到时三面旗转中性灰、不带数字（见 `.todo-module--empty`），与「三档都是 0」
+ *   区分开：后者是「真的没有未完成任务」。
  */
 
 /* ---- 悬浮窗视图 ---- */
@@ -29,335 +42,509 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  gap: clamp(3px, 5cqh, calc(6px * var(--floating-cell-scale, 1)));
   color: var(--ufo-text);
   user-select: none;
 }
 
-/* 竖排是默认姿势；横条才改成一行 */
-.todo-module--square,
-.todo-module--corner,
-.todo-module--vertical {
-  flex-direction: column;
-}
-
-.todo-module--horizontal {
-  flex-direction: row;
-}
-
-/* 徽标：勾选图标 + 未完成数。flex:0 0 auto —— 空间不够时压的是任务标题，不是计数 */
-.todo-module__badge {
-  display: flex;
-  flex: 0 0 auto;
+/*
+ * 方形 / 四角 / 横条：三面小旗**横向一排** —— 一组 = 一列「旗在上、数量在下」，三组并排。
+ * 用 grid：三组各自一个 `auto` 列，旗与数字都居中，位数不同也不会把旗挤歪。
+ *
+ * 整块只声明**一个**随槽位走的 `font-size`：数字直接用它，小旗按 `em` 取 ——
+ * 「旗 : 数字」的比例因此恒定，不会出现格子调大后旗反而变小、或旗比数字还胖。
+ */
+.todo-module__groups {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-rows: auto auto;
+  grid-auto-flow: column;
   align-items: center;
+  justify-items: center;
   justify-content: center;
-  gap: clamp(2px, 3cqh, calc(4px * var(--floating-cell-scale, 1)));
-}
-
-.todo-module__icon {
-  width: clamp(11px, 46cqh, calc(24px * var(--floating-cell-scale, 1)));
-  height: clamp(11px, 46cqh, calc(24px * var(--floating-cell-scale, 1)));
-  flex: 0 0 auto;
-  color: var(--ufo-accent);
-}
-
-.todo-module__count {
-  font-size: clamp(11px, 42cqh, calc(22px * var(--floating-cell-scale, 1)));
-  font-weight: 800;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 有逾期任务：徽标整块转危险色，一眼看出「有欠账」 */
-.todo-module__badge--alert .todo-module__count,
-.todo-module__badge--alert .todo-module__icon {
-  color: var(--ufo-danger);
-}
-
-/* 任务预告：默认不显示（方形放不下两条），由形态类打开 */
-.todo-module__list {
-  display: none;
-  width: 100%;
   min-width: 0;
   min-height: 0;
-  margin: 0;
-  padding: 0;
-  gap: clamp(1px, 2cqh, calc(3px * var(--floating-cell-scale, 1)));
-  list-style: none;
-}
-
-.todo-module--corner .todo-module__list,
-.todo-module--vertical .todo-module__list {
-  flex-direction: column;
-}
-
-.todo-module--corner .todo-module__list,
-.todo-module--vertical .todo-module__list,
-.todo-module--horizontal .todo-module__list {
-  display: flex;
-}
-
-/* 横条是一行一条：并排摆放，第一条占满剩下的横向空间 */
-.todo-module--horizontal .todo-module__list {
-  flex-direction: row;
-  align-items: center;
-}
-
-.todo-module__item {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: clamp(2px, 2.5cqh, calc(4px * var(--floating-cell-scale, 1)));
-}
-
-/* 截止状态点：红 = 逾期 / 黄 = 今天 / 灰 = 其余 */
-.todo-module__dot {
-  width: clamp(4px, 13cqh, calc(6px * var(--floating-cell-scale, 1)));
-  height: clamp(4px, 13cqh, calc(6px * var(--floating-cell-scale, 1)));
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: var(--ufo-muted);
-}
-
-.todo-module__dot--red {
-  background: var(--ufo-danger);
-}
-
-.todo-module__dot--yellow {
-  background: var(--ufo-status-yellow);
-}
-
-.todo-module__title {
-  min-width: 0;
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: clamp(9px, 26cqh, calc(12px * var(--floating-cell-scale, 1)));
-  line-height: 1.1;
-}
-
-/* 紧凑截止标注只在贴角（宽高都宽裕）时出现：横条 / 竖条里那点宽度要留给标题 */
-.todo-module__due {
-  display: none;
-  flex: 0 0 auto;
-  color: var(--ufo-muted);
-  font-size: clamp(8px, 20cqh, calc(10px * var(--floating-cell-scale, 1)));
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.todo-module--corner .todo-module__due {
-  display: inline-block;
-}
-
-.todo-module__due--red {
-  color: var(--ufo-danger);
-  font-weight: 600;
-}
-
-.todo-module__due--yellow {
-  color: var(--ufo-status-yellow);
-}
-
-/* 未配置 Token / 数据未到：中性图标占位 */
-.todo-module__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ufo-muted);
-}
-
-.todo-module__empty .todo-module__icon {
-  color: var(--ufo-muted);
+  /*
+   * 字号取「两条轴里更紧的那条」（`min(34cqh, 16cqw)`）：槽位形状由宿主的按比例分槽决定，
+   * 可能是「窄而高」（竖条）或「宽而矮」（方形态被同级组件切成横带，实测 283×56）。
+   * 只看一条轴，另一边必然溢出，而槽位有 `overflow: hidden`，观感就是「数字被切掉一截」。
+   * 数字是宽度上的大头（三位数 `99+` 也要放得下），所以 cqw 取得比 cqh 紧。
+   */
+  font-size: clamp(10px, min(34cqh, 16cqw), calc(16px * var(--floating-cell-scale, 1)));
+  /*
+   * 行间隙（旗与数字之间）/ 列间隙（三组之间）。
+   * ⚠️ 列间隙是「三面旗看着密不密」的唯一调节项：三列并排时旗的间距 = 列宽 + 列间隙，
+   * 而列宽被「旗 / 数字谁宽」定死了（数字两三位数时列宽≈数字宽），只有间隙能动。
+   * 早先取 `min(10cqh, 4cqw)` —— 横条只有一格高，cqh 那一项算出来才 2px 上下，
+   * 于是三组几乎贴在一起（实测 39px 高的横条里三点间距 3.9px，比旗子本身还窄）。
+   * 改成按**宽度预算**取（8cqw，只留一条 cqw 轴）：宽处自动放开、窄处仍受 cqw 约束不会撑破，
+   * 最坏情形（三档都到 `99+`）实测也没溢出。上限乘格子倍率 —— 横条很宽时原来卡在 12px，
+   * 三面旗挤成一坨、周围却留白一大片；这里放开到 20px，宽横条里的三面旗才透得过气。
+   * 方形只有一格宽，8cqw 算出来依旧被 3px 下限兜住，不受影响。
+   * 行间隙是「旗与数字之间」，跟着行高走（cqh 就够，横条一格高时约 2.3px）。
+   */
+  gap: clamp(1px, 6cqh, calc(3px * var(--floating-cell-scale, 1)))
+    clamp(3px, 8cqw, calc(20px * var(--floating-cell-scale, 1)));
 }
 
 /*
- * ② 矮槽位（放不下两行任务：贴角只分到 2 格时约 45px、横条只有一格高约 40px）：
- * 只留第一条 —— 徽标 + 两行 ≈ 44px，矮槽位里第二行会被 `.floating-module-slot` 的
- * `overflow: hidden` 切掉半行字。
- * 判据取「槽位高度」而不是形态：同一形态下窗口格子数一变，槽位高度能差一倍。
- * ⚠️ 重复类名压过形态专属规则。
+ * 竖条（左右贴边）：三面小旗**竖着叠** —— 一行一档「旗在左、数量在右」，三行上下排。
+ *
+ * 排布与横排正好转置，于是两处跟着换：
+ * - 网格：从「3 列 × 2 行、按列填充」换成「2 列 × 3 行、按行填充」（同一批 DOM，只是轨道方向变了）；
+ * - 字号：一行只有「一格宽」（45 格时约 39px），限制轴是**行宽**而不是行高，所以按 cqw 取；
+ * - 间隙：行间隙 = 三档之间（跟着高度走）、列间隙 = 旗与数字之间（跟着宽度走），两轴对调。
+ *
+ * 高度上**让三行按内容收拢、不摊满整条**：竖条比一格高得多（45 格时 174px），无论按整条等分
+ * 还是塞满一个 96px 封顶，三面 ~10px 的小旗都会被拉开十几二十像素、孤零零各挂一处
+ * （实测 1fr 封顶 96px 时行距 32px，是旗子高度的三倍多）—— 观感偏「散」。横排三面是紧凑的，
+ * 竖条也理应同款疏密。
+ * 于是把行轨改成 `auto`（三行只取各自内容高），整块随内容收拢后由父级上下居中，行与行之间
+ * 只留一个跟着格子走的小呼吸间隙 —— 三行因此彼此靠近，疏密与横排的三面一致。
  */
-@container floating-slot (max-height: 59px) {
-  .todo-module.todo-module .todo-module__item:nth-child(n + 2) {
-    display: none;
-  }
+.todo-module--vertical .todo-module__groups {
+  grid-template-columns: auto auto;              /* 旗 | 数量 */
+  grid-template-rows: repeat(3, auto);           /* 三档各取内容高，不摊满整条 */
+  grid-auto-flow: row;
+  align-self: center;                            /* 整块随内容收拢，上下居中 */
+  font-size: clamp(10px, 30cqw, calc(15px * var(--floating-cell-scale, 1)));
+  /* 行间隙 = 三档之间（呼吸用，跟着高度走）；列间隙 = 旗与数字之间（跟着宽度走） */
+  row-gap: clamp(4px, 10cqh, calc(10px * var(--floating-cell-scale, 1)));
+  column-gap: clamp(2px, 4cqw, calc(6px * var(--floating-cell-scale, 1)));
 }
 
 /*
- * ① 窄槽位（竖条 / 未贴边方形，宽 ≈ 1 格）：横向是限制轴。
- * 徽标改竖排（图标压在计数上方，宽度只剩「较宽的那个」），尺寸按 cqw 取。
+ * 小旗子：`src/assets/flag.svg` 只提供**字形**，颜色由 `background-color` 给 ——
+ * 于是同一份图标能出红 / 黄 / 蓝三面旗（就是下面那三条三档语义色）。
+ *
+ * ⚠️ 宽高**必须一起给**，且比例锁死 6:7（= `flag.svg` 的 viewBox 12×14）：
+ * 只给一个尺寸、或两条轴各按各的槽位百分比算，某一条轴先被压住时图标就被拉扁
+ * （旗面忽宽忽窄、格子调大时更明显）。所以这里只声明**一个**「高」`--todo-flag-h`，
+ * 宽由它按比例推出来，下面每个降级块也只改这一个变量 —— 两条轴因此永远同源同比例。
+ * ⚠️ 三条 `mask-*` 缺一不可：少了 `mask-image` 就是一块实心方块；少了 `mask-size: contain`
+ * 会按资源原始尺寸铺开而不跟盒子缩放；少了 `mask-repeat: no-repeat` 会平铺成一排小旗。
+ * 盒高比原来的圆点大一半（1em 对 0.62em）：字形内部只有旗杆与旗面，且旗面只占上半，
+ * 按圆点那么大的盒子放进去会明显小一圈。
+ */
+.todo-module__flag {
+  --todo-flag-h: 1em;
+  width: calc(var(--todo-flag-h) * 6 / 7);
+  height: var(--todo-flag-h);
+  background-color: var(--ufo-muted);
+  -webkit-mask-image: var(--todo-flag-mask);
+  mask-image: var(--todo-flag-mask);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+/* 数量：字号继承 `.todo-module__groups` 的那个 clamp，这里只管字重 / 对齐 / 等宽数字 */
+.todo-module__count {
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 三档语义色：高 = 红 / 中 = 黄 / 低 = 蓝（只改颜色，不改字形） */
+.todo-module__flag--red {
+  background-color: var(--ufo-status-red);
+}
+
+.todo-module__flag--yellow {
+  background-color: var(--ufo-status-yellow);
+}
+
+.todo-module__flag--blue {
+  background-color: var(--ufo-status-blue);
+}
+
+/* 数据未到：三面旗是中性灰，一眼区别于「三档都是 0 个」 */
+.todo-module--empty .todo-module__flag {
+  background-color: var(--ufo-muted);
+  opacity: 0.55;
+}
+
+/*
+ * 窄槽位（横排三面：宽 ≤ 60px —— 未贴边的一格方窗、被同级组件切窄的条）：
+ * 三列并排放不下数字 —— `99+` 这种三位数按字号算要 ~1.75em 宽，三列就是 5 倍多字号，
+ * 60px 宽只够把数字压到 6px 上下，读不清还不如不显示。这里**只留三面小旗**，
+ * 具体条数是悬停信息卡的事（那边就是设置页的「完成情况」）。
+ * ⚠️ 竖条走下面那条分支（它的排布是竖排、阈值也不同），所以这里用 `:not()` 排除掉。
+ * ⚠️ 60px 是**绝对可读性阈值**（与格子缩放无关），所以刻意不乘 `--floating-cell-scale`。
  */
 @container floating-slot (max-width: 60px) {
-  .todo-module.todo-module .todo-module__badge {
-    flex-direction: column;
-    gap: clamp(1px, 1.5cqh, calc(3px * var(--floating-cell-scale, 1)));
+  /*
+   * 数量被移除后，网格里只剩三面旗 —— 轨道要跟着收：按列填充会把「旗 1、旗 2」摞进第一列
+   * （第 1、2 面旗一上一下），改成按行填充，三面旗才会并排在同一行。
+   * 列间隙也跟着放开：上面那条 8cqw 是为「数字占满列宽」留的宽度预算，数字一走
+   * （60px 宽处才 4.8px），三面旗就挤成一坨了 —— 这里按字号取 0.3em。
+   * ⚠️ 旗子这次放大后间隙必须跟着收（0.45em → 0.3em）：三面旗并排时**宽度**是限制轴，
+   * 45 格一格宽 ≈ 39.5px，3 × 旗宽 + 2 × 间隙要正好落在里面，间隙留多了旗子就得让小。
+   */
+  .todo-module:not(.todo-module--vertical) .todo-module__groups {
+    grid-auto-flow: row;
+    column-gap: 0.3em;
   }
 
-  .todo-module.todo-module .todo-module__icon {
-    width: clamp(10px, 40cqw, calc(20px * var(--floating-cell-scale, 1)));
-    height: clamp(10px, 40cqw, calc(20px * var(--floating-cell-scale, 1)));
+  .todo-module:not(.todo-module--vertical) .todo-module__count {
+    display: none;
   }
 
-  .todo-module.todo-module .todo-module__count {
-    font-size: clamp(10px, 38cqw, calc(20px * var(--floating-cell-scale, 1)));
+  /*
+   * 只给「高」，宽由基类的比例推出来（31cqw 的高 → 26cqw 的宽，三面 + 两个间隙 ≈ 38px < 39.5px）。
+   * `46cqh` 那条是给「又矮又窄」的槽位兜底（比如被同级组件切成一条 40×20 的横带）。
+   */
+  .todo-module:not(.todo-module--vertical) .todo-module__flag {
+    --todo-flag-h: clamp(9px, min(31cqw, 46cqh), calc(21px * var(--floating-cell-scale, 1)));
   }
 }
 
 /*
- * ③ 扁平槽位（高 ≤ 33px：未贴边方形被同级组件切一刀、横条只分到半格）：
- * 连一行任务都摆不下，退化成「徽标一行居中」。
- * ⚠️ 重复类名压过形态专属规则。
+ * 窄槽位（竖排三面：一行的可用宽度 ≤ 28px，即用户把格子调到 34px 及以下）：
+ * 一行是「旗 + 数字」，`99+` 按 10px 字号算 ≈ 18px，加旗子与间隙 ≈ 26px —— 再窄就放不下，
+ * 于是**只留三面小旗**（旗子这时独占行宽，按行宽放大一点）。
+ * ⚠️ 选择器要与上面的形态规则等长（同一条 `.todo-module--vertical .todo-module__flag`），
+ * 否则盖不住它 —— 这正是组件开发规范 5.5 里那条「降级块要带上形态选择器」。
+ * ⚠️ 28px 同样是绝对可读性阈值，不乘 `--floating-cell-scale`。
  */
-@container floating-slot (max-height: 33px) {
-  .todo-module.todo-module {
-    flex-direction: row;
-    gap: 5cqw;
+@container floating-slot (max-width: 28px) {
+  /* 数量被移除后只剩三面旗：两列轨道会变成「旗 1、旗 2」并排，收成一列才是竖着叠 */
+  .todo-module--vertical .todo-module__groups {
+    grid-template-columns: auto;
   }
 
-  .todo-module.todo-module .todo-module__list {
+  .todo-module--vertical .todo-module__count {
     display: none;
   }
-}
 
-/* ③ 又扁又窄：徽标回到横排，尺寸再收一档（这里的限制轴同样是宽度） */
-@container floating-slot (max-height: 33px) and (max-width: 60px) {
-  .todo-module.todo-module .todo-module__badge {
-    flex-direction: row;
-    gap: clamp(1px, 1.5cqh, calc(2px * var(--floating-cell-scale, 1)));
-  }
-
-  .todo-module.todo-module .todo-module__icon {
-    width: clamp(9px, 34cqw, calc(20px * var(--floating-cell-scale, 1)));
-    height: clamp(9px, 34cqw, calc(20px * var(--floating-cell-scale, 1)));
-  }
-
-  .todo-module.todo-module .todo-module__count {
-    font-size: clamp(9px, 26cqw, calc(18px * var(--floating-cell-scale, 1)));
+  /*
+   * 一面旗独占一行，限制轴是**行宽**：高按行宽的 52/100 取（换回宽是 44/100 行宽，放得下）。
+   * `24cqh` 那条同样给又矮又窄的槽位兜底。
+   */
+  .todo-module--vertical .todo-module__flag {
+    --todo-flag-h: clamp(9px, min(52cqw, 24cqh), calc(24px * var(--floating-cell-scale, 1)));
   }
 }
 
-/* ---- 信息卡（tooltip）：逐条未完成任务 ---- */
+/* ---- 信息卡（tooltip）：就是设置页「完成情况」里那组未完成任务，可滚动、点勾选框即完成 ---- */
 
-.todo-tooltip__list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.todo-tooltip__task {
-  display: flex;
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--ufo-border);
-}
-
-.todo-tooltip__task:last-child {
-  border-bottom: none;
-}
-
-.todo-tooltip__dot {
-  width: 7px;
-  height: 7px;
+/*
+ * 概览（范围 / 未完成 / 逾期 / 更新时间）固定不参与压缩：
+ * `.tooltip-section` 默认 `flex-shrink: 1` + `min-height: 0`，整卡内容超出窗口高度时它会被压扁，
+ * 而里面的行是可见溢出的 —— 表现为概览最后一行压到下面那一组上（实测 400px 窗口里 12 项任务就会撞）。
+ * 高度交给下面的滚动区去消化，这里钉死不缩。
+ */
+.todo-tooltip__overview {
   flex: 0 0 auto;
-  border-radius: 999px;
-  background: var(--ufo-muted);
 }
 
-.todo-tooltip__dot--red {
-  background: var(--ufo-danger);
-}
-
-.todo-tooltip__dot--yellow {
-  background: var(--ufo-status-yellow);
-}
-
-.todo-tooltip__title {
-  min-width: 0;
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ufo-text);
-  font-size: 12px;
-}
-
-.todo-tooltip__meta {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  color: var(--ufo-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.todo-tooltip__priority {
-  color: var(--ufo-accent);
-}
-
-.todo-tooltip__due--red {
-  color: var(--ufo-danger);
-  font-weight: 600;
-}
-
-.todo-tooltip__due--yellow {
-  color: var(--ufo-status-yellow);
-}
-
-/* ---- 主窗设置页的「未完成预览」卡片 ----
-   这是主窗卡片，不参与悬浮窗格子缩放（`floating-module-scaling.spec` 只扫模块样式里的
-   clamp 上限），所以这里直接用视口高度 + 最小高，不套 cq 单位。 */
-
-.todo-preview-card {
-  height: 44vh;
-  min-height: 300px;
-}
-
-.todo-preview__list {
+/*
+ * 概览之下的滚动区：整棵未完成树都在这里，超出一屏就滚。
+ * `flex: 1 1 auto` + `min-height: 0` 才能在定高窗口里滚（少了 min-height 会顶破容器）；
+ * `scrollbar-gutter: stable` 让出现滚动条时不挤窄内容（浮窗规范的一致要求）。
+ * 滚动条用全站统一的 Matte 细滚动条（与 agent-status / 脚本编辑框同一套口径，见 `main.css`）：
+ * `scrollbar-width: thin` + `scrollbar-color: 半透明白 透明` —— 轨道透明透出毛玻璃底，
+ * 滑块半透明白；没了这三条就是又粗又亮的系统默认滚动条。
+ */
+.todo-tooltip__scroll {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   overflow-y: auto;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
-.todo-preview__row {
+/* 分组不被压扁：高度不够时整块滚动，而不是把每行挤成一条线 */
+.todo-tooltip__scroll > .todo-status__group {
+  flex: 0 0 auto;
+}
+
+/* ---- 主窗设置页 ----
+
+   这里的卡片不参与悬浮窗格子缩放（`floating-module-scaling.spec` 只扫悬浮窗里的
+   `clamp` 上限），所以用常规单位。页面走「高度链」占满主窗内容区（见 `.todo-general`），
+   两列各自在内部滚动（右卡是任务列表、左卡是表单），整页不滚 —— 不再用视口高度 + 最小高
+   那套（那会让整页超出）。 */
+
+/*
+ * 整页入口（`fill: true` 后由 MainWindow 包在 `.module-page--fill` 里）：撑满主窗内容区。
+ * 两行 grid 的第二行设为 `minmax(0, 1fr)`，右侧「完成情况」卡因此占满剩余高度。
+ * ⚠️ 选择器写成 `.general-cards.todo-general`（抬高优先级）：共享的 `.general-cards` 给的是
+ * `align-items: start`（各列独立高度），两个类同优先级时谁后加载谁赢 —— 一旦 `.todo-general`
+ * 落被 `.general-cards` 盖掉，右卡就不被拉高、内容超出后被 `overflow:hidden` 截掉、也没有
+ * 内部滚动条（正是「看不到 scrollbar」的症状）。写成复合选择器后与加载顺序无关。
+ */
+.general-cards.todo-general {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-items: stretch;
+  /*
+   * 左右两列：**左列固定宽度、右列吃掉剩余空间**。
+   * 左列是一组定宽表单（Token / 清单 / 周期 / 测试连接），宽度给足就不会被挤到换行；
+   * 右列是任务树，随窗口伸缩才有意义。
+   */
+  grid-template-columns: 340px minmax(0, 1fr);
+}
+
+/*
+ * ⚠️ 单列塌陷必须在这里再写一遍：`.general-cards` 的媒体查询是**单类**选择器，
+ * 优先级低于上面那条两个类的规则 —— 不重复一次，窄窗口下左列会一直钉在 340px。
+ */
+@media (max-width: 760px) {
+  .general-cards.todo-general {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.general-cards.todo-general > .ufo-card {
+  min-height: 0;
+}
+
+/*
+ * 左卡（API 授权与服务）：高度由 grid 行给定（与右卡等高），内容比它高时**在卡内滚**，
+ * 不能把最下面的「测试连接」挤出卡片外面。
+ *
+ * ⚠️ 滚动放在内层 `.todo-auth-card__body` 而不是卡片自己身上：卡片里的加载遮罩是
+ * `position: absolute; inset: 0`，卡片一旦成了滚动容器，遮罩会跟着内容一起滚走
+ * （「正在保存 Token…」就看不见了）。内层滚、遮罩留在卡片上，两者互不干扰。
+ * ⚠️ 卡片是 grid 容器（`.ufo-card`）：内层要吃掉整行高度就得把行写成 `minmax(0, 1fr)`，
+ * 默认的 `auto` 行会跟着内容长高，滚动区永远不触发。
+ */
+.ufo-card.todo-auth-card {
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+/*
+ * 卡内滚动区：与 `.ufo-card` 的 `gap-3`（12px）同节奏 —— 卡片自己的 gap 只管直接子项，
+ * 内容进了这一层之后间距得由这里出。
+ * 滚动条用全站统一的 Matte 细滚动条 + 稳定槽位（出现滚动条时不再挤窄内容）。
+ */
+.todo-auth-card__body {
+  display: grid;
+  min-height: 0;
+  gap: 12px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+/* 新增任务卡：横跨两列（表单是一整行，挤进半列会换行得很难看） */
+.todo-create-card {
+  grid-column: 1 / -1;
+}
+
+/*
+ * 「完成情况」卡：高度由 grid 第二行给定，内部列表滚动（不再写死 44vh）。
+ * `position: relative` 是给卡片里的 `BaseLoadingOverlay` 当定位祖先 —— 加载遮罩盖的是
+ * **这块视图**（不是整页 / 不是全屏），请求在飞的时候用户仍看得见自己在等哪一块。
+ */
+.todo-status-card {
+  position: relative;
+  min-height: 0;
+}
+
+/* 滚动容器：未完成 + 已完成两组在这里滚 */
+.todo-status {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.todo-status__group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* 分组标题：如「未完成 5」/「已完成（近 7 天）3」，计数用强调色 */
+.todo-status__group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  color: var(--ufo-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.todo-status__group-title > span {
+  color: var(--ufo-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-status__list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * 一行目标：折叠按钮 + 勾选框 + 标题 + 右侧信息。
+ *
+ * 缩进按 `--todo-depth`（行内 style 给，已由 `flattenTree` 夹到 3 层）：每深一层整行右移一格，
+ * 「目标 → 子目标」的层级一眼可见。
+ */
+.todo-status__row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 9px;
+  gap: 7px;
+  padding: 6px 9px 6px calc(9px + var(--todo-depth, 0) * 16px);
   border: 1px solid var(--ufo-border);
   border-radius: 8px;
   background: var(--ufo-surface-2);
+  transition: border-color 140ms ease-out;
 }
 
-.todo-preview__dot {
-  width: 8px;
-  height: 8px;
+.todo-status__row:hover {
+  border-color: var(--ufo-border-strong);
+}
+
+/* 折叠按钮的槽位：叶子行也占同宽 —— 勾选框才能上下对齐成一列 */
+.todo-status__twist {
+  display: inline-flex;
+  width: 14px;
   flex: 0 0 auto;
-  border-radius: 999px;
-  background: var(--ufo-muted);
+  align-items: center;
+  justify-content: center;
 }
 
-.todo-preview__dot--red {
-  background: var(--ufo-danger);
+.todo-status__twist-btn {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ufo-muted);
+  cursor: pointer;
 }
 
-.todo-preview__dot--yellow {
-  background: var(--ufo-status-yellow);
+.todo-status__twist-btn:hover {
+  color: var(--ufo-text);
 }
 
-.todo-preview__title {
+.todo-status__twist-btn:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 箭头默认朝下（展开态），收起时转 -90° 指向右侧 */
+.todo-status__twist-btn svg {
+  transition: transform 140ms ease-out;
+}
+
+.todo-status__twist-btn[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
+}
+
+/*
+ * 勾选框按钮：本行**唯一**能切换完成态的控件（标题退成纯文字，点它不做任何事）。
+ *
+ * 命中区 24×24 包着 16px 的方框：WCAG 2.2「目标尺寸（最小）」要求指针目标至少 24px，
+ * 而 16px 的方框按原样放上去只有 16px 好点。负外边距把多出来的 4px 还给排版 ——
+ * 于是行的高度与各列的左右位置与放大之前完全一致，多出来的命中区正好吃掉两侧的间隙
+ * （间隙 7px，不会压到左边的折叠按钮）。
+ */
+.todo-status__check-btn {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.todo-status__check-btn:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+/* 提交中 / 由子目标驱动（`disabled`）：不再给「可点」的手型 */
+.todo-status__check-btn:disabled {
+  cursor: default;
+}
+
+/*
+ * 勾选框：**优先级色直接画在边框上**（高红 / 中黄 / 低蓝）。
+ *
+ * ⚠️ 三档必须用**同一条加粗的边框**，只有颜色不同 —— 早先按优先级写 3 / 2 / 1px，
+ * 结果是一条发丝般的蓝细线跟一块厚黄框并排，看着像三种不同的控件（而且 1px 在
+ * Windows 的缩放比下还会被抹成灰边）。粗细是「加粗」，不是「分级」。
+ * 颜色之外的分辨通道：行右侧的「高 / 中 / 低」文字标签。
+ */
+.todo-status__check {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--ufo-muted);
+  border-radius: 5px;
+  color: transparent;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.todo-status__check--red {
+  border-color: var(--ufo-status-red);
+}
+
+.todo-status__check--yellow {
+  border-color: var(--ufo-status-yellow);
+}
+
+.todo-status__check--blue {
+  border-color: var(--ufo-status-blue);
+}
+
+/* 由子目标驱动（有未完成子目标的父目标）：虚线 + 半透明，一眼看出「这一条不是给你点的」 */
+.todo-status__check.is-derived {
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+/*
+ * 已完成：填成强调色 + 深色对勾。完成是比优先级更强的信号，这时让位给「已完成」
+ * （优先级那点信息由右侧的「高 / 中 / 低」标签继续承载）。
+ * ⚠️ 选择器是两个类，必须盖得住上面的 `--red / --yellow / --blue` 单类规则。
+ */
+.todo-status__check.is-done {
+  border-color: var(--ufo-accent);
+  background: var(--ufo-accent);
+  color: var(--ufo-accent-on);
+}
+
+.todo-status__title {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -367,7 +554,7 @@
   font-size: 12.5px;
 }
 
-.todo-preview__meta {
+.todo-status__meta {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -377,20 +564,87 @@
   white-space: nowrap;
 }
 
-.todo-preview__meta--red {
+.todo-status__meta--red {
   color: var(--ufo-danger);
   font-weight: 600;
 }
 
-.todo-preview__meta--yellow {
+.todo-status__meta--yellow {
   color: var(--ufo-status-yellow);
 }
 
-.todo-preview__priority {
-  color: var(--ufo-accent);
+.todo-status__priority--red {
+  color: var(--ufo-status-red);
 }
 
-.todo-preview__scope {
+.todo-status__priority--yellow {
+  color: var(--ufo-status-yellow);
+}
+
+.todo-status__priority--blue {
+  color: var(--ufo-status-blue);
+}
+
+/* 操作反馈文案：紧跟在「刷新」旁边，用语义色。 */
+.todo-status__action-msg {
+  margin-left: 6px;
+  color: var(--ufo-accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.todo-status__action-msg--error {
+  color: var(--ufo-danger);
+}
+
+/* 「全部顺延」按钮里的条数：跟着按钮字号走，用强调色把数字挑出来 */
+.todo-status__btn-count {
+  margin-left: 5px;
+  color: var(--ufo-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 删除的二次确认条（右键菜单选了「删除目标」后才出现）。
+ * 用危险色描边 + 淡底把自己和卡头那排按钮区分开 —— 它是「待办中的一次破坏性操作」，
+ * 不是又一个普通按钮。⚠️ 不用原生 `confirm`：项目装了 tauri-plugin-prevent-default，会被拦下。
+ */
+.todo-status__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--ufo-danger) 42%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ufo-danger) 10%, transparent);
+  color: var(--ufo-text);
+  font-size: 11.5px;
+}
+
+.todo-status__confirm-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 已完成的整行：标题与右侧信息置灰 + 删除线，一眼区别于未完成。
+ * 只给文字上样式、不给整行加 `opacity`：行级透明会把勾选框一起压虚，勾选框得留着（实心强调色）。
+ */
+.todo-status__row.is-done .todo-status__title,
+.todo-status__row.is-done .todo-status__meta {
+  text-decoration: line-through;
+  color: var(--ufo-muted);
+}
+
+/* 卡头的一行说明（清单范围 + 排序口径） */
+.todo-status__scope {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -398,14 +652,27 @@
   font-size: 11px;
 }
 
-.todo-preview__empty {
+.todo-status__empty {
+  margin: 0;
+  padding: 4px 2px;
+  color: var(--ufo-muted);
+  font-size: 11.5px;
+}
+
+/* 整卡数据未到时的居中空态（区别于组内某一行空态） */
+.todo-status__empty--center {
   display: flex;
   flex: 1 1 auto;
   min-height: 96px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  color: var(--ufo-muted);
   text-align: center;
+}
+
+.todo-status__updated {
+  margin: 0 2px;
+  color: var(--ufo-muted);
+  font-size: 11px;
+  opacity: 0.7;
 }

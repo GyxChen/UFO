@@ -23,6 +23,7 @@
     "allow-get-session-records",
     "allow-is-left-mouse-pressed",
     "allow-get-weather-snapshot",
-    "allow-get-todo-snapshot"
+    "allow-get-todo-snapshot",
+    "allow-complete-todo-task"
   ]
 }

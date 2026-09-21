@@ -49,7 +49,13 @@ function onChange(event: Event) {
   box-sizing: border-box;
   width: 100%;
   height: 38px;
-  margin: 0;
+  /*
+   * ⚠️ 这里**不能**写 `margin: 0`：Tailwind 的 preflight 已经把所有元素的 margin 归零，
+   * 这一条是多余的，而它的优先级（`.base-input[data-v-…]`）高过 `space-y-*` ——
+   * 后者编译出来是 `:where(...)`，**优先级为 0**。于是「输入框 + 按钮」这类
+   * `space-y-2` 排出来的间距会被静默吃掉，输入框与下一行贴在一起。
+   * 归零交给 preflight，间距交给调用方的 gap / margin。
+   */
   padding: 0 12px;
   border: 1px solid var(--ufo-border-strong);
   border-radius: 10px;

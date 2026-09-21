@@ -162,6 +162,10 @@ pub async fn get_weather_snapshot(
 ) -> Result<WeatherSnapshot, String> {
     let force = force_refresh.unwrap_or(false);
 
+    if force {
+        weather_state.cache.clear();
+    }
+
     // 优先读取缓存
     if !force {
         if let Some(cached) = weather_state.cache.get_snapshot() {
