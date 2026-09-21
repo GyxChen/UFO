@@ -10,6 +10,7 @@ import {
   type StatusColor,
   type StatusSnapshot,
 } from '../lib/agent-status'
+import { buildMockStatusSnapshot, mockSessionCount, mockSessionsFlash, shouldInjectMockSessions } from '../lib/mock'
 
 let stopListener: (() => void) | undefined
 let stopHookListener: (() => void) | undefined
@@ -45,6 +46,13 @@ export const useAgentStatusStore = defineStore('agent-status', {
     async start() {
       if (this.started) return
       this.started = true
+      // 开发期假会话（.env 的 VITE_AGENT_STATUS_MOCK_COUNT > 0）：直接用 mock 快照占位并跳过真实 IPC，
+      // 让没有真实 CLI 会话时也能调试悬浮窗多灯布局 / 信息卡内容。生产构建 DEV=false 恒不走这条。
+      if (shouldInjectMockSessions()) {
+        this.applySnapshot(buildMockStatusSnapshot(mockSessionCount(), { flashing: mockSessionsFlash() }))
+        this.connection = 'connected'
+        return
+      }
       try {
         stopListener = await listenToAgentStatus((snapshot) => this.applySnapshot(snapshot))
         // 首帧 IPC 可能早于后端 .manage()：重试几次，别让一次竞态退化成「连不上」。
