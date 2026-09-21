@@ -80,8 +80,6 @@ pub struct QWeatherNowData {
     #[serde(default)]
     pub humidity: String,
     #[serde(default)]
-    pub precip: String,
-    #[serde(default)]
     pub pressure: String,
     #[serde(default)]
     pub vis: String,

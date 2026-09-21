@@ -117,12 +117,9 @@ pub struct RawTask {
     pub items: Vec<RawChecklistItem>,
 }
 
-/// 子目标条目：关心它有没有标题、有没有被勾掉。
+/// 子目标条目：关心它有没有被勾掉。
 #[derive(Debug, Default, Deserialize)]
 pub struct RawChecklistItem {
-    /// 子目标标题（展示用；缺省空串不解析失败）
-    #[serde(default)]
-    pub title: String,
     /// 子任务状态：≥ 2 视为已勾掉
     #[serde(default)]
     pub status: i64,
@@ -600,8 +597,8 @@ mod tests {
         let mut done = task("带子目标", 0, None);
         done.completed_time = Some(format_utc_datetime(done_ms));
         done.items = vec![
-            RawChecklistItem { title: "s1".to_string(), status: 2 },
-            RawChecklistItem { title: "s2".to_string(), status: 0 },
+            RawChecklistItem { status: 2 },
+            RawChecklistItem { status: 0 },
         ];
 
         let snapshot = make_snapshot(&[], &[done], &names(), done_ms + DAY_MS);
@@ -633,8 +630,8 @@ mod tests {
     fn carries_project_name_checklist_and_parent_id() {
         let mut item = task("写周报", 3, Some("2026-09-19T09:00:00.000+0800"));
         item.items = vec![
-            RawChecklistItem { title: "提纲".to_string(), status: 0 },
-            RawChecklistItem { title: "成稿".to_string(), status: 2 },
+            RawChecklistItem { status: 0 },
+            RawChecklistItem { status: 2 },
         ];
         // 父子子任务：parentId 指向父任务
         item.parent_id = Some("parent-1".to_string());
