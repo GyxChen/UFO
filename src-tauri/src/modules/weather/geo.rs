@@ -21,8 +21,6 @@ pub fn auto_ip_location() -> Result<String, String> {
         Ok(format!("{lon:.2},{lat:.2}"))
     } else if !parsed.city.is_empty() {
         Ok(parsed.city)
-    } else if let Some(region) = parsed.region_name.filter(|value| !value.trim().is_empty()) {
-        Ok(region)
     } else {
         Err("无法从 IP 获取到经纬度或城市名".to_string())
     }

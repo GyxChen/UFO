@@ -45,6 +45,13 @@
   column-gap: 4%;
 }
 
+/* 横条（上下贴边）下灯点在上、图标在下，中间保留一格百分比间距。 */
+.agent-status-module--horizontal .agent-status-module__item {
+  flex-direction: column;
+  column-gap: 0;
+  row-gap: 4%;
+}
+
 .agent-status-module__identity {
   @apply flex min-h-0 min-w-0 shrink-0 items-center justify-center;
   /* 平台图标固定为灯点的 0.8 倍：42% = 0.8 × 52.5%（见 __dot）。 */
