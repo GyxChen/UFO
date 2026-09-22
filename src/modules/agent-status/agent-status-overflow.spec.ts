@@ -194,6 +194,27 @@ describe('溢出格 · 折叠清单', () => {
   })
 })
 
+describe('空态 · 平台 logo 鬼影', () => {
+  it('lays the two platform logos as ghosts when there is no session', () => {
+    const { wrapper } = mountModule(0, 1)
+
+    // 零会话时窗口里什么都不画会像「挂了」，所以铺一层两个 logo 的鬼影。
+    const idle = wrapper.get('.agent-status-module__idle')
+    expect(idle.findAll('.agent-status-module__idle-icon')).toHaveLength(2)
+    // 图标是纯装饰（优先级信息没有可承载的对象），读屏拿 sr-only 那一句。
+    expect(wrapper.findAll('.agent-status-module__idle-icon[aria-hidden="true"]')).toHaveLength(2)
+    expect(idle.get('.sr-only').text()).toBe('当前没有 CLI 会话在运行')
+    // 空态下不该有任何灯或溢出格。
+    expect(wrapper.find('.agent-status-module__item').exists()).toBe(false)
+  })
+
+  it('drops the ghosts as soon as a session shows up', () => {
+    // 放不下 ≠ 空态：5 个会话挤在 1 格里是「有会话 + 溢出格」，鬼影必须让位。
+    expect(mountModule(1, 1).wrapper.find('.agent-status-module__idle').exists()).toBe(false)
+    expect(mountModule(5, 1).wrapper.find('.agent-status-module__idle').exists()).toBe(false)
+  })
+})
+
 describe('溢出格 · 内容就绪判定', () => {
   it('claims tooltip content only when something is actually folded', () => {
     seed(5)

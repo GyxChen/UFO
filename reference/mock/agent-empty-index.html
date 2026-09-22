@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 悬浮窗「没有 Agent 时」四套方案</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /*
+       * 悬浮窗「一个 agent 都没有」时的四套可视化方案（对比用 mock）。
+       * token 与尺寸口径抄自 src/assets/main.css 与 src/lib/floating-layout.ts：
+       * 一格 45px、外壳 1px 描边 + 2px 内边距（组件可用区 ≈39px）、毛玻璃 rgba(61,61,61,0.8) + blur(6px)。
+       * 所有小窗按**真实像素**渲染，另有 3× 放大版看清细节。
+       *
+       * 空态时的窗口尺寸（实测口径，见 agent-status/lib/agent-status-layout.ts）：
+       * - 方形 / 横条 / 竖条：agent 需求恒 ≥1 格 → 只有它启用时窗口就是 45×45（哪怕贴着上/下边）；
+       * - 贴角：地板 2 格 → 90×45；
+       * - 与待办（恒 2 格）同级时：横条整窗 135×45，agent 拿 1/3。
+       */
+      :root {
+        --ufo-bg: rgba(61, 61, 61, 0.8);
+        --ufo-surface: #2a2a2a;
+        --ufo-surface-2: #323232;
+        --ufo-border: rgba(255, 255, 255, 0.08);
+        --ufo-border-strong: rgba(255, 255, 255, 0.14);
+        --ufo-text: #f3f4f6;
+        --ufo-muted: #a3a3a3;
+        --ufo-accent: #34d399;
+        --ufo-status-green: #34d399;
+        --ufo-status-yellow: #fbbf24;
+        --ufo-status-red: #f87171;
+        --ufo-status-blue: #60a5fa;
+        --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 44px 20px 80px;
+        font-family: var(--font-sans);
+        color: var(--ufo-text);
+        /* 桌面壁纸的近似：毛玻璃要有东西可透才看得出效果 */
+        background:
+          radial-gradient(circle at 18% 8%, #5b6472 0%, transparent 45%),
+          radial-gradient(circle at 82% 78%, #4a3f52 0%, transparent 40%),
+          linear-gradient(150deg, #2b3038 0%, #15171b 100%);
+        display: grid;
+        justify-items: center;
+        gap: 26px;
+      }
+
+      .page {
+        width: min(1120px, 100%);
+        display: grid;
+        gap: 22px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+      }
+
+      .lead {
+        margin: 0;
+        color: var(--ufo-muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .lead code {
+        padding: 1px 5px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.08);
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        font-size: 12px;
+      }
+
+      .card {
+        padding: 16px 18px;
+        border: 1px solid var(--ufo-border);
+        border-radius: 12px;
+        background: var(--ufo-surface);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th,
+      td {
+        padding: 8px 10px;
+        text-align: left;
+        vertical-align: top;
+        line-height: 1.6;
+        border-bottom: 1px solid var(--ufo-border);
+      }
+
+      th {
+        color: var(--ufo-muted);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      td:first-child {
+        color: var(--ufo-text);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .stars {
+        color: var(--ufo-accent);
+        letter-spacing: 1px;
+        white-space: nowrap;
+      }
+
+      /* ── 方案块 ─────────────────────────────────────────────── */
+
+      .option {
+        display: grid;
+        gap: 14px;
+        padding: 18px;
+        border: 1px solid var(--ufo-border);
+        border-radius: 14px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent), var(--ufo-surface);
+      }
+
+      .option__head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .option__head h2 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .tag {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--ufo-accent-soft, rgba(52, 211, 153, 0.16));
+        color: var(--ufo-accent);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .tag--muted {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--ufo-muted);
+      }
+
+      .option__note {
+        margin: 0;
+        color: var(--ufo-muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      .option__note b {
+        color: var(--ufo-text);
+      }
+
+      .strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 26px;
+        align-items: flex-end;
+      }
+
+      .slot {
+        display: grid;
+        gap: 8px;
+        justify-items: center;
+      }
+
+      .slot__name {
+        color: var(--ufo-muted);
+        font-size: 11px;
+        line-height: 1.4;
+        text-align: center;
+      }
+
+      .slot__name b {
+        display: block;
+        color: var(--ufo-text);
+        font-size: 11.5px;
+      }
+
+      /*
+       * 悬浮窗外壳：1px 描边 + 2px 内边距，毛玻璃底。尺寸即真实窗口尺寸。
+       */
+      .win {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 12px;
+        background-color: var(--ufo-bg);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        box-shadow: rgba(142, 142, 142, 0.19) 0 6px 15px 0;
+        color: var(--ufo-text);
+        overflow: hidden;
+        user-select: none;
+      }
+
+      .win--square {
+        width: 45px;
+        height: 45px;
+      }
+
+      .win--corner {
+        width: 90px;
+        height: 45px;
+      }
+
+      .win--coexist {
+        width: 135px;
+        height: 45px;
+      }
+
+      /* 放大 3×：整个窗口等比放大，细节才看得清（1:1 才是真实观感） */
+      .zoom {
+        zoom: 3;
+      }
+
+      /* ── 现状：空窗（什么都没有） ───────────────────────────── */
+
+      .now .todo-empty {
+        width: 100%;
+        height: 100%;
+      }
+
+      /* ── 方案 A · 待机暗灯（空心圆） ───────────────────────── */
+
+      .optA .idle-ring {
+        width: 10px;
+        height: 10px;
+        border: 1.5px solid rgba(255, 255, 255, 0.26);
+        border-radius: 50%;
+      }
+
+      /* ── 方案 B · 幽影平台标（两个 logo 的鬼影） ───────────── */
+
+      .optB .ghosts {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .optB .ghosts img {
+        display: block;
+        height: 13px;
+        opacity: 0.38;
+        filter: grayscale(1);
+      }
+
+      .optB .ghosts img.g-codex {
+        height: 12px;
+      }
+
+      /* ── 方案 C · 呼吸暗点 ─────────────────────────────────── */
+
+      .optC .breath {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ufo-muted);
+        animation: breathe 4.5s ease-in-out infinite;
+      }
+
+      @keyframes breathe {
+        0%,
+        100% {
+          opacity: 0.16;
+        }
+        50% {
+          opacity: 0.42;
+        }
+      }
+
+      /* 尊重「减少动态效果」：静止停在中间档，不再呼吸 */
+      @media (prefers-reduced-motion: reduce) {
+        .optC .breath {
+          animation: none;
+          opacity: 0.3;
+        }
+        .legend--motion::after {
+          content: '（本机已开启「减少动态效果」，静态显示）';
+        }
+      }
+
+      /* ── 方案 D · 待机文字 ─────────────────────────────────── */
+
+      .optD .idle-text {
+        color: var(--ufo-muted);
+        font-size: 9.5px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        opacity: 0.85;
+      }
+
+      /* ── 与待办并存时，右侧那 2/3 是待办的样子（与 todo-index.html 同款） ── */
+
+      .todo-mini {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+
+      .todo-mini .cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .todo-mini .num {
+        font-size: 15px;
+        font-weight: 800;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .todo-mini .bar {
+        width: 100%;
+        height: 2px;
+        border-radius: 1px;
+      }
+
+      .todo-mini .cell--high .num {
+        color: var(--ufo-status-red);
+      }
+      .todo-mini .cell--high .bar {
+        background: var(--ufo-status-red);
+      }
+      .todo-mini .cell--mid .num {
+        color: var(--ufo-status-yellow);
+      }
+      .todo-mini .cell--mid .bar {
+        background: var(--ufo-status-yellow);
+      }
+      .todo-mini .cell--low .num {
+        color: var(--ufo-status-blue);
+      }
+      .todo-mini .cell--low .bar {
+        background: var(--ufo-status-blue);
+      }
+
+      /* 并存预览的槽位划分（1fr / 2fr）：虚线只用于看清槽位，真实窗口里没有这条线 */
+      .coexist {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        grid-template-columns: 1fr 2fr;
+      }
+
+      .coexist > * {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 0;
+      }
+
+      .slot-guide {
+        outline: 1px dashed rgba(255, 255, 255, 0.14);
+        outline-offset: -1px;
+      }
+
+      .foot {
+        color: var(--ufo-muted);
+        font-size: 11.5px;
+        line-height: 1.8;
+      }
+
+      .foot code {
+        color: var(--ufo-text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <h1>悬浮窗「没有 Agent 时」· 四套方案</h1>
+        <p class="lead">
+          现状：一个 CLI 会话都没有时，<b>窗口里什么都不画</b> —— 一块空毛玻璃方块。用户看到它的第一反应是
+          「是不是挂了」，而不是「现在没在跑」。而且空态出现的频率不低：开机后、跑完收工后、只在写文档的下午，
+          屏幕上都挂着这块空窗。<br />
+          空态时的窗口尺寸按实测口径渲染：只有 agent 启用时是 <code>45×45</code>（方形 / 横条 / 竖条都一样，
+          agent 需求恒 ≥1 格）、贴角 <code>90×45</code>、与待办同级时整窗 <code>135×45</code>
+          （agent 占 <code>1/3</code>）。下面每套都给了这四种场景，1:1 真实尺寸 + 3× 放大。
+        </p>
+      </header>
+
+      <!-- ── 现状 ─────────────────────────────────────────────── -->
+      <section class="option now">
+        <div class="option__head">
+          <h2>现状 · 空窗</h2>
+          <span class="tag tag--muted">对照</span>
+        </div>
+        <p class="option__note">
+          模板里 <code>v-for</code> 遍历会话、溢出格又在 <code>overflow &gt; 0</code> 时才渲染，所以零会话 = 零节点，
+          只剩外壳那层毛玻璃。斜纹是「什么也没有」的标注，真实窗口里就是一块干净的玻璃。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square">
+              <div
+                class="todo-empty"
+                style="
+                  background: repeating-linear-gradient(
+                    45deg,
+                    rgba(255, 255, 255, 0.05) 0 4px,
+                    transparent 4px 8px
+                  );
+                "
+              ></div>
+            </div>
+            <p class="slot__name"><b>方形 / 横条 / 竖条 45×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--corner">
+              <div
+                class="todo-empty"
+                style="
+                  background: repeating-linear-gradient(
+                    45deg,
+                    rgba(255, 255, 255, 0.05) 0 4px,
+                    transparent 4px 8px
+                  );
+                "
+              ></div>
+            </div>
+            <p class="slot__name"><b>贴角 90×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--coexist">
+              <div class="coexist">
+                <div
+                  style="
+                    background: repeating-linear-gradient(
+                      45deg,
+                      rgba(255, 255, 255, 0.05) 0 4px,
+                      transparent 4px 8px
+                    );
+                  "
+                ></div>
+                <div>
+                  <div class="todo-mini">
+                    <span class="cell cell--high"><span class="num">2</span><i class="bar"></i></span>
+                    <span class="cell cell--mid"><span class="num">1</span><i class="bar"></i></span>
+                    <span class="cell cell--low"><span class="num">3</span><i class="bar"></i></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="slot__name"><b>与待办并存 135×45</b>左侧 1/3 = agent 槽</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 对比表 ───────────────────────────────────────────── -->
+      <section class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>方案</th>
+              <th>它在说什么</th>
+              <th>45×45 可读性</th>
+              <th>动效</th>
+              <th>与并存模块的关系</th>
+              <th>风险</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>A · 待机暗灯</td>
+              <td>「设备开着，但没有任务」——和现有灯点是同一个圆，只是空心 + 变暗</td>
+              <td class="stars">★★★★★</td>
+              <td>无</td>
+              <td>暗、小、空心：不会和待办的彩色数字抢注意力</td>
+              <td>可能被误读成「灰色的灯」（需要一点描边对比度兜底）</td>
+            </tr>
+            <tr>
+              <td>B · 幽影平台标</td>
+              <td>「这块窗是 Claude / Codex 的状态灯」——回答「这是谁的窗」</td>
+              <td class="stars">★★★</td>
+              <td>无</td>
+              <td>两个 logo 在 1/3 槽里会偏挤；待办在旁边显得更花</td>
+              <td>低不透明度下 logo 细节糊成一团灰；品牌色损失</td>
+            </tr>
+            <tr>
+              <td>C · 呼吸暗点</td>
+              <td>「活着，在等 agent」——靠极慢的明暗变化表示在线</td>
+              <td class="stars">★★★★</td>
+              <td>有（4.5s）</td>
+              <td>常驻悬浮窗上一直动，久看容易分神</td>
+              <td>与「绿=执行中」的闪烁语言可能打架（用户会问「这个点为什么在闪」）</td>
+            </tr>
+            <tr>
+              <td>D · 待机文字</td>
+              <td>「待机」——把状态说成字，最不容易误读</td>
+              <td class="stars">★★★</td>
+              <td>无</td>
+              <td>中文两字在 1/3 槽里偏窄，字号只能 9px 上下</td>
+              <td>小字在毛玻璃上对比度吃紧；与「一个窗只放灯」的极简气质有点冲突</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ── 方案 A ───────────────────────────────────────────── -->
+      <section class="option optA">
+        <div class="option__head">
+          <h2>方案 A · 待机暗灯<span class="tag">推荐</span><span class="tag tag--muted">最克制</span></h2>
+        </div>
+        <p class="option__note">
+          正中一个 <b>10px 的空心圆</b>（1.5px 描边、白 26%），不改现有灯点的尺寸语言 —— 亮起来是实心彩点，
+          闲下来就是同一个圆的空心版，像设备的待机指示灯。零动效、零小字，39px 里也一眼看得清「窗还活着」。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square"><span class="idle-ring"></span></div>
+            <p class="slot__name"><b>方形 / 横条 / 竖条 45×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--corner"><span class="idle-ring"></span></div>
+            <p class="slot__name"><b>贴角 90×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--coexist">
+              <div class="coexist">
+                <div class="slot-guide"><span class="idle-ring"></span></div>
+                <div>
+                  <div class="todo-mini">
+                    <span class="cell cell--high"><span class="num">2</span><i class="bar"></i></span>
+                    <span class="cell cell--mid"><span class="num">1</span><i class="bar"></i></span>
+                    <span class="cell cell--low"><span class="num">3</span><i class="bar"></i></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="slot__name"><b>与待办并存 135×45</b>虚线仅示槽位</p>
+          </div>
+          <div class="slot">
+            <div class="win win--square zoom"><span class="idle-ring"></span></div>
+            <p class="slot__name"><b>方形 3× 放大</b></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 方案 B ───────────────────────────────────────────── -->
+      <section class="option optB">
+        <div class="option__head">
+          <h2>方案 B · 幽影平台标</h2>
+        </div>
+        <p class="option__note">
+          两个平台 logo 降到 38% 并去色，像水印一样并排居中。好处是把「这块窗是给 Claude / Codex 的」
+          写进画面；代价是 logo 缩到 13px、再去色之后，细节基本糊成一团灰，品牌色也没了
+          （想让品牌色透出来就去掉 <code>grayscale</code>，把不透明度提到 40% 上下）。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square">
+              <span class="ghosts">
+                <img src="../../src/assets/claude.svg" alt="Claude" />
+                <img class="g-codex" src="../../src/assets/codex.svg" alt="Codex" />
+              </span>
+            </div>
+            <p class="slot__name"><b>方形 45×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--corner">
+              <span class="ghosts">
+                <img src="../../src/assets/claude.svg" alt="Claude" />
+                <img class="g-codex" src="../../src/assets/codex.svg" alt="Codex" />
+              </span>
+            </div>
+            <p class="slot__name"><b>贴角 90×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--coexist">
+              <div class="coexist">
+                <div class="slot-guide">
+                  <span class="ghosts">
+                    <img src="../../src/assets/claude.svg" alt="Claude" />
+                    <img class="g-codex" src="../../src/assets/codex.svg" alt="Codex" />
+                  </span>
+                </div>
+                <div>
+                  <div class="todo-mini">
+                    <span class="cell cell--high"><span class="num">2</span><i class="bar"></i></span>
+                    <span class="cell cell--mid"><span class="num">1</span><i class="bar"></i></span>
+                    <span class="cell cell--low"><span class="num">3</span><i class="bar"></i></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="slot__name"><b>与待办并存 135×45</b>左边两个 logo 挤在 43px 里</p>
+          </div>
+          <div class="slot">
+            <div class="win win--square zoom">
+              <span class="ghosts">
+                <img src="../../src/assets/claude.svg" alt="Claude" />
+                <img class="g-codex" src="../../src/assets/codex.svg" alt="Codex" />
+              </span>
+            </div>
+            <p class="slot__name"><b>方形 3× 放大</b></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 方案 C ───────────────────────────────────────────── -->
+      <section class="option optC">
+        <div class="option__head">
+          <h2>方案 C · 呼吸暗点<span class="tag tag--muted">有动效</span></h2>
+        </div>
+        <p class="option__note legend--motion">
+          一个 7px 的灰点，4.5 秒一次极慢的明暗呼吸（16% ↔ 42%）。它想表达「在线，在等 agent」，
+          和「绿闪 = 刚做完一轮」是两种时间尺度。⚠️ 风险也在这：悬浮窗是常驻的，一直有东西在动容易分神，
+          而且用户可能把它读成「有活儿在跑」。本页已按 <code>prefers-reduced-motion</code> 做了静态兜底。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square"><span class="breath"></span></div>
+            <p class="slot__name"><b>方形 45×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--corner"><span class="breath"></span></div>
+            <p class="slot__name"><b>贴角 90×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--coexist">
+              <div class="coexist">
+                <div class="slot-guide"><span class="breath"></span></div>
+                <div>
+                  <div class="todo-mini">
+                    <span class="cell cell--high"><span class="num">2</span><i class="bar"></i></span>
+                    <span class="cell cell--mid"><span class="num">1</span><i class="bar"></i></span>
+                    <span class="cell cell--low"><span class="num">3</span><i class="bar"></i></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="slot__name"><b>与待办并存 135×45</b></p>
+          </div>
+          <div class="slot">
+            <div class="win win--square zoom"><span class="breath"></span></div>
+            <p class="slot__name"><b>方形 3× 放大</b></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 方案 D ───────────────────────────────────────────── -->
+      <section class="option optD">
+        <div class="option__head">
+          <h2>方案 D · 待机文字</h2>
+        </div>
+        <p class="option__note">
+          直接写两个字「待机」（9.5px、次文本色、字距放开一点）。四个方案里它最不容易被误读 ——
+          不用猜符号、不用猜图标；代价是这块窗从此有了小字，和「一个窗只放灯」的极简气质有点冲突，
+          而且 9px 的中文在毛玻璃上对比度吃紧（真要做建议提到 10px 并加一点字重）。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square"><span class="idle-text">待机</span></div>
+            <p class="slot__name"><b>方形 45×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--corner"><span class="idle-text">待机</span></div>
+            <p class="slot__name"><b>贴角 90×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--coexist">
+              <div class="coexist">
+                <div class="slot-guide"><span class="idle-text">待机</span></div>
+                <div>
+                  <div class="todo-mini">
+                    <span class="cell cell--high"><span class="num">2</span><i class="bar"></i></span>
+                    <span class="cell cell--mid"><span class="num">1</span><i class="bar"></i></span>
+                    <span class="cell cell--low"><span class="num">3</span><i class="bar"></i></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="slot__name"><b>与待办并存 135×45</b></p>
+          </div>
+          <div class="slot">
+            <div class="win win--square zoom"><span class="idle-text">待机</span></div>
+            <p class="slot__name"><b>方形 3× 放大</b></p>
+          </div>
+        </div>
+      </section>
+
+      <p class="foot">
+        配色沿用 <code>src/assets/main.css</code> 的 token，未新增色值；A / B / D 零动效，C 带
+        <code>prefers-reduced-motion</code> 兜底。<br />
+        两件与「美观」无关但要先定的事：① 空态下 agent 仍占 ≥1 格（规范明确禁止 <code>demand</code> 返回 0），
+        所以「让它彻底消失、把窗口让给待办」不是这四个方案能解决的，需要单独改口径；
+        ② 悬停空态时信息卡怎么办 —— 现在零会话也没有可悬停的节点，要么不响应，要么像 A / D 那样
+        给一句「当前没有 CLI 会话在运行」（可以顺带说明怎么启动）。
+      </p>
+    </div>
+  </body>
+</html>
