@@ -1,24 +1,22 @@
 /**
- * 滴答待办的「三形态排布」护栏。
+ * 滴答待办的「三形态排布 + 数字/色条」护栏。
  *
- * 三面小旗的排布规则是按形态切换的，且**几处都容易改回去**：
+ * 悬浮窗视图 = 三组「数字 + 色条」（方案 A · 数字主导），排布规则按形态切换，几处都容易改回去：
  *
- * 1. 方形 / 四角 / 横条：横排三面（每组「旗在上、数量在下」）；
- * 2. 竖条（左右贴边）：竖排三面（一行一档「旗在左、数量在右」）—— 竖条只有一格宽、高反而富余；
- * 3. 竖条**不把三行摊满整条**：行轨取 `auto`（各取内容高）、整块随内容收拢后上下居中，仅留
- *    小呼吸间隙 —— 否则（1fr 等分或塞满封顶高度）三面 ~10px 的小旗会被拉开十几二十像素，
- *    观感是一个个孤零零挂着（实测 1fr 封顶 96px 时行距 32px）；
- * 4. 三面旗之间的列间隙只按宽度取（`8cqw`）—— 早先写的 `min(10cqh, 4cqw)` 在横条上被 cqh
+ * 1. 方形 / 四角 / 横条：三组**横排**，组内竖着放（数字在上、色条在下）；
+ * 2. 竖条（左右贴边）：三组**竖排**、组内横着放（色条在左、数字在右）—— 竖条只有一格宽、
+ *    高反而富余，横排三组会挤在一条线上；
+ * 3. 竖条**不把三组摊满整条**：整块随内容收拢后上下居中，行间隙固定 —— 否则三组会被拉开
+ *    十几二十像素，一个个孤零零挂着；
+ * 4. 三组之间的列间隙只按宽度取（`6cqw`）—— 早先写的 `min(10cqh, 4cqw)` 在横条上被 cqh
  *    压到 2px 上下，三组几乎贴在一起；
- * 5. 数量被降级掉（窄槽位）时网格里只剩三面旗，**轨道必须跟着收**：
- *    横排那套「按列填充 + 三列」会让三面旗摞成一列两行（旗 1、旗 2 上下叠、旗 3 跑到第二列），
- *    竖排那套「按行填充 + 两列」会让旗 1、旗 2 并排 —— 观感都不再是「三面旗排一排」。
+ * 5. 字号取**两条轴里更紧的那条**（`min(30cqh, 47cqw)`）：只看一条轴，另一边必然溢出，
+ *    而槽位有 `overflow: hidden`，观感就是数字被切掉一截；
+ * 6. 位数降档（`--todo-count-step`）只乘在那一个 `font-size` 上、且**只在窄槽位**（≤60px）生效 ——
+ *    各写一条 `font-size` 会被竖条那条形态规则盖掉；在 90px 的横条里两位数本来就放得下，
+ *    跟着一起缩纯属白缩。
  *
  * ⚠️ 这里断言的是**声明口径**，不是排版结果（测试环境没有排版引擎）。
- * 真实像素用无头 Edge + Plus Jakarta Sans 量过：45 格方形 39×39（三点一行，宽 29.4px）、
- * 竖条 39×174（三行等距地占中间 96px，最宽一行 31px）、32 格竖条 26×122（只剩三点、居中）。
- * 三档都到 `99+` 的最坏情形（四角 84×84）也没溢出；换成小旗后盒子放大到 0.7em
- * （横排窄槽 23cqw/23cqh、竖排窄槽 44cqw/16cqh），45 格下三面旗 + 两个间隙 ≈ 36px < 39.5px。
  */
 import { describe, expect, it } from 'vitest'
 
@@ -81,131 +79,183 @@ function decl(body: string, property: string): string {
 }
 
 describe('模块样式 · 滴答待办三形态排布', () => {
-  it('lays the three flags out in a row for square / corner / horizontal', () => {
+  it('lays the three groups out in a row for square / corner / horizontal', () => {
     const groups = ruleBody(todoCss(), '.todo-module__groups')
     expect(groups, '.todo-module__groups 必须存在').not.toBe('')
-    expect(decl(groups, 'grid-auto-flow')).toBe('column')
-    expect(decl(groups, 'grid-template-columns')).toBe('auto auto auto')
+    // 横排是默认方向（竖条那条形态规则才改成 column），组内是「数字在上、色条在下」。
+    expect(decl(groups, 'display')).toBe('flex')
+    expect(decl(groups, 'flex-direction')).toBe('')
+    expect(decl(groups, 'align-items')).toBe('center')
+
+    const cell = ruleBody(todoCss(), '.todo-module__cell')
+    expect(cell, '.todo-module__cell 必须存在').not.toBe('')
+    expect(decl(cell, 'flex-direction')).toBe('column')
   })
 
-  it('stacks the three flags vertically in the vertical bar', () => {
-    const vertical = ruleBody(todoCss(), '.todo-module--vertical .todo-module__groups')
+  it('stacks the three groups vertically (bar on the left, aligned) in the vertical bar', () => {
+    const css = todoCss()
+    const vertical = ruleBody(css, '.todo-module--vertical .todo-module__groups')
     expect(vertical, '竖条必须有单独的排布规则').not.toBe('')
-    // 一行一档：两列（旗 | 数量）、三行、按行填充。
-    expect(decl(vertical, 'grid-template-columns')).toBe('auto auto')
-    // 行轨必须是 auto（各取内容高），不能是 1fr —— 1fr 等分或塞满封顶高度会把三面旗拉开。
-    expect(decl(vertical, 'grid-template-rows')).toBe('repeat(3, auto)')
-    expect(decl(vertical, 'grid-auto-flow')).toBe('row')
-    // 三行随内容收拢后由父级上下居中；不能再给整块一个会撑开三面旗的固定 / 封顶高度。
+    expect(decl(vertical, 'flex-direction')).toBe('column')
+    // 三组随内容收拢后由父级上下居中；不能再给整块一个会撑开三组的固定 / 封顶高度。
     expect(decl(vertical, 'align-self')).toBe('center')
     expect(decl(vertical, 'height')).toBe('')
-    // 竖条的限制轴是行宽（只有一格宽），字号必须按 cqw 取，不能按 cqh（行高很富余，会溢出）。
+    // 竖条的限制轴是行宽（只有一格宽），字号必须带上 cqw，不能只看 cqh（行高很富余，会溢出）。
     expect(decl(vertical, 'font-size')).toContain('cqw')
+    // 三行等宽：行宽不同时（`▬ 2` 对 `▬ 12`）按 center 各自居中会让色条左缘参差。
+    expect(decl(vertical, 'align-items')).toBe('stretch')
+
+    // 组内转置：色条跑到数字左边（row-reverse，DOM 顺序不动），且在行内贴左 —— 色条排成一条竖线。
+    const cell = ruleBody(css, '.todo-module--vertical .todo-module__cell')
+    expect(cell, '竖条里组内必须转置').not.toBe('')
+    expect(decl(cell, 'flex-direction')).toBe('row-reverse')
+    expect(decl(cell, 'justify-content')).toBe('flex-end')
   })
 
-  it('keeps the three flags apart on the tight axis', () => {
+  it('keeps the three groups apart on the tight axis', () => {
     const groups = ruleBody(todoCss(), '.todo-module__groups')
-    // gap = 「行间隙 列间隙」两段。列间隙是三面旗疏密的唯一调节项，只能跟宽度走：
-    // 带上 cqh 就会在横条（只有一格高）上被压到 2px，三组贴成一坨。
-    const [, columnGap = ''] = decl(groups, 'gap').split(/\s+(?=clamp\()/)
-    expect(columnGap, '列间隙必须按 cqw 取').toContain('8cqw')
-    expect(columnGap, '列间隙不得再受 cqh 限制').not.toContain('cqh')
+    // 列间隙是三组疏密的唯一调节项，只能跟宽度走：带上 cqh 就会在横条（只有一格高）上
+    // 被压到 2px，三组贴成一坨。
+    expect(decl(groups, 'gap')).toContain('6cqw')
+    expect(decl(groups, 'gap')).not.toContain('cqh')
   })
 
-  it('collapses the grid tracks when the counts are hidden', () => {
+  it('sizes the type from whichever axis is tighter', () => {
+    const css = todoCss()
+    const groups = ruleBody(css, '.todo-module__groups')
+    const size = decl(groups, 'font-size')
+
+    // 两条轴都要在：只按一条取，另一条必然溢出（槽位是 overflow: hidden，切掉就看不出来）。
+    expect(size).toContain('min(')
+    expect(size).toContain('cqh')
+    expect(size).toContain('cqw')
+    // 上限是设计像素，必须跟格子缩放走。
+    expect(size).toContain('--floating-cell-scale')
+  })
+
+  it('keeps the vertical type on its own budget, scaled to 0.8', () => {
+    const css = todoCss()
+    const row = decl(ruleBody(css, '.todo-module__groups'), 'font-size')
+    const vertical = decl(ruleBody(css, '.todo-module--vertical .todo-module__groups'), 'font-size')
+
+    // 横排的预算：一格里三组并排、宽度三等分 → 高度项 55cqh / 宽度项 42cqw / 设计上限 15px。
+    expect(row).toContain('55cqh')
+    expect(row).toContain('42cqw')
+    expect(row).toContain('15px')
+
+    /*
+     * 竖条**不复用横排那套**：它一行只有一组，宽度不用三等分，预算本来就宽（23cqh / 80cqw / 20px）；
+     * 再按用户定的 0.8× 收一档 → 18.4cqh / 64cqw / 16px。45 格下约 15.5px（与方形同档）。
+     * ⚠️ 不是「横排预算 × 0.8」（那是 13px，比方形还小 —— 竖条明明更宽松，没有理由）；
+     *    9px 的可读性下限也不跟着缩。
+     */
+    expect(vertical).toContain('18.4cqh')
+    expect(vertical).toContain('64cqw')
+    expect(vertical).toContain('16px')
+    expect(vertical).toContain('9px')
+    expect(vertical).toContain('--floating-cell-scale')
+  })
+
+  it('steps the type down by digit count, only inside the narrow slot', () => {
     const css = todoCss()
 
-    // 横排（方形 / 四角 / 横条）的窄槽位：藏数字 + 把「按列填充」改回按行填充，三面旗才在一行。
-    const rowNarrow = blockAfter(css, '@container floating-slot (max-width: 60px)')
-    expect(rowNarrow, '横排窄槽降级块必须存在').not.toBe('')
-    expect(rowNarrow).toContain(':not(.todo-module--vertical) .todo-module__count')
-    const rowGroups = ruleBody(rowNarrow, '.todo-module:not(.todo-module--vertical) .todo-module__groups')
-    expect(decl(rowGroups, 'grid-auto-flow')).toBe('row')
-    // 数字一走，为「数字占满列宽」留的 8cqw 预算就没意义了，间隙改按字号取，三面旗才不挤。
-    // 0.3em（不是更宽的 0.45em）：三面旗并排时宽度是限制轴，间隙留多了旗子就得让小。
-    expect(decl(rowGroups, 'column-gap')).toBe('0.3em')
+    // 档位是个倍率变量，乘在 font-size 上 —— 各写一条 font-size 会被竖条那条形态规则盖掉。
+    expect(ruleBody(css, '.todo-module__groups')).toContain('--todo-count-step')
+    for (const layout of ['', '.todo-module--vertical ']) {
+      const size = decl(ruleBody(css, `${layout}.todo-module__groups`), 'font-size')
+      expect(size, `${layout || '横排'}的字号必须乘上档位`).toContain('var(--todo-count-step)')
+    }
 
-    // 竖条的窄槽位：藏数字 + 收成一列，三面旗才竖着叠（两列会变成旗 1、旗 2 并排）。
-    const colNarrow = blockAfter(css, '@container floating-slot (max-width: 28px)')
-    expect(colNarrow, '竖排窄槽降级块必须存在').not.toBe('')
-    expect(decl(ruleBody(colNarrow, '.todo-module--vertical .todo-module__groups'), 'grid-template-columns')).toBe('auto')
-    expect(colNarrow).toContain('display: none')
-    // 形态规则（`.todo-module--vertical .todo-module__flag`）与降级规则等长，不带同一条选择器就盖不住它。
-    expect(colNarrow).toContain('.todo-module--vertical .todo-module__flag')
+    // 横排只在小槽位降档：90px 的横条里两位数按原字号放得下，不该跟着缩。
+    const narrow = blockAfter(css, '@container floating-slot (max-width: 60px)')
+    expect(narrow, '窄槽降档块必须存在').not.toBe('')
+    expect(decl(ruleBody(narrow, '.todo-module__groups--wide'), '--todo-count-step')).toBe('0.5')
+    expect(decl(ruleBody(narrow, '.todo-module__groups--xwide'), '--todo-count-step')).toBe('0.34')
+    // ⚠️ 竖条必须被排除在外：它一行只有一组，窄的是槽位宽度、不是这一行的内容。
+    expect(narrow, '竖条不吃横排的窄槽档').toContain(':not(.todo-module--vertical)')
+
+    // 竖条自己的档：两位数放得下就不降，三位数才收一档（且只是兜住比例下的一线差）。
+    expect(
+      ruleBody(css, '.todo-module--vertical .todo-module__groups--wide'),
+      '竖条的两位数档不该存在（放得下就别缩）'
+    ).toBe('')
+    expect(decl(ruleBody(css, '.todo-module--vertical .todo-module__groups--xwide'), '--todo-count-step')).toBe('0.9')
   })
 })
 
 /**
- * 小旗子的护栏：**字形来自 `src/assets/flag.svg`，颜色来自 CSS，比例只由「高」推出来**。
+ * 数字与色条的护栏。
  *
- * 这套「一份字形 + 三条 mask」的写法有几个一改就坏的地方，逐条钉住：
- * 1. 少了 `mask-image`（或少了那个 CSS 变量）旗子就退化成**一块实心方块** —— 界面上只是
- *    「三个方块」，不看测试很难发现是图标没生效；
- * 2. 少了 `mask-size: contain`，图标会按资源原始尺寸铺开、不跟盒子缩放；
- * 3. 少了 `mask-repeat: no-repeat`，一个盒子里会平铺出一排小旗；
- * 4. **宽高必须一起给、且比例锁死 6:7**（= `flag.svg` 的 viewBox 12×14）：只给一个尺寸，
- *    或两条轴各按各的槽位百分比算，某条轴先被压住时图标就被拉扁 —— 旗面忽宽忽窄，
- *    格子调大后尤其明显。所以基类只声明一个「高」变量、宽由它算出来，降级块也只改那一个。
- *
- * ⚠️ 同时锁住三档**只改颜色、不改字形**：形状必须由同一份 mask 提供，否则「同一套图标换色」
- * 就退化成了三份不同的图。
+ * 这一版**刻意不再有旗子字形**（没有 `flag.svg`、没有 mask、没有 `--todo-flag-mask`）：
+ * 45px 方格里 9px 的旗形既认不出形状，又要和数字抢宽度。色条只是「哪一档」的锚点，
+ * 几条一改就坏的地方逐条钉住：
+ * 1. 色条的颜色必须来自 `currentColor` —— 一份颜色源同时管住数字与色条；三档各自另写
+ *    `background-color` 就有了两个真相，迟早对不上；
+ * 2. 色条的宽高与组内间隙都用 `em`（跟着字号走）：写死 px 会在格子调大后变成一根细线；
+ * 3. 竖条里色条要**转 90°**（宽高互换），否则竖排里会出现一条横着的粗杠；
+ * 4. 数据未到的中性灰只能落在 `.todo-module--empty` 上，且是「变灰」不是「变没」。
  */
-describe('模块样式 · 滴答待办小旗子', () => {
-  it('paints the flag glyph through a mask so one asset yields three colors', () => {
-    const flag = ruleBodyOwn(todoCss(), '.todo-module__flag')
+describe('模块样式 · 滴答待办数字与色条', () => {
+  it('paints the bars from currentColor so the three tones have one source of truth', () => {
+    const css = todoCss()
+    const tone = ruleBodyOwn(css, '.todo-module__tone')
 
-    expect(flag, '.todo-module__flag 必须存在').not.toBe('')
-    expect(decl(flag, 'mask-image')).toBe('var(--todo-flag-mask)')
-    expect(decl(flag, '-webkit-mask-image')).toBe('var(--todo-flag-mask)')
-    expect(decl(flag, 'mask-size')).toBe('contain')
-    expect(decl(flag, 'mask-repeat')).toBe('no-repeat')
-    expect(decl(flag, 'mask-position')).toBe('center')
-    // 底色只是「数据未到」的中性灰兜底；三档颜色由下面的修饰类给。
-    expect(decl(flag, 'background-color')).toBe('var(--ufo-muted)')
+    expect(tone, '.todo-module__tone 必须存在').not.toBe('')
+    expect(decl(tone, 'background-color')).toBe('currentColor')
+    // 旗子那套（字形 + mask）已经整块退场：留着就是两套并行的画法。
+    expect(css).not.toContain('.todo-module__flag')
+    expect(css).not.toContain('mask-image')
+    expect(css).not.toContain('--todo-flag-mask')
   })
 
-  it('derives the width from a single height variable so the glyph cannot be squashed', () => {
-    const flag = ruleBodyOwn(todoCss(), '.todo-module__flag')
-
-    // 宽高都给（缺一个就是「只按一条轴缩放」），且宽是从那唯一的「高」按 6:7 算出来的
-    expect(decl(flag, 'height')).toBe('var(--todo-flag-h)')
-    expect(decl(flag, 'width')).toBe('calc(var(--todo-flag-h) * 6 / 7)')
-
-    // ⚠️ 降级块只许改 `--todo-flag-h`：各写各的 width / height 就会让两条轴各按各的轴被压，
-    // 比例当场散掉（这正是这轮修掉的问题）。
-    for (const query of [
-      '@container floating-slot (max-width: 60px)',
-      '@container floating-slot (max-width: 28px)',
-    ]) {
-      const block = blockAfter(todoCss(), query)
-      const flagRule = block.slice(block.indexOf('.todo-module__flag'))
-      expect(flagRule, `${query} 里必须给出旗子尺寸`).toContain('--todo-flag-h')
-      expect(flagRule, `${query} 里不得另写 width`).not.toContain('width:')
-      expect(flagRule, `${query} 里不得另写 height`).not.toContain('height:')
-    }
-  })
-
-  it('gives each priority bucket its own flag color and nothing else', () => {
+  it('gives each priority bucket its own color and nothing else', () => {
     const css = todoCss()
 
-    expect(decl(ruleBody(css, '.todo-module__flag--red'), 'background-color')).toBe('var(--ufo-status-red)')
-    expect(decl(ruleBody(css, '.todo-module__flag--yellow'), 'background-color')).toBe('var(--ufo-status-yellow)')
-    expect(decl(ruleBody(css, '.todo-module__flag--blue'), 'background-color')).toBe('var(--ufo-status-blue)')
+    expect(decl(ruleBody(css, '.todo-module__cell--red'), 'color')).toBe('var(--ufo-status-red)')
+    expect(decl(ruleBody(css, '.todo-module__cell--yellow'), 'color')).toBe('var(--ufo-status-yellow)')
+    expect(decl(ruleBody(css, '.todo-module__cell--blue'), 'color')).toBe('var(--ufo-status-blue)')
 
-    // 三档只许改颜色：改尺寸会让三面旗大小不一，改 mask 会让它们不再是同一个字形。
+    // 三档只许改颜色：改尺寸会让三根色条长短不一，改字号会让三组数字大小参差。
     for (const tone of ['red', 'yellow', 'blue']) {
-      const body = ruleBody(css, `.todo-module__flag--${tone}`)
-      expect(body, `${tone} 档只许改颜色`).not.toContain('mask')
+      const body = ruleBody(css, `.todo-module__cell--${tone}`)
       expect(body, `${tone} 档只许改颜色`).not.toContain('width')
       expect(body, `${tone} 档只许改颜色`).not.toContain('height')
+      expect(body, `${tone} 档只许改颜色`).not.toContain('font-size')
     }
+  })
+
+  it('sizes the bars and inner gaps in em so they follow the font, not the design pixels', () => {
+    const css = todoCss()
+    const tone = ruleBodyOwn(css, '.todo-module__tone')
+    const cell = ruleBodyOwn(css, '.todo-module__cell')
+
+    // 色条宽度跟着数字走（100% = 数字的宽度），高度按 em 推 —— 都是相对量。
+    expect(decl(tone, 'width')).toBe('100%')
+    expect(decl(tone, 'height')).toMatch(/em$/)
+    expect(decl(cell, 'gap')).toMatch(/em$/)
+  })
+
+  it('turns the bar 90° in the vertical bar instead of leaving a crosswise slab', () => {
+    const tone = ruleBody(todoCss(), '.todo-module--vertical .todo-module__tone')
+
+    expect(tone, '竖条里色条必须有转置规则').not.toBe('')
+    // 细长条：宽 < 高，与数字等高
+    const width = Number.parseFloat(decl(tone, 'width'))
+    const height = Number.parseFloat(decl(tone, 'height'))
+    expect(width).toBeLessThan(height)
+    expect(decl(tone, 'width')).toMatch(/em$/)
+    expect(decl(tone, 'height')).toMatch(/em$/)
   })
 
   it('keeps the grey placeholder for the not-yet-loaded state', () => {
-    const empty = ruleBody(todoCss(), '.todo-module--empty .todo-module__flag')
+    const css = todoCss()
+    const emptyCell = ruleBody(css, '.todo-module--empty .todo-module__cell')
+    const emptyTone = ruleBody(css, '.todo-module--empty .todo-module__tone')
 
-    expect(empty, '数据未到必须有单独的中性灰规则').not.toBe('')
-    expect(decl(empty, 'background-color')).toBe('var(--ufo-muted)')
+    // 中性灰与三档语义色同为单类 / 双类规则：必须比 `.todo-module__cell--red` 更具体才盖得住。
+    expect(emptyCell, '数据未到必须有单独的中性灰规则').not.toBe('')
+    expect(decl(emptyCell, 'color')).toBe('var(--ufo-muted)')
+    expect(decl(emptyTone, 'opacity')).toBe('0.55')
   })
 })
 

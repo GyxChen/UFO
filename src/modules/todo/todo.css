@@ -1,7 +1,7 @@
 @reference "../../assets/main.css";
 
 /*
- * 滴答待办：悬浮窗视图（三面优先级小旗）/ 信息卡（照搬设置页「完成情况」的未完成组，
+ * 滴答待办：悬浮窗视图（三组「数字 + 色条」）/ 信息卡（照搬设置页「完成情况」的未完成组，
  * 可滚动、点勾选框即完成）/ 主窗设置页（新增任务表单 + 授权与服务 + 完成情况树）。
  *
  * 「完成情况」的交互口径（设置页与信息卡共用）：
@@ -14,10 +14,14 @@
  *   所以两处的观感天然一致；差别只有「信息卡不带右键菜单与卡头按钮」这一条。
  *
  * 形态适配（四种 layout，对用户是三形态）：
- * - 方形 / 四角 / 横条：三面小旗**横向一排**，每组「旗在上、数量在下」；
- * - 竖条：三面小旗**竖着叠**，一行一档「旗在左、数量在右」—— 竖条只有一格宽、高反而富余，
- *   横排三面会挤在一条线上，竖排才排得开（但也不摊满整条，见下面竖条那段）；
- * - 槽位窄到放不下数字时只留三面小旗（横排 ≤ 60px / 竖排 ≤ 28px），条数交给悬停信息卡。
+ * - 方形 / 四角 / 横条：三组**横排**，组内竖着放（数字在上、色条在下，色条 = 数字的下划线）；
+ * - 竖条：三组**竖排**，组内横着放（色条在左、数字在右），三行的色条排成一条竖线 ——
+ *   竖条只有一格宽、高反而富余，横排三组会挤在一条线上，竖排才排得开（也不摊满整条，见下面那段）；
+ * - 槽位窄到放不下时靠**位数档**整体缩小（两位 / 三位各降一档），数字不截断、也不越界。
+ *
+ * 三档为什么不再用旗子：45px 方形里组件只有约 39×39px，9px 的旗形既认不出形状，
+ * 又和数字抢那点宽度（旧版只好在 ≤60px 时把数字整块降级掉，方格里就只剩三面小旗）。
+ * 现在数字是主角、色条只当「哪一档」的锚点 —— 位置（高 → 中 → 低）与颜色是两条通道。
  *
  * 尺寸规矩（见组件开发规范 5.5）：
  * - 悬浮窗里的尺寸一律 `clamp(下限, Xcq?, 上限)`，上限是设计像素时必须写
@@ -25,8 +29,8 @@
  * - ⚠️ **尺寸要取「两条轴里更紧的那条」**（`clamp(下限, min(Acqw, Bcqh), 上限)`）：
  *   槽位形状由宿主的按比例分槽决定，可能是「窄而高」（竖条：宽 1 格、高好几格）或
  *   「宽而矮」（同级组件把方形态切成横带：实测 283×56）。只看一条轴，另一边必然溢出，
- *   而槽位有 `overflow: hidden`，观感就是「旗子 / 数字被切掉一截」。
- * - 数据未到时三面旗转中性灰、不带数字（见 `.todo-module--empty`），与「三档都是 0」
+ *   而槽位有 `overflow: hidden`，观感就是「数字被切掉一截」。
+ * - 数据未到时三档色条转中性灰、不带数字（见 `.todo-module--empty`），与「三档都是 0」
  *   区分开：后者是「真的没有未完成任务」。
  */
 
@@ -47,185 +51,188 @@
 }
 
 /*
- * 方形 / 四角 / 横条：三面小旗**横向一排** —— 一组 = 一列「旗在上、数量在下」，三组并排。
- * 用 grid：三组各自一个 `auto` 列，旗与数字都居中，位数不同也不会把旗挤歪。
- *
- * 整块只声明**一个**随槽位走的 `font-size`：数字直接用它，小旗按 `em` 取 ——
- * 「旗 : 数字」的比例因此恒定，不会出现格子调大后旗反而变小、或旗比数字还胖。
+ * 三组「数字 + 色条」：方形 / 四角 / 横条**横排**（默认 `row`），竖条**竖排**（下面那条形态规则）。
+ * 整块只声明**一个**随槽位走的 `font-size`：数字直接用它，色条与间隙都按 `em` 取 ——
+ * 「色条 : 数字」的比例因此恒定，不会出现格子调大后色条反而变粗条、或色条比数字还抢眼。
  */
 .todo-module__groups {
-  display: grid;
-  grid-template-columns: auto auto auto;
-  grid-template-rows: auto auto;
-  grid-auto-flow: column;
+  display: flex;
   align-items: center;
-  justify-items: center;
   justify-content: center;
   min-width: 0;
   min-height: 0;
   /*
-   * 字号取「两条轴里更紧的那条」（`min(34cqh, 16cqw)`）：槽位形状由宿主的按比例分槽决定，
-   * 可能是「窄而高」（竖条）或「宽而矮」（方形态被同级组件切成横带，实测 283×56）。
-   * 只看一条轴，另一边必然溢出，而槽位有 `overflow: hidden`，观感就是「数字被切掉一截」。
-   * 数字是宽度上的大头（三位数 `99+` 也要放得下），所以 cqw 取得比 cqh 紧。
+   * 字号取「两条轴里更紧的那条」（`min(55cqh, 42cqw)`）：槽位可能是「窄而高」（竖条）
+   * 或「宽而矮」（被同级组件切成横带），只看一条轴另一边必然溢出 —— 槽位有 overflow: hidden，
+   * 观感就是数字被切掉一截。
+   * 两条预算都留了余量（`42cqw` 而不是算出来的 `49cqw`、`55cqh` 而不是 `75cqh`）：
+   * - 宽度：三组并排 = 3 × (0.6em × 位数) + 2 × 间隙（6cqw）≤ 100cqw，解出 em ≤ 49cqw
+   *   （一位数、等宽数字按 0.6em/位算）—— 取 42 留出约 12% 的余量，字体的实际字宽
+   *   因字体 / 字重略有出入时不至于顶到槽位边上；
+   * - 高度：一组 = 1.32em（数字 1em + 间隙 0.14em + 色条 0.18em）。
+   * 于是 45 格方形（39px）里落在 ~16px 上（设计上限 15px 附近），三组一位数占 ~34px；
+   * 两位数以上由下面那个容器查询整体降档。
+   * 又乘 `--todo-count-step`：降档乘在这里而不是各写一条 `font-size`，竖条那条形态规则
+   * 才不会把档位盖掉。
    */
-  font-size: clamp(10px, min(34cqh, 16cqw), calc(16px * var(--floating-cell-scale, 1)));
+  --todo-count-step: 1;
+  font-size: calc(clamp(9px, min(55cqh, 42cqw), calc(15px * var(--floating-cell-scale, 1))) * var(--todo-count-step));
   /*
-   * 行间隙（旗与数字之间）/ 列间隙（三组之间）。
-   * ⚠️ 列间隙是「三面旗看着密不密」的唯一调节项：三列并排时旗的间距 = 列宽 + 列间隙，
-   * 而列宽被「旗 / 数字谁宽」定死了（数字两三位数时列宽≈数字宽），只有间隙能动。
-   * 早先取 `min(10cqh, 4cqw)` —— 横条只有一格高，cqh 那一项算出来才 2px 上下，
-   * 于是三组几乎贴在一起（实测 39px 高的横条里三点间距 3.9px，比旗子本身还窄）。
-   * 改成按**宽度预算**取（8cqw，只留一条 cqw 轴）：宽处自动放开、窄处仍受 cqw 约束不会撑破，
-   * 最坏情形（三档都到 `99+`）实测也没溢出。上限乘格子倍率 —— 横条很宽时原来卡在 12px，
-   * 三面旗挤成一坨、周围却留白一大片；这里放开到 20px，宽横条里的三面旗才透得过气。
-   * 方形只有一格宽，8cqw 算出来依旧被 3px 下限兜住，不受影响。
-   * 行间隙是「旗与数字之间」，跟着行高走（cqh 就够，横条一格高时约 2.3px）。
+   * 列间隙是三组疏密的唯一调节项（数字宽度被字号定死，只有间隙能动）。
+   * 只按**宽度**取（`6cqw`，不带 cqh）：横条只有一格高，带上 cqh 会被压到 2px 上下、
+   * 三组几乎贴在一起；宽处则放开，上限乘格子倍率避免挤成一坨。
    */
-  gap: clamp(1px, 6cqh, calc(3px * var(--floating-cell-scale, 1)))
-    clamp(3px, 8cqw, calc(20px * var(--floating-cell-scale, 1)));
+  gap: clamp(3px, 6cqw, calc(10px * var(--floating-cell-scale, 1)));
 }
 
 /*
- * 竖条（左右贴边）：三面小旗**竖着叠** —— 一行一档「旗在左、数量在右」，三行上下排。
+ * 窄槽位（宽 ≤ 60px：未贴边的 45px 方形、被同级组件切窄的条）里计数降档。
  *
- * 排布与横排正好转置，于是两处跟着换：
- * - 网格：从「3 列 × 2 行、按列填充」换成「2 列 × 3 行、按行填充」（同一批 DOM，只是轨道方向变了）；
- * - 字号：一行只有「一格宽」（45 格时约 39px），限制轴是**行宽**而不是行高，所以按 cqw 取；
- * - 间隙：行间隙 = 三档之间（跟着高度走）、列间隙 = 旗与数字之间（跟着宽度走），两轴对调。
- *
- * 高度上**让三行按内容收拢、不摊满整条**：竖条比一格高得多（45 格时 174px），无论按整条等分
- * 还是塞满一个 96px 封顶，三面 ~10px 的小旗都会被拉开十几二十像素、孤零零各挂一处
- * （实测 1fr 封顶 96px 时行距 32px，是旗子高度的三倍多）—— 观感偏「散」。横排三面是紧凑的，
- * 竖条也理应同款疏密。
- * 于是把行轨改成 `auto`（三行只取各自内容高），整块随内容收拢后由父级上下居中，行与行之间
- * 只留一个跟着格子走的小呼吸间隙 —— 三行因此彼此靠近，疏密与横排的三面一致。
+ * 一格里三组**并排**，可用宽度就那么多：一位数按上面的字号正好，两位数要占掉近一倍宽度，
+ * 三位数（`99+`）更甚 —— 不降档就只能截断，而截断会把 `128` 显示成 `12`（报错的数字）。
+ * 档位由组件按**最长**的那个计数给（三组同号，数字大小才整齐），降多少由这里的倍率定：
+ * - `0.5` ≈ 让两位数占的宽度与一位数相同（宽度 ∝ 位数 × 字号）；
+ * - `0.34` ≈ 三位数同理。
+ * ⚠️ **竖条不吃这一档**（` :not(.todo-module--vertical)`）：它一行只有一组，窄的是槽位宽度、
+ *   不是这一行的内容 —— 两位数在竖条里按原字号完全放得下，跟着缩纯属白缩（竖条自己的档见下）。
+ * ⚠️ 只在窄槽位降：90px 的横条里两位数按原字号也放得下。
+ * ⚠️ 两位数在 39px 里会被压到 ~7.5px：这是「一格塞下三档并排计数」的物理下限。真要读准确数字，
+ *   悬停信息卡里就是设置页那张完整的「完成情况」，色条与位置则保证一眼仍能看出各档有没有。
  */
-.todo-module--vertical .todo-module__groups {
-  grid-template-columns: auto auto;              /* 旗 | 数量 */
-  grid-template-rows: repeat(3, auto);           /* 三档各取内容高，不摊满整条 */
-  grid-auto-flow: row;
-  align-self: center;                            /* 整块随内容收拢，上下居中 */
-  font-size: clamp(10px, 30cqw, calc(15px * var(--floating-cell-scale, 1)));
-  /* 行间隙 = 三档之间（呼吸用，跟着高度走）；列间隙 = 旗与数字之间（跟着宽度走） */
-  row-gap: clamp(4px, 10cqh, calc(10px * var(--floating-cell-scale, 1)));
-  column-gap: clamp(2px, 4cqw, calc(6px * var(--floating-cell-scale, 1)));
+@container floating-slot (max-width: 60px) {
+  .todo-module:not(.todo-module--vertical) .todo-module__groups--wide {
+    --todo-count-step: 0.5;
+  }
+
+  .todo-module:not(.todo-module--vertical) .todo-module__groups--xwide {
+    --todo-count-step: 0.34;
+  }
 }
 
 /*
- * 小旗子：`src/assets/flag.svg` 只提供**字形**，颜色由 `background-color` 给 ——
- * 于是同一份图标能出红 / 黄 / 蓝三面旗（就是下面那三条三档语义色）。
- *
- * ⚠️ 宽高**必须一起给**，且比例锁死 6:7（= `flag.svg` 的 viewBox 12×14）：
- * 只给一个尺寸、或两条轴各按各的槽位百分比算，某一条轴先被压住时图标就被拉扁
- * （旗面忽宽忽窄、格子调大时更明显）。所以这里只声明**一个**「高」`--todo-flag-h`，
- * 宽由它按比例推出来，下面每个降级块也只改这一个变量 —— 两条轴因此永远同源同比例。
- * ⚠️ 三条 `mask-*` 缺一不可：少了 `mask-image` 就是一块实心方块；少了 `mask-size: contain`
- * 会按资源原始尺寸铺开而不跟盒子缩放；少了 `mask-repeat: no-repeat` 会平铺成一排小旗。
- * 盒高比原来的圆点大一半（1em 对 0.62em）：字形内部只有旗杆与旗面，且旗面只占上半，
- * 按圆点那么大的盒子放进去会明显小一圈。
+ * 一组 = 数字 + 色条。默认竖着放（横排布局里是「数字在上、色条在下」），
+ * 竖条里转成横着放（色条在左、数字在右，见下面那条形态规则）。
  */
-.todo-module__flag {
-  --todo-flag-h: 1em;
-  width: calc(var(--todo-flag-h) * 6 / 7);
-  height: var(--todo-flag-h);
-  background-color: var(--ufo-muted);
-  -webkit-mask-image: var(--todo-flag-mask);
-  mask-image: var(--todo-flag-mask);
-  -webkit-mask-size: contain;
-  mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
+.todo-module__cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  align-items: center;
+  gap: 0.14em;
 }
 
-/* 数量：字号继承 `.todo-module__groups` 的那个 clamp，这里只管字重 / 对齐 / 等宽数字 */
+/* 数字：字号继承 `.todo-module__groups` 那个 clamp；等宽数字，计数变化时不抖 */
 .todo-module__count {
-  font-weight: 700;
+  font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-/* 三档语义色：高 = 红 / 中 = 黄 / 低 = 蓝（只改颜色，不改字形） */
-.todo-module__flag--red {
-  background-color: var(--ufo-status-red);
+/*
+ * 色条：优先级的第一视觉锚点（横排布局里就是数字下面的一道下划线）。
+ * 尺寸全部按 `em` 走，跟着字号缩放；宽度跟着数字走（`100%` = 数字的宽），
+ * 于是「数字越宽、下划线越长」，三组的下划线长度本身就带信息。
+ */
+.todo-module__tone {
+  width: 100%;
+  height: 0.18em;
+  border-radius: 999px;
+  background-color: currentColor;
 }
 
-.todo-module__flag--yellow {
-  background-color: var(--ufo-status-yellow);
+/* 三档语义色：高 = 红 / 中 = 黄 / 低 = 蓝。只改 `color`，数字（继承）与色条（currentColor）同源同色 */
+.todo-module__cell--red {
+  color: var(--ufo-status-red);
 }
 
-.todo-module__flag--blue {
-  background-color: var(--ufo-status-blue);
+.todo-module__cell--yellow {
+  color: var(--ufo-status-yellow);
 }
 
-/* 数据未到：三面旗是中性灰，一眼区别于「三档都是 0 个」 */
-.todo-module--empty .todo-module__flag {
-  background-color: var(--ufo-muted);
+.todo-module__cell--blue {
+  color: var(--ufo-status-blue);
+}
+
+/* 数据未到：三组转中性灰（数字本来是空串，只剩色条），一眼区别于「三档都是 0 个」 */
+.todo-module--empty .todo-module__cell {
+  color: var(--ufo-muted);
+}
+
+.todo-module--empty .todo-module__tone {
   opacity: 0.55;
 }
 
 /*
- * 窄槽位（横排三面：宽 ≤ 60px —— 未贴边的一格方窗、被同级组件切窄的条）：
- * 三列并排放不下数字 —— `99+` 这种三位数按字号算要 ~1.75em 宽，三列就是 5 倍多字号，
- * 60px 宽只够把数字压到 6px 上下，读不清还不如不显示。这里**只留三面小旗**，
- * 具体条数是悬停信息卡的事（那边就是设置页的「完成情况」）。
- * ⚠️ 竖条走下面那条分支（它的排布是竖排、阈值也不同），所以这里用 `:not()` 排除掉。
- * ⚠️ 60px 是**绝对可读性阈值**（与格子缩放无关），所以刻意不乘 `--floating-cell-scale`。
+ * 竖条（左右贴边）：三组**竖着叠** —— 一组一行「色条在左、数字在右」，三行上下排。
+ *
+ * 排布与横排正好转置，于是两处跟着换：
+ * - 组内：`column` → `row`（色条跑到数字左边）；
+ * - 字号：一行只有「一格宽」（45 格时约 39px），限制轴是**行宽**而不是行高，所以按 cqw 取；
+ * - 间隙：行间隙 = 三组之间（跟着高度走）、列间隙 = 色条与数字之间（跟着宽度走），两轴对调。
+ *
+ * 高度上**让三行按内容收拢、不摊满整条**：竖条比一格高得多（45 格时 174px），无论按整条等分
+ * 还是塞满一个封顶高度，三组都会被拉开十几二十像素、孤零零各挂一处 —— 观感偏「散」。
+ * 横排三组是紧凑的，竖条也理应同款疏密：行轨随内容走（`justify-content: center` + 固定
+ * 行间隙），整块上下居中，行与行之间只留一个跟着格子走的呼吸间隙。
  */
-@container floating-slot (max-width: 60px) {
+.todo-module--vertical .todo-module__groups {
+  flex-direction: column;
+  align-self: center; /* 整块随内容收拢，上下居中 */
   /*
-   * 数量被移除后，网格里只剩三面旗 —— 轨道要跟着收：按列填充会把「旗 1、旗 2」摞进第一列
-   * （第 1、2 面旗一上一下），改成按行填充，三面旗才会并排在同一行。
-   * 列间隙也跟着放开：上面那条 8cqw 是为「数字占满列宽」留的宽度预算，数字一走
-   * （60px 宽处才 4.8px），三面旗就挤成一坨了 —— 这里按字号取 0.3em。
-   * ⚠️ 旗子这次放大后间隙必须跟着收（0.45em → 0.3em）：三面旗并排时**宽度**是限制轴，
-   * 45 格一格宽 ≈ 39.5px，3 × 旗宽 + 2 × 间隙要正好落在里面，间隙留多了旗子就得让小。
+   * 三行等宽（各自占满整块宽度）：**色条要排成一条竖线**。若按 `center` 让每行各自居中，
+   * 行宽不同时（`▬ 2` 对 `▬ 12`）色条的左缘就会参差、数字也跟着左右跳。行宽取最宽那一行，
+   * 内容在行内贴左（见下面 cell 那条），于是「色条列」与「数字列」各自对齐成一张小表。
    */
-  .todo-module:not(.todo-module--vertical) .todo-module__groups {
-    grid-auto-flow: row;
-    column-gap: 0.3em;
-  }
-
-  .todo-module:not(.todo-module--vertical) .todo-module__count {
-    display: none;
-  }
-
+  align-items: stretch;
   /*
-   * 只给「高」，宽由基类的比例推出来（31cqw 的高 → 26cqw 的宽，三面 + 两个间隙 ≈ 38px < 39.5px）。
-   * `46cqh` 那条是给「又矮又窄」的槽位兜底（比如被同级组件切成一条 40×20 的横带）。
+   * 竖条的尺寸 = **竖条自己的预算 × 0.8**（用户按 0.8× 定的）。
+   *
+   * 先有竖条自己的预算，它比横排宽松：横排一格里三组并排、宽度要三等分，竖条一行只有
+   * 「数字 + 色条」，同样的行宽下一组能占满 —— 高度项 `23cqh`（三行 + 两条行间隙 ≤ 槽位高）、
+   * 宽度项 `80cqw`（一行 = 色条 0.18em + 间隙 0.3em + 数字 0.6em）、设计上限 `20px`
+   * （横排是 15px）。三个系数同乘 0.8 就是现在这三个：`18.4cqh` / `64cqw` / `16px`。
+   * 45 格竖条（39×84）下落在 ~15.5px 上，与方形的 15px 基本同档。
+   * ⚠️ 9px 那条**可读性下限不跟着缩**：它只在极窄槽位兜底，缩了就没法读，与设计缩放无关。
+   * `--todo-count-step` 照旧乘上去。
    */
-  .todo-module:not(.todo-module--vertical) .todo-module__flag {
-    --todo-flag-h: clamp(9px, min(31cqw, 46cqh), calc(21px * var(--floating-cell-scale, 1)));
-  }
+  font-size: calc(
+    clamp(9px, min(18.4cqh, 64cqw), calc(16px * var(--floating-cell-scale, 1))) * var(--todo-count-step)
+  );
+  /* 行间隙 = 三组之间（呼吸用，跟着高度走）；列间隙 = 数字与色条之间（跟着宽度走） */
+  row-gap: clamp(4px, 8cqh, calc(10px * var(--floating-cell-scale, 1)));
+  column-gap: clamp(2px, 4cqw, calc(6px * var(--floating-cell-scale, 1)));
 }
 
 /*
- * 窄槽位（竖排三面：一行的可用宽度 ≤ 28px，即用户把格子调到 34px 及以下）：
- * 一行是「旗 + 数字」，`99+` 按 10px 字号算 ≈ 18px，加旗子与间隙 ≈ 26px —— 再窄就放不下，
- * 于是**只留三面小旗**（旗子这时独占行宽，按行宽放大一点）。
- * ⚠️ 选择器要与上面的形态规则等长（同一条 `.todo-module--vertical .todo-module__flag`），
- * 否则盖不住它 —— 这正是组件开发规范 5.5 里那条「降级块要带上形态选择器」。
- * ⚠️ 28px 同样是绝对可读性阈值，不乘 `--floating-cell-scale`。
+ * 竖条的位数档：一行只有一组，两位数**不用降**（宽度预算绰绰有余），三位数才收一点点。
+ * 竖条槽位多半是「高 ≈ 2.1 倍宽」，这时字号由高度项（`18.4cqh`）定，而三位数要的宽度是
+ * `0.18em + 0.3em + 1.8em = 2.28em ≤ 0.88 行宽` → em ≤ 38.6cqw，恰好比高度项算出来的小一点点，
+ * 所以 `0.9` 这一档只是**兜住这个比例下的一线差**，不是真的缩小。
+ * 写成独立规则而不是复用横排那两档：横排是「三组并排」的宽度预算，两者差得远（0.5 / 0.34）。
  */
-@container floating-slot (max-width: 28px) {
-  /* 数量被移除后只剩三面旗：两列轨道会变成「旗 1、旗 2」并排，收成一列才是竖着叠 */
-  .todo-module--vertical .todo-module__groups {
-    grid-template-columns: auto;
-  }
+.todo-module--vertical .todo-module__groups--xwide {
+  --todo-count-step: 0.9;
+}
 
-  .todo-module--vertical .todo-module__count {
-    display: none;
-  }
+/*
+ * 竖条里组内横着放：**色条在左、数字在右**，且整体在行内**贴左**（三行的色条因此排成一条竖线）。
+ *
+ * 用 `row-reverse` 而不是把 DOM 顺序反过来：DOM 里「数字在前、色条在后」是横排那条
+ * （`column` 方向 = 数字在上、色条在下）的前提，动了 DOM 横排就跟着翻。`row-reverse`
+ * 只影响这一条规则覆盖到的竖条，读屏拿到的顺序（数字 → 色条）也保持不变。
+ * `justify-content: flex-end` 看着像「贴右」，但在 `row-reverse` 下主轴是从右往左数的
+ * —— main-end 就是**左缘**，一行里「色条 + 数字」这一对因此贴左。
+ */
+.todo-module--vertical .todo-module__cell {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  gap: 0.3em;
+}
 
-  /*
-   * 一面旗独占一行，限制轴是**行宽**：高按行宽的 52/100 取（换回宽是 44/100 行宽，放得下）。
-   * `24cqh` 那条同样给又矮又窄的槽位兜底。
-   */
-  .todo-module--vertical .todo-module__flag {
-    --todo-flag-h: clamp(9px, min(52cqw, 24cqh), calc(24px * var(--floating-cell-scale, 1)));
-  }
+/* 色条跟着转 90°：细长条（0.18em 宽 × 0.9em 高），与数字等高 */
+.todo-module--vertical .todo-module__tone {
+  width: 0.18em;
+  height: 0.9em;
 }
 
 /* ---- 信息卡（tooltip）：就是设置页「完成情况」里那组未完成任务，可滚动、点勾选框即完成 ---- */

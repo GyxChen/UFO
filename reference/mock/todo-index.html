@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 悬浮窗「滴答待办」四套方案</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /*
+       * 悬浮窗「滴答待办」的四套视觉方案（对比用 mock）。
+       * token 与尺寸口径全部抄自 src/assets/main.css 与 src/lib/floating-layout.ts：
+       * 一格 45px、外壳 1px 描边 + 2px 内边距（可用区 ≈39px）、毛玻璃 rgba(61,61,61,0.8) + blur(6px)。
+       * 所有小窗都按**真实像素**渲染，另有 3× 放大版看清细节。
+       */
+      :root {
+        --ufo-bg: rgba(61, 61, 61, 0.8);
+        --ufo-surface: #2a2a2a;
+        --ufo-surface-2: #323232;
+        --ufo-border: rgba(255, 255, 255, 0.08);
+        --ufo-border-strong: rgba(255, 255, 255, 0.14);
+        --ufo-text: #f3f4f6;
+        --ufo-muted: #a3a3a3;
+        --ufo-accent: #34d399;
+        --ufo-status-green: #34d399;
+        --ufo-status-yellow: #fbbf24;
+        --ufo-status-red: #f87171;
+        --ufo-status-blue: #60a5fa;
+        --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 44px 20px 80px;
+        font-family: var(--font-sans);
+        color: var(--ufo-text);
+        /* 桌面壁纸的近似：毛玻璃要有东西可透才看得出效果 */
+        background:
+          radial-gradient(circle at 18% 8%, #5b6472 0%, transparent 45%),
+          radial-gradient(circle at 82% 78%, #4a3f52 0%, transparent 40%),
+          linear-gradient(150deg, #2b3038 0%, #15171b 100%);
+        display: grid;
+        justify-items: center;
+        gap: 26px;
+      }
+
+      .page {
+        width: min(1120px, 100%);
+        display: grid;
+        gap: 22px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+      }
+
+      .lead {
+        margin: 0;
+        color: var(--ufo-muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .lead code {
+        padding: 1px 5px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.08);
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        font-size: 12px;
+      }
+
+      .card {
+        padding: 16px 18px;
+        border: 1px solid var(--ufo-border);
+        border-radius: 12px;
+        background: var(--ufo-surface);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th,
+      td {
+        padding: 8px 10px;
+        text-align: left;
+        vertical-align: top;
+        line-height: 1.6;
+        border-bottom: 1px solid var(--ufo-border);
+      }
+
+      th {
+        color: var(--ufo-muted);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      td:first-child {
+        color: var(--ufo-text);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .stars {
+        color: var(--ufo-accent);
+        letter-spacing: 1px;
+        white-space: nowrap;
+      }
+
+      /* ── 方案块 ─────────────────────────────────────────────── */
+
+      .option {
+        display: grid;
+        gap: 14px;
+        padding: 18px;
+        border: 1px solid var(--ufo-border);
+        border-radius: 14px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent), var(--ufo-surface);
+      }
+
+      .option__head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .option__head h2 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .tag {
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--ufo-accent-soft);
+        color: var(--ufo-accent);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .tag--muted {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--ufo-muted);
+      }
+
+      .option__note {
+        margin: 0;
+        color: var(--ufo-muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      .option__note b {
+        color: var(--ufo-text);
+      }
+
+      .strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 26px;
+        align-items: flex-end;
+      }
+
+      .strip__label {
+        margin: 0 0 8px;
+        color: var(--ufo-muted);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .slot {
+        display: grid;
+        gap: 8px;
+        justify-items: center;
+      }
+
+      .slot__name {
+        color: var(--ufo-muted);
+        font-size: 11px;
+        line-height: 1.4;
+        text-align: center;
+      }
+
+      .slot__name b {
+        display: block;
+        color: var(--ufo-text);
+        font-size: 11.5px;
+      }
+
+      /*
+       * 悬浮窗外壳：1px 描边 + 2px 内边距（= 组件真正拿到的槽位），毛玻璃底。
+       * 尺寸即真实窗口尺寸：方形 45×45 / 横条与贴角 90×45 / 竖条 45×90。
+       */
+      .win {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 12px;
+        background-color: var(--ufo-bg);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        box-shadow: rgba(142, 142, 142, 0.19) 0 6px 15px 0;
+        color: var(--ufo-text);
+        overflow: hidden;
+        user-select: none;
+      }
+
+      .win--square {
+        width: 45px;
+        height: 45px;
+      }
+
+      .win--bar {
+        width: 90px;
+        height: 45px;
+      }
+
+      .win--tall {
+        width: 45px;
+        height: 90px;
+      }
+
+      /* 放大 3×：整个窗口等比放大，细节才看得清（1:1 才是真实观感） */
+      .zoom {
+        zoom: 3;
+      }
+
+      /* ── 方案 A · 数字主导 ─────────────────────────────────── */
+
+      .optA .todo {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        gap: clamp(2px, 8%, 8px);
+      }
+
+      .optA .cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .optA .num {
+        font-size: 15px;
+        font-weight: 800;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* 数字下面的 2px 色条：优先级不只靠颜色，位置（高→低）也是通道 */
+      .optA .bar {
+        width: 100%;
+        height: 2px;
+        border-radius: 1px;
+      }
+
+      .optA .cell--high .num {
+        color: var(--ufo-status-red);
+      }
+
+      .optA .cell--high .bar {
+        background-color: var(--ufo-status-red);
+      }
+
+      .optA .cell--mid .num {
+        color: var(--ufo-status-yellow);
+      }
+
+      .optA .cell--mid .bar {
+        background-color: var(--ufo-status-yellow);
+      }
+
+      .optA .cell--low .num {
+        color: var(--ufo-status-blue);
+      }
+
+      .optA .cell--low .bar {
+        background-color: var(--ufo-status-blue);
+      }
+
+      .optA .todo--tall {
+        flex-direction: column;
+        gap: 7px;
+      }
+
+      /* 竖条三行等宽、内容贴左：色条因此排成一条竖线（对齐实现里的 align-items: stretch
+         + `.todo-module--vertical .todo-module__cell` 的 row-reverse / justify-content: flex-end） */
+      .optA .todo--tall .cell {
+        flex-direction: row;
+        justify-content: flex-start;
+        gap: 6px;
+        width: 100%;
+      }
+
+      /* 竖条有自己的字号预算（一行只有一组，比横排宽松），再按 0.8× 收一档：
+         45 格下约 15.5px，与方形的 15px 基本同档 */
+      .optA .todo--tall .num {
+        font-size: 15.5px;
+      }
+
+      .optA .todo--tall .bar {
+        width: 2.8px;
+        height: 14px;
+      }
+
+      /* ── 方案 B · 三色分段条 ───────────────────────────────── */
+
+      .optB .todo {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+      }
+
+      .optB .total {
+        font-size: 15px;
+        font-weight: 800;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .optB .total small {
+        margin-left: 3px;
+        color: var(--ufo-muted);
+        font-size: 9px;
+        font-weight: 600;
+      }
+
+      /* 一条按数量占比切开的条：宽 = 各档占比，一眼看出「红的占多少」 */
+      .optB .stack {
+        display: flex;
+        width: 100%;
+        height: 5px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .optB .stack i {
+        display: block;
+        height: 100%;
+      }
+
+      .optB .seg--high {
+        background: var(--ufo-status-red);
+      }
+
+      .optB .seg--mid {
+        background: var(--ufo-status-yellow);
+      }
+
+      .optB .seg--low {
+        background: var(--ufo-status-blue);
+      }
+
+      /* 段的右缘留一道 1px 暗缝，同色相邻时也分得开（这里三色不同，缝只是保险） */
+      .optB .stack i + i {
+        border-left: 1px solid rgba(0, 0, 0, 0.35);
+      }
+
+      .optB .todo--tall {
+        flex-direction: row;
+        gap: 6px;
+      }
+
+      .optB .todo--tall .stack {
+        width: 5px;
+        height: 100%;
+        flex-direction: column;
+      }
+
+      .optB .todo--tall .stack i {
+        width: 100%;
+        height: auto;
+      }
+
+      .optB .todo--tall .stack i + i {
+        border-top: 1px solid rgba(0, 0, 0, 0.35);
+        border-left: 0;
+      }
+
+      /* ── 方案 C · 分片环 + 总数（与 Agent 溢出格同源） ──────── */
+
+      .optC .todo {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      /* 环本体：conic-gradient 按三档占比切开，mask 挖空中心成环带（同 agent 溢出格的做法）。
+         环与「中心数字」放在同一个 .dial 里：环是绝对定位的环带，数字在它上面另铺一层实体，
+         否则 mask 会把数字一起挖掉。 */
+      .optC .dial {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 32px;
+        aspect-ratio: 1;
+        flex: 0 0 auto;
+      }
+
+      .optC .ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: conic-gradient(
+          var(--ufo-status-red) 0% 33.4%,
+          var(--ufo-status-yellow) 33.4% 50%,
+          var(--ufo-status-blue) 50% 100%
+        );
+        -webkit-mask: radial-gradient(closest-side, transparent 62%, #000 63%);
+        mask: radial-gradient(closest-side, transparent 62%, #000 63%);
+      }
+
+      .optC .ring-core {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+      }
+
+      .optC .ring-core span {
+        display: grid;
+        place-items: center;
+        width: 74%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: var(--ufo-surface);
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* 横条 / 竖条里空间够：环旁边（或下面）列出三档明细 */
+      .optC .chips {
+        display: none;
+        gap: 6px;
+      }
+
+      .optC .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 11px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .optC .chip i {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .optC .chip--high {
+        color: var(--ufo-status-red);
+      }
+
+      .optC .chip--mid {
+        color: var(--ufo-status-yellow);
+      }
+
+      .optC .chip--low {
+        color: var(--ufo-status-blue);
+      }
+
+      .win--bar .optC .dial {
+        width: 30px;
+      }
+
+      .win--bar .optC .chips {
+        display: grid;
+        gap: 3px;
+      }
+
+      .optC .todo--tall {
+        flex-direction: column;
+        gap: 7px;
+      }
+
+      .optC .todo--tall .dial {
+        width: 30px;
+      }
+
+      .optC .todo--tall .chips {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      /* ── 方案 D · 三行小表 ─────────────────────────────────── */
+
+      .optD .todo {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        gap: 3px;
+      }
+
+      .optD .row {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      /* 色块 + 数字：色块是「哪一档」的锚点，代替旗子字形（更小、更干净） */
+      .optD .swatch {
+        width: 4px;
+        height: 10px;
+        flex: 0 0 auto;
+        border-radius: 2px;
+      }
+
+      .optD .num {
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        color: var(--ufo-text);
+      }
+
+      .optD .row--high .swatch {
+        background: var(--ufo-status-red);
+      }
+
+      .optD .row--mid .swatch {
+        background: var(--ufo-status-yellow);
+      }
+
+      .optD .row--low .swatch {
+        background: var(--ufo-status-blue);
+      }
+
+      /* ── 现状（对比用）：三面旗 + 数字，方格里数字被降级掉 ── */
+
+      .now .todo {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+      }
+
+      .now .cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+      }
+
+      .now .flag {
+        width: 9px;
+        height: 10.5px;
+        background: currentColor;
+        /* 用方块近似旗子字形（真实实现是 flag.svg 的 mask），这里只看体量关系 */
+        clip-path: polygon(0 0, 100% 0, 100% 42%, 30% 42%, 30% 100%, 0 100%);
+        opacity: 0.9;
+      }
+
+      .now .cell--high {
+        color: var(--ufo-status-red);
+      }
+
+      .now .cell--mid {
+        color: var(--ufo-status-yellow);
+      }
+
+      .now .cell--low {
+        color: var(--ufo-status-blue);
+      }
+
+      .now .num {
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1;
+        color: var(--ufo-text);
+      }
+
+      .now .win--square .num {
+        display: none; /* 窄槽位（≤60px）降级：只留三面旗 */
+      }
+
+      .foot {
+        color: var(--ufo-muted);
+        font-size: 11.5px;
+        line-height: 1.8;
+      }
+
+      .foot code {
+        color: var(--ufo-text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <h1>悬浮窗「滴答待办」· 四套方案</h1>
+        <p class="lead">
+          现状 = <b>三面小旗</b>（红 / 黄 / 蓝）+ 数量，横排或竖排。问题出在<b>未贴边的方形</b>：窗口只有 45×45、
+          组件真正拿到的槽位约 <code>39×39</code>，三面旗 + 数字排不下，于是数量被降级掉，只剩三面很小的旗子
+          —— 远看像三个色块，既读不出「哪档几个」，旗形在这个尺寸也认不出来。
+          下面四套都按<b>真实像素</b>渲染（另有 3× 放大版看清细节），数据统一取 高 2 / 中 1 / 低 3。
+        </p>
+      </header>
+
+      <!-- ── 现状 ─────────────────────────────────────────────── -->
+      <section class="option now">
+        <div class="option__head">
+          <h2>现状 · 三面旗 + 数字</h2>
+          <span class="tag tag--muted">对照</span>
+        </div>
+        <p class="option__note">
+          方格里数字被 <code>@container (max-width: 60px)</code> 降级掉了，只剩三面旗；旗形在 9px 下已看不出是旗子。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square">
+              <div class="todo">
+                <span class="cell cell--high"><i class="flag"></i><span class="num">2</span></span>
+                <span class="cell cell--mid"><i class="flag"></i><span class="num">1</span></span>
+                <span class="cell cell--low"><i class="flag"></i><span class="num">3</span></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>方形 45×45</b>未贴边（恒 1 格）</p>
+          </div>
+          <div class="slot">
+            <div class="win win--bar">
+              <div class="todo">
+                <span class="cell cell--high"><i class="flag"></i><span class="num">2</span></span>
+                <span class="cell cell--mid"><i class="flag"></i><span class="num">1</span></span>
+                <span class="cell cell--low"><i class="flag"></i><span class="num">3</span></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>横条 / 贴角 90×45</b>2 格</p>
+          </div>
+          <div class="slot">
+            <div class="win win--tall">
+              <div class="todo">
+                <span class="cell cell--high"><i class="flag"></i><span class="num">2</span></span>
+                <span class="cell cell--mid"><i class="flag"></i><span class="num">1</span></span>
+                <span class="cell cell--low"><i class="flag"></i><span class="num">3</span></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>竖条 45×90</b>2 格</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 对比表 ───────────────────────────────────────────── -->
+      <section class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>方案</th>
+              <th>一眼看懂什么</th>
+              <th>方形 39px</th>
+              <th>与 Agent 分片环的关系</th>
+              <th>实现成本</th>
+              <th>风险</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>A · 数字主导</td>
+              <td>三档各几个（精确数字，无图形噪音）</td>
+              <td class="stars">★★★★★</td>
+              <td>无关</td>
+              <td>低（改 DOM 与 CSS，纯逻辑不动）</td>
+              <td>两三位数要再降一档；纯数字少了「这是个待办」的形</td>
+            </tr>
+            <tr>
+              <td>B · 三色分段条</td>
+              <td>三档<b>占比</b>与总数（像 mini 进度条）</td>
+              <td class="stars">★★★★</td>
+              <td>同款「按占比切色」的思路</td>
+              <td>低（占比计算是纯函数，需新增）</td>
+              <td>看不出一档具体几个；条细到 4px 时占比差异会糊</td>
+            </tr>
+            <tr>
+              <td>C · 分片环 + 总数</td>
+              <td>总数（主角）+ 三档占比，空间大时再列明细</td>
+              <td class="stars">★★★★★</td>
+              <td><b>同源</b>：与 +N 溢出格的分片环是同一套视觉语言</td>
+              <td>中（复用 overflowRingGradient 的做法）</td>
+              <td>环的占比与「具体几个」之间要一次眼动转换</td>
+            </tr>
+            <tr>
+              <td>D · 三行小表</td>
+              <td>三档各几个（列表感，和状态灯的多灯排布一致）</td>
+              <td class="stars">★★★★</td>
+              <td>无关（更像 agent 多灯的分行）</td>
+              <td>低</td>
+              <td>三行在横条里上下排，和竖条同构、少了形态变化</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ── 方案 A ───────────────────────────────────────────── -->
+      <section class="option optA">
+        <div class="option__head">
+          <h2>方案 A · 数字主导<span class="tag">信息最全</span><span class="tag tag--muted">最克制</span></h2>
+        </div>
+        <p class="option__note">
+          去掉旗子字形，<b>数字就是主角</b>：三档各自用语义色上色，数字下方（竖条里是左侧）压一条色条当锚点
+          （颜色 + 位置双通道，不靠颜色单挑）。39px 里三组「数字 + 色条」横排正好排开，是本方案在方格里最大的优势；
+          竖条三行等宽、色条排成一条竖线，字号取竖条自己的预算再按 0.8× 收一档（大约 15.5px），整块上下居中。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square">
+              <div class="todo">
+                <span class="cell cell--high"><span class="num">2</span><i class="bar"></i></span>
+                <span class="cell cell--mid"><span class="num">1</span><i class="bar"></i></span>
+                <span class="cell cell--low"><span class="num">3</span><i class="bar"></i></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>方形 45×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--bar">
+              <div class="todo">
+                <span class="cell cell--high"><span class="num">2</span><i class="bar"></i></span>
+                <span class="cell cell--mid"><span class="num">1</span><i class="bar"></i></span>
+                <span class="cell cell--low"><span class="num">3</span><i class="bar"></i></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>横条 / 贴角 90×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--tall">
+              <div class="todo todo--tall">
+                <span class="cell cell--high"><i class="bar"></i><span class="num">2</span></span>
+                <span class="cell cell--mid"><i class="bar"></i><span class="num">1</span></span>
+                <span class="cell cell--low"><i class="bar"></i><span class="num">3</span></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>竖条 45×90</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--square zoom">
+              <div class="todo">
+                <span class="cell cell--high"><span class="num">2</span><i class="bar"></i></span>
+                <span class="cell cell--mid"><span class="num">1</span><i class="bar"></i></span>
+                <span class="cell cell--low"><span class="num">3</span><i class="bar"></i></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>方形 3× 放大</b></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 方案 B ───────────────────────────────────────────── -->
+      <section class="option optB">
+        <div class="option__head">
+          <h2>方案 B · 三色分段条<span class="tag">看占比</span></h2>
+        </div>
+        <p class="option__note">
+          一条按数量占比切开的三色条，上面压未完成总数 —— 像一枚 mini 进度条。
+          回答的是「我的待办压在哪一档」而不是「各档几个」：红色占掉大半时，扫一眼就知道该先清高优先级。
+          竖条里整条转 90°，天然适配。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square">
+              <div class="todo">
+                <span class="total">6<small>未完成</small></span>
+                <span class="stack">
+                  <i class="seg--high" style="width: 33.4%"></i>
+                  <i class="seg--mid" style="width: 16.6%"></i>
+                  <i class="seg--low" style="width: 50%"></i>
+                </span>
+              </div>
+            </div>
+            <p class="slot__name"><b>方形 45×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--bar">
+              <div class="todo">
+                <span class="total">6<small>未完成</small></span>
+                <span class="stack">
+                  <i class="seg--high" style="width: 33.4%"></i>
+                  <i class="seg--mid" style="width: 16.6%"></i>
+                  <i class="seg--low" style="width: 50%"></i>
+                </span>
+              </div>
+            </div>
+            <p class="slot__name"><b>横条 / 贴角 90×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--tall">
+              <div class="todo todo--tall">
+                <span class="total">6</span>
+                <span class="stack">
+                  <i class="seg--high" style="height: 33.4%"></i>
+                  <i class="seg--mid" style="height: 16.6%"></i>
+                  <i class="seg--low" style="height: 50%"></i>
+                </span>
+              </div>
+            </div>
+            <p class="slot__name"><b>竖条 45×90</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--bar zoom">
+              <div class="todo">
+                <span class="total">6<small>未完成</small></span>
+                <span class="stack">
+                  <i class="seg--high" style="width: 33.4%"></i>
+                  <i class="seg--mid" style="width: 16.6%"></i>
+                  <i class="seg--low" style="width: 50%"></i>
+                </span>
+              </div>
+            </div>
+            <p class="slot__name"><b>横条 3× 放大</b></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 方案 C ───────────────────────────────────────────── -->
+      <section class="option optC">
+        <div class="option__head">
+          <h2>方案 C · 分片环 + 总数<span class="tag">与 Agent 环同源</span><span class="tag tag--muted">推荐</span></h2>
+        </div>
+        <p class="option__note">
+          外圈按三档占比切成红 / 黄 / 蓝弧段，中心是未完成总数 —— 与 Agent 状态灯的
+          <b>+N 溢出格分片环</b>是同一套视觉语言：同一个悬浮窗里「环 = 一堆东西按状态切成占比」，
+          两个组件的语义因此互相解释。空间够（横条 / 竖条）时环旁边再列三档明细，方格里只留环 + 总数。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square">
+              <div class="todo">
+                <span class="dial">
+                  <span class="ring"></span>
+                  <span class="ring-core"><span>6</span></span>
+                </span>
+              </div>
+            </div>
+            <p class="slot__name"><b>方形 45×45</b>1:1 · 环 + 总数</p>
+          </div>
+          <div class="slot">
+            <div class="win win--bar">
+              <div class="todo">
+                <span class="dial">
+                  <span class="ring"></span>
+                  <span class="ring-core"><span>6</span></span>
+                </span>
+                <span class="chips">
+                  <span class="chip chip--high"><i></i>2</span>
+                  <span class="chip chip--mid"><i></i>1</span>
+                  <span class="chip chip--low"><i></i>3</span>
+                </span>
+              </div>
+            </div>
+            <p class="slot__name"><b>横条 / 贴角 90×45</b>1:1 · 环 + 明细</p>
+          </div>
+          <div class="slot">
+            <div class="win win--tall">
+              <div class="todo todo--tall">
+                <span class="dial">
+                  <span class="ring"></span>
+                  <span class="ring-core"><span>6</span></span>
+                </span>
+                <span class="chips">
+                  <span class="chip chip--high"><i></i>2</span>
+                  <span class="chip chip--mid"><i></i>1</span>
+                  <span class="chip chip--low"><i></i>3</span>
+                </span>
+              </div>
+            </div>
+            <p class="slot__name"><b>竖条 45×90</b>1:1 · 环 + 明细</p>
+          </div>
+          <div class="slot">
+            <div class="win win--square zoom">
+              <div class="todo">
+                <span class="dial">
+                  <span class="ring"></span>
+                  <span class="ring-core"><span>6</span></span>
+                </span>
+              </div>
+            </div>
+            <p class="slot__name"><b>方形 3× 放大</b></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 方案 D ───────────────────────────────────────────── -->
+      <section class="option optD">
+        <div class="option__head">
+          <h2>方案 D · 三行小表<span class="tag">列表感</span></h2>
+        </div>
+        <p class="option__note">
+          三行「色块 + 数字」上下排，像一张极小的小表：色块代替旗子字形（4×10px 的圆角块比 9px 的旗形干净得多），
+          数字是主文本色、优先级只由色块承载。竖条里天然成立，方形里三行也正好放得下 —— 代价是四种形态观感趋同。
+        </p>
+        <div class="strip">
+          <div class="slot">
+            <div class="win win--square">
+              <div class="todo">
+                <span class="row row--high"><i class="swatch"></i><span class="num">2</span></span>
+                <span class="row row--mid"><i class="swatch"></i><span class="num">1</span></span>
+                <span class="row row--low"><i class="swatch"></i><span class="num">3</span></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>方形 45×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--bar">
+              <div class="todo">
+                <span class="row row--high"><i class="swatch"></i><span class="num">2</span></span>
+                <span class="row row--mid"><i class="swatch"></i><span class="num">1</span></span>
+                <span class="row row--low"><i class="swatch"></i><span class="num">3</span></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>横条 / 贴角 90×45</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--tall">
+              <div class="todo">
+                <span class="row row--high"><i class="swatch"></i><span class="num">2</span></span>
+                <span class="row row--mid"><i class="swatch"></i><span class="num">1</span></span>
+                <span class="row row--low"><i class="swatch"></i><span class="num">3</span></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>竖条 45×90</b>1:1</p>
+          </div>
+          <div class="slot">
+            <div class="win win--square zoom">
+              <div class="todo">
+                <span class="row row--high"><i class="swatch"></i><span class="num">2</span></span>
+                <span class="row row--mid"><i class="swatch"></i><span class="num">1</span></span>
+                <span class="row row--low"><i class="swatch"></i><span class="num">3</span></span>
+              </div>
+            </div>
+            <p class="slot__name"><b>方形 3× 放大</b></p>
+          </div>
+        </div>
+      </section>
+
+      <p class="foot">
+        尺寸口径：一格 = 45px（用户可调 32–96）；外壳 1px 描边 + <code>p-0.5</code> 内边距，组件拿到的槽位约 39×39 /
+        84×39 / 39×84。数据未到（没配 Token / 还没拉到）时四套都走中性灰。<br />
+        配色全部沿用 <code>src/assets/main.css</code> 的 token，未新增色值；数字一律 <code>tabular-nums</code>，
+        避免计数变化时抖动。
+      </p>
+    </div>
+  </body>
+</html>

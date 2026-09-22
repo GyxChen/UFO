@@ -13,9 +13,9 @@ import './todo.css'
 /**
  * 滴答清单待办悬浮窗模块定义。
  *
- * - 恒定占用 2 格（`todoDemand`）：三面小旗 = 高 / 中 / 低三档的未完成数（旗子字形取自
- *   `src/assets/flag.svg`，红 / 黄 / 蓝由 CSS 上色），不显示任务明细
- *   （方形 / 四角 / 横条横排三面，竖条竖排三面，见 `TodoModule.vue` 与 `todo.css`）
+ * - 恒定占用 2 格（`todoDemand`）：三组「数字 + 色条」= 高 / 中 / 低三档的未完成数，
+ *   数字是主角（这组信息的全部内容）、色条只当「哪一档」的锚点，不显示任务明细
+ *   （方形 / 四角 / 横条横排三组，竖条竖排三组，见 `TodoModule.vue` 与 `todo.css`）
  * - 悬停时通过 `reportHover('todo-list')` 唤起信息卡：就是设置页「完成情况」里的未完成组
  *   （同一套行组件与树逻辑，可滚动、点勾选框即完成、父目标连带完成），**不带右键菜单**
  * - 主窗口提供 GeneralSection 单一常规分区：新增任务 + API Token（入凭据管理器）+ 清单筛选
@@ -24,7 +24,7 @@ import './todo.css'
 export const todoModule: FloatingModuleDefinition = {
   id: 'todo',
   label: '滴答待办',
-  description: '滴答清单：三面小旗显示高 / 中 / 低三档的未完成数，悬停查看未完成任务并可直接完成。',
+  description: '滴答清单：三组数字显示高 / 中 / 低三档的未完成数，悬停查看未完成任务并可直接完成。',
   version: 1,
   // 新组件默认关闭：用户升级后不会凭空多出一块弹窗，要自己在「悬浮窗设置」里开。
   defaultEnabled: false,

@@ -1,31 +1,26 @@
 // @vitest-environment happy-dom
 
 /**
- * 悬浮窗视图的回归护栏：**三面小旗 = 一份字形 + 三条 CSS**。
+ * 悬浮窗视图的回归护栏：**三组「数字 + 色条」**。
  *
- * `todo-css.spec.ts` 锁的是样式表里的那套 mask 配方（形状来自 `flag.svg`、颜色来自
- * `background-color`、宽高按 6:7 推导），可它看不出两块东西：一是「组件到底有没有把字形
- * 地址交给样式表」，二是「那份字形本身还能不能被解析」—— 少前者旗子退化成实心方块，
- * 少后者旗子整片不显示，而样式测试照样全绿。所以这里从组件与资源这一层补上：
+ * 这一版把优先级从「旗子字形」换成了「数字 + 色条」（方案 A · 数字主导）：
+ * 45px 方形里组件只有约 39×39px，9px 的旗形既认不出形状、又和数字抢那点宽度，
+ * 旧版只好在窄槽位把数字整块降级掉 —— 方格里就只剩三面小旗，读不出任何条数。
+ * 现在数字是主角、色条只当「哪一档」的锚点。这里锁住几件组件这一层才能保证的事：
  *
- * 1. 三档各一面旗，颜色类按 高 = 红 / 中 = 黄 / 低 = 蓝 的顺序排；
- * 2. 根节点必须给出 `--todo-flag-mask`（就是 `flag.svg` 的地址），否则 `mask-image` 取不到值；
- * 3. 字形资源本身必须是**能被解析的 XML**，且 viewBox 的比例与 CSS 里写死的 6:7 一致；
- * 4. 数据未到时三面旗仍是灰的、且不带数字（与「三档都是 0」区分开）；
- * 5. 计数封顶在 `99+`，免得三位数把一格宽的槽位撑破。
+ * 1. 三组按 高 = 红 / 中 = 黄 / 低 = 蓝 的固定顺序排，每组都是「数字 + 色条」两件；
+ * 2. 位数档（`--wide` / `--xwide`）挂在**整块**上、且由**最长**的那个计数决定 ——
+ *    挂在单个数字上会让三组大小参差；漏挂则在 39px 的方格里直接溢出；
+ * 3. 数据未到时数字是空串（不是 `0`）、色条留位（格子不跳）；
+ * 4. 计数封顶在 `99+`，免得三位数把一格宽的槽位撑破。
+ *
+ * ⚠️ 样式侧（色条怎么画、按形态怎么排、降档降多少）在 `todo-css.spec.ts` 里锁。
  */
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TodoModule from './TodoModule.vue'
 import { useTodoStore, type TodoSnapshot, type TodoTaskItem } from './stores/todo'
-
-/** 小旗子的字形资源（`?raw` 读原文，用来验证它本身没坏）。 */
-const flagAssets = import.meta.glob('/src/assets/flag.svg', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-}) as Record<string, string>
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 // store 在 setup 里读窗口 label（只在悬浮窗起轮询）；测试环境没有 Tauri 运行时。
@@ -88,56 +83,69 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-describe('TodoModule · 三面优先级小旗', () => {
-  it('paints one flag per bucket in the fixed high / medium / low order', () => {
+describe('TodoModule · 三组「数字 + 色条」', () => {
+  it('paints one group per bucket in the fixed high / medium / low order', () => {
     const wrapper = mountModule(snapshotOf([2, 1, 3]))
 
-    const flags = wrapper.findAll('.todo-module__flag')
-    expect(flags).toHaveLength(3)
-    expect(flags[0].classes()).toContain('todo-module__flag--red')
-    expect(flags[1].classes()).toContain('todo-module__flag--yellow')
-    expect(flags[2].classes()).toContain('todo-module__flag--blue')
+    const cells = wrapper.findAll('.todo-module__cell')
+    expect(cells).toHaveLength(3)
+    expect(cells[0].classes()).toContain('todo-module__cell--red')
+    expect(cells[1].classes()).toContain('todo-module__cell--yellow')
+    expect(cells[2].classes()).toContain('todo-module__cell--blue')
+
+    // 每组都是「数字 + 色条」两件：少了色条就只剩数字，优先级无处承载（只靠位置）
+    expect(wrapper.findAll('.todo-module__count').map(node => node.text())).toEqual(['2', '1', '3'])
+    expect(cells.every(cell => cell.find('.todo-module__tone').exists())).toBe(true)
+    // 色条是纯装饰：优先级由整块的 aria-label 说给读屏听，不要在无障碍树里重复一遍数字
+    expect(wrapper.findAll('.todo-module__tone[aria-hidden="true"]')).toHaveLength(3)
+
+    // DOM 顺序 = 数字在前、色条在后。两个形态的摆位都从它推出来：竖条是 `flex-direction: row`
+    // （数字在左、色条在右），横排是 `column`（数字在上、色条在下）—— 顺序反过来竖条就成了色条在左。
+    for (const cell of cells) {
+      expect(cell.element.children[0].className).toContain('todo-module__count')
+      expect(cell.element.children[1].className).toContain('todo-module__tone')
+    }
   })
 
-  it('hands the flag glyph url to the stylesheet so the mask can find it', () => {
-    const wrapper = mountModule(snapshotOf([1, 0, 0]))
-
-    // 少了这个变量，`.todo-module__flag` 的 mask-image 取不到值 → 旗子退化成实心方块
-    const style = wrapper.get('.todo-module').attributes('style') ?? ''
-    expect(style).toContain('--todo-flag-mask')
-    expect(style).toContain('svg')
-  })
-
-  it('keeps the counts next to the flags and caps them at 99+', () => {
+  it('caps the counts at 99+ so three digits cannot burst the cell', () => {
     const wrapper = mountModule(snapshotOf([2, 8, 199]))
 
-    // 「旗 + 数字」成组：一档一面旗、一个数字
     expect(wrapper.findAll('.todo-module__count').map(node => node.text())).toEqual(['2', '8', '99+'])
   })
 
-  it('shows three grey flags without numbers before the data arrives', () => {
+  it('puts the digit-width step on the whole block, keyed off the longest count', () => {
+    // 一位数：不降档
+    expect(mountModule(snapshotOf([2, 1, 3])).get('.todo-module__groups').classes()).not.toContain(
+      'todo-module__groups--wide'
+    )
+    // 出现两位数：整块降一档
+    expect(mountModule(snapshotOf([12, 1, 3])).get('.todo-module__groups').classes()).toContain(
+      'todo-module__groups--wide'
+    )
+    // 出现三位数（含 `99+`）：降到最紧那档，且是**整块**一起降 —— 三组数字大小必须一致
+    const xwide = mountModule(snapshotOf([2, 1, 199])).get('.todo-module__groups')
+    expect(xwide.classes()).toContain('todo-module__groups--xwide')
+    expect(xwide.classes()).not.toContain('todo-module__groups--wide')
+    expect(xwide.findAll('.todo-module__count')).toHaveLength(3)
+  })
+
+  it('shows empty numbers with the bars still in place before the data arrives', () => {
     const wrapper = mountModule(null)
 
     expect(wrapper.get('.todo-module').classes()).toContain('todo-module--empty')
-    // 空串（不是 0）：写 0 会让人以为「真的没有任务」，而这只是还没拉到数据
+    // 空串（不是 0）：写 0 会让人以为「真的没有任务」，而这只是还没拉到数据；
+    // 色条仍在原位（盒子不塌），三组的位置与格子因此不会跳。
     expect(wrapper.findAll('.todo-module__count').map(node => node.text())).toEqual(['', '', ''])
+    expect(wrapper.findAll('.todo-module__tone')).toHaveLength(3)
+    // 空态不该带上位数档：没有数字可降
+    expect(wrapper.get('.todo-module__groups').classes()).not.toContain('todo-module__groups--wide')
   })
 
-  it('keeps the glyph asset parseable and in the ratio the stylesheet assumes', () => {
-    const entry = Object.entries(flagAssets).find(([path]) => path.endsWith('flag.svg'))
-    expect(entry, '没找到 src/assets/flag.svg').toBeTruthy()
-    const svg = entry?.[1] ?? ''
+  it('describes the three buckets plus the total for screen readers', () => {
+    const wrapper = mountModule(snapshotOf([2, 1, 3]))
 
-    /*
-     * ⚠️ XML 注释里**不能出现连续两个减号**：在注释里写 CSS 变量名（如那个旗子高度变量）
-     * 就会踩到，整份 SVG 解析失败 → 旗子整片不显示，而别的测试全绿（mask 地址照给、
-     * 颜色照上、盒子尺寸照算），是最难从代码上看出来的一种坏。
-     */
-    for (const comment of svg.match(/<!--[\s\S]*?-->/g) ?? []) {
-      expect(comment.slice(4, -3), 'XML 注释里不得出现连续两个减号').not.toContain('--')
-    }
-
-    // viewBox 的 12:14（= 6:7）就是 CSS 里宽高推导的依据：改了字形必须同步改那边
-    expect(svg).toContain('viewBox="0 0 12 14"')
+    // 悬浮窗里只有数字与色条，读屏拿不到「哪档几颗」以外的信息，整块必须自己说清楚
+    expect(wrapper.get('.todo-module').attributes('aria-label')).toBe('高 2，中 1，低 3，共 6 个未完成任务')
+    expect(mountModule(null).get('.todo-module').attributes('aria-label')).toBe('滴答待办（等待数据）')
   })
 })
