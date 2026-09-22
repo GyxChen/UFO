@@ -6,9 +6,11 @@ import {
   displayEndpoint,
   formatTokenCount,
   formatTokenMillions,
+  phaseLabel,
   tokenTotal,
   type SessionSnapshot,
 } from './lib/agent-status'
+import { overflowListFor, overflowSegments } from './lib/agent-status-layout'
 import type { FloatingHoverTarget } from '@/lib/floating-module-context'
 import { TOOLTIP_INTERACTION_EVENT } from '@/lib/tooltip'
 import { formatFlowUpdatedAt, flowColorClass, type FlowField } from './lib/flow'
@@ -22,8 +24,12 @@ import claudeIcon from '@/assets/claude.svg'
 import codexIcon from '@/assets/codex.svg'
 
 /**
- * Agent 状态灯的悬停信息卡：一个 CLI 会话的完整画像
- * （provider / phase、Endpoint、token 用量、流程脚本拓展字段、提问）。
+ * Agent 状态灯的悬停信息卡，两种内容共用一个组件（按悬停目标分派）：
+ *
+ * 1. **单个会话**（悬停某盏灯）= 一个 CLI 会话的完整画像
+ *    （provider / phase、Endpoint、token 用量、流程脚本拓展字段、提问）；
+ * 2. **折叠清单**（悬停 `+N` 溢出格）= 被折叠的那几盏灯的状态一览
+ *    （灯 + 平台图标 + 阶段 + 提问摘要），悬停目标是合成 key（见 `overflowHoverKey`）。
  *
  * 提示窗提供容器（毛玻璃外壳、定位、显隐），本组件只渲染内容行；
  * 多根节点渲染，保证提示窗里的 DOM 结构与从前一致（CSS 不用改）。
@@ -32,7 +38,7 @@ import codexIcon from '@/assets/codex.svg'
 defineOptions({ inheritAttrs: false })
 
 const props = defineProps<{
-  /** 悬停目标；`key` 在本模块里是会话 key。 */
+  /** 悬停目标；`key` 在本模块里是会话 key，或是溢出格的合成 key（`@overflow:<layout>:<cells>`）。 */
   target: FloatingHoverTarget
 }>()
 
@@ -44,6 +50,37 @@ const flowResults = useFlowResultsStore()
 const session = computed<SessionSnapshot | null>(
   () => store.sessions.find(item => item.key === props.target.key) ?? null
 )
+
+/**
+ * 溢出模式：非 null 即「悬停的是折叠指示器」，值是当下被折叠的会话（已按注意力优先级排好）。
+ * 普通会话悬停时解析失败 → null，走下面的单会话分支。
+ *
+ * 折叠清单是**现算**的，不用悬停那一刻的旧数据：形态与格子数由 key 带过来，
+ * 会话列表来自本窗口订阅的同一份快照，因此与屏上那块环永远同源。
+ */
+const overflowList = computed(() => overflowListFor(props.target.key, store.sessions))
+
+/** 折叠会话（非溢出模式时为空数组，模板不必再判空）。 */
+const hiddenSessions = computed(() => overflowList.value ?? [])
+
+/** 折叠会话的灯色分片（红 → 黄 → 绿），给头部的统计片用；与环同一份口径。 */
+const hiddenSegments = computed(() => overflowSegments(hiddenSessions.value))
+
+/**
+ * 清单最多列几行：提示窗高度是固定的（`tooltip.size` 300×260，内容区约 240px），
+ * 头部约 28px、一行约 24px，7 行 + 一行「还有 N 个未列出」≈ 213px，底部还留得住白。
+ * 超出的折成一行小字 —— 溢出格折叠的会话数上不封顶（最多能到十几盏）。
+ */
+const MAX_LISTED_SESSIONS = 7
+/** 清单里实际渲染的会话（超出部分只报数量）。 */
+const listedSessions = computed(() => hiddenSessions.value.slice(0, MAX_LISTED_SESSIONS))
+/** 没能列进清单的会话数。 */
+const restSessions = computed(() => Math.max(hiddenSessions.value.length - MAX_LISTED_SESSIONS, 0))
+
+/** provider → 平台图标（清单里每行都要按自己的 provider 取）。 */
+function iconFor(item: SessionSnapshot) {
+  return item.provider === 'codex' ? codexIcon : claudeIcon
+}
 
 const providerLabel = computed(() => (session.value?.provider === 'codex' ? 'Codex' : 'Claude'))
 const providerIcon = computed(() => (session.value?.provider === 'codex' ? codexIcon : claudeIcon))
@@ -125,7 +162,44 @@ async function dismissSession() {
 </script>
 
 <template>
-  <template v-if="session">
+  <!--
+    溢出模式：悬停的是 `+N` 折叠指示器，这里列出被折叠的那几盏灯。
+    头部先给「还剩几个 + 红黄绿各几个」，下面一行一个会话 —— 扫一眼就能定位到要不要去管的那盏。
+  -->
+  <template v-if="overflowList">
+    <div class="tooltip-row tooltip-row--head">
+      <span class="tooltip-row__value">后面还有 {{ hiddenSessions.length }} 个会话</span>
+      <span class="tooltip-overflow-counts">
+        <span
+          v-for="segment in hiddenSegments"
+          :key="segment.color"
+          class="tooltip-overflow-chip"
+          :class="`tooltip-overflow-chip--${segment.color}`"
+        >
+          <i aria-hidden="true"></i>{{ segment.count }}
+        </span>
+      </span>
+    </div>
+
+    <div v-for="item in listedSessions" :key="item.key" class="tooltip-row">
+      <span class="tooltip-dot" :class="`tooltip-dot--${colorForSession(item)}`" aria-hidden="true" />
+      <img :src="iconFor(item)" :alt="item.provider" class="tooltip-provider-icon" aria-hidden="true" />
+      <span class="tooltip-overflow-row__phase" :class="`tooltip-overflow-row__phase--${colorForSession(item)}`">{{
+        phaseLabel(item.phase)
+      }}</span>
+      <!-- 提问可能很长：省略号截断，完整原文走 title。未上报提问时给一句占位，避免行内出现空洞。 -->
+      <span class="tooltip-overflow-row__prompt" :title="item.prompt ?? ''">{{ item.prompt ?? '（未上报提问）' }}</span>
+    </div>
+
+    <!--
+      兜底行：折叠数超过一屏（> 7）时报一句；悬停期间会话结束导致清单空了，也给一句话，
+      否则卡片会剩一个只有头部的空框（悬浮窗那块折叠指示器也要等快照下一帧才消失）。
+    -->
+    <p v-if="restSessions" class="tooltip-overflow-note">还有 {{ restSessions }} 个未列出</p>
+    <p v-else-if="!hiddenSessions.length" class="tooltip-overflow-note">折叠的会话都已结束</p>
+  </template>
+
+  <template v-else-if="session">
     <div class="tooltip-row tooltip-row--head">
       <span class="tooltip-dot" :class="`tooltip-dot--${statusColor}`" aria-hidden="true" />
       <img :src="providerIcon" :alt="providerLabel" class="tooltip-provider-icon" aria-hidden="true" />
@@ -159,13 +233,7 @@ async function dismissSession() {
     />
 
     <!-- token 消耗：一行显示「已使用 token: 总量」（单位由主窗口决定），四项明细放在 title；未统计到时不占位。 -->
-    <TooltipRow
-      v-if="tokenCount > 0"
-      label="已使用 token:"
-      mono
-      :value="tokenDisplay"
-      :title="tokenTitle"
-    />
+    <TooltipRow v-if="tokenCount > 0" label="已使用 token:" mono :value="tokenDisplay" :title="tokenTitle" />
 
     <!--
       拓展字段分组：紧跟 token 行之后（语义同属「用量类」），来自该 endpoint 的流程脚本。

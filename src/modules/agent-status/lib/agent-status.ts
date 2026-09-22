@@ -82,6 +82,44 @@ export function colorForSession(session: SessionSnapshot): StatusColor {
 }
 
 /**
+ * 会话阶段的中文短标签。
+ *
+ * 只给**溢出格的折叠清单**用：那里一行要同时读「阶段 + 提问」，英文枚举（`waiting`）在成段的行里
+ * 读不出信息；单会话信息卡头部仍按原样显示枚举 —— 那是个大写字距的小徽章，枚举在那种形态下更像标签。
+ * 未列出的阶段回落 `unknown` 的中文，不返回空串（读屏与省略号都不该出现空标签）。
+ */
+export function phaseLabel(phase: SessionPhase): string {
+  switch (phase) {
+    case 'running':
+      return '执行中'
+    case 'waiting':
+      return '等待操作'
+    case 'error':
+      return '出错'
+    case 'completed':
+      return '已完成'
+    default:
+      return '状态未知'
+  }
+}
+
+/**
+ * 灯色的中文短标签（读屏文案用，如「还有 3 个会话：1 个出错、2 个等待操作」）。
+ * 与 {@link colorForSession} 同一套语义；绿色涵盖「执行中」与「一轮刚跑完」两种阶段，
+ * 统一按「执行中」读 —— 读屏文案里再区分闪烁只会更长。
+ */
+export function colorLabel(color: StatusColor): string {
+  switch (color) {
+    case 'red':
+      return '出错'
+    case 'yellow':
+      return '等待操作'
+    default:
+      return '执行中'
+  }
+}
+
+/**
  * 会话 Endpoint 的展示值：命中代理解析出的上游时优先显示上游，否则回落到 base_url。
  *
  * 两者都缺时返回 null（前端显示占位符）。
@@ -99,10 +137,7 @@ export function displayEndpoint(session: SessionSnapshot): string | null {
 export function tokenTotal(tokens: TokenTotals | null | undefined): number {
   if (!tokens) return 0
   return (
-    tokens.input_tokens +
-    tokens.cache_creation_input_tokens +
-    tokens.cache_read_input_tokens +
-    tokens.output_tokens
+    tokens.input_tokens + tokens.cache_creation_input_tokens + tokens.cache_read_input_tokens + tokens.output_tokens
   )
 }
 
@@ -140,23 +175,22 @@ export function isStatusSnapshot(value: unknown): value is StatusSnapshot {
     typeof snapshot.generated_at_ms === 'number' &&
     Array.isArray(snapshot.sessions) &&
     snapshot.sessions.length <= 1000 &&
-    snapshot.sessions.every((session) =>
-      session &&
-      typeof session.key === 'string' &&
-      (session.provider === 'claude' || session.provider === 'codex') &&
-      typeof session.session_id === 'string' &&
-      typeof session.phase === 'string' &&
-      typeof session.termination_confirmed === 'boolean',
+    snapshot.sessions.every(
+      session =>
+        session &&
+        typeof session.key === 'string' &&
+        (session.provider === 'claude' || session.provider === 'codex') &&
+        typeof session.session_id === 'string' &&
+        typeof session.phase === 'string' &&
+        typeof session.termination_confirmed === 'boolean'
     ) &&
     typeof snapshot.counts === 'object' &&
     snapshot.counts !== null
   )
 }
 
-export async function listenToAgentStatus(
-  onSnapshot: (snapshot: StatusSnapshot) => void,
-): Promise<UnlistenFn> {
-  return listen<StatusSnapshot>(AGENT_STATUS_EVENT, (event) => {
+export async function listenToAgentStatus(onSnapshot: (snapshot: StatusSnapshot) => void): Promise<UnlistenFn> {
+  return listen<StatusSnapshot>(AGENT_STATUS_EVENT, event => {
     if (isStatusSnapshot(event.payload)) onSnapshot(event.payload)
   })
 }

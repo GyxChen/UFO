@@ -304,8 +304,8 @@
         <h2>④ 悬停溢出格 → 折叠会话清单</h2>
         <p class="card__hint">
           四套方案的悬停清单相同：溢出格上报一个<b>合成悬停目标</b>（不是任何单个会话的 key），提示窗改渲染这张清单。
-          提示窗是点击穿透窗口（<code>focusable: false</code> + 忽略光标事件），所以清单<b>不可交互</b> ——
-          不做 hover 高亮、不靠 title，信息要一眼读全。行数超出时内部滚动，超出 8 行折叠成「还有 N 个」。
+          提示窗显示期间是接指针的（<code>set_tooltip_interactive(true)</code>，单会话卡片的关闭按钮就靠它），
+          但清单本轮<b>刻意只读</b>：不做行悬停高亮、不靠 title，信息要一眼读全。一屏列得下 7 行，剩下的折成一行「还有 N 个未列出」。
         </p>
         <div class="desktop">
           <div class="stages">

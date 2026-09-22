@@ -217,6 +217,9 @@
           ⚠️ 关键前提：<b>未贴边的方形只有一格</b>（窗口尺寸与格子数无关，多组件时内容是等比压缩），
           所以会话 ≥ 2 时整窗就是这块溢出格 —— 它不是"边角料"，而是常见状态下悬浮窗的**唯一面孔**，
           必须自带足够信息（能看出颜色、能看出"后面还有"）。贴角 / 横条 / 竖条才会出现「几盏灯 + 溢出格」并排。
+          <br />
+          ✅ <b>已采用方案 B</b>：实现见 <code>src/modules/agent-status/agent-status.css</code> 的「分片环」一节、
+          <code>lib/agent-status-layout.ts</code>（分片 / 渐变 / 合成悬停 key）与 <code>AgentStatusTooltip.vue</code>（折叠清单）。
         </p>
       </div>
 
@@ -322,7 +325,7 @@
 
         <a class="proposal" href="./overflow-stack-b-ring.html">
           <div>
-            <h2>方案 B · 分片环<span class="tag">信息量最大</span></h2>
+            <h2>方案 B · 分片环<span class="tag">已采用</span></h2>
             <p>
               外圈是按状态<b>占比</b>切开的彩环（红 / 黄 / 绿各占多少），后面两圈同色模糊光晕做层次，
               中心深盘放 <code>+N</code>。
@@ -430,8 +433,8 @@
             信息卡内容组件改渲染清单：标题「后面还有 N 个会话」+ 红/黄/绿统计 + 每行「灯 + 平台图标 + 阶段 + 提问摘要」。
           </li>
           <li>
-            ⚠️ 提示窗是<b>点击穿透</b>窗口（<code>focusable: false</code> + 忽略光标事件）：清单<b>不可交互</b>，
-            不做行悬停高亮、不靠 <code>title</code>；行数超出时内部滚动（超过 8 行折成「还有 N 个」）。
+            ⚠️ 提示窗显示期间是<b>接指针</b>的（<code>set_tooltip_interactive(true)</code>，单会话卡的关闭按钮靠它），
+            但清单本轮<b>刻意只读</b>：不做行悬停高亮、不靠 <code>title</code>；一屏列得下 7 行，剩下的折成一行「还有 N 个未列出」。
           </li>
           <li>
             ⚠️ 提示窗默认 300×260（<code>tauri.conf.json</code>），清单要用 <code>tooltip.size</code>

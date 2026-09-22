@@ -1,4 +1,5 @@
 import type { FloatingModuleDefinition } from '@/lib/floating-modules'
+import { overflowListFor } from './lib/agent-status-layout'
 import { useAgentStatusStore } from './stores/agentStatus'
 import { useFlowResultsStore } from './stores/flowResults'
 import AgentStatusModule from './AgentStatusModule.vue'
@@ -20,7 +21,7 @@ import './agent-status.css'
 export const agentStatusModule: FloatingModuleDefinition = {
   id: 'agent-status',
   label: 'Agent 状态灯',
-  description: '每个 CLI 会话一盏灯：绿=执行中 / 黄=等待操作 / 红=出错，悬停看详情。',
+  description: '每个 CLI 会话一盏灯：绿=执行中 / 黄=等待操作 / 红=出错；放不下的折成 +N 环，悬停看折叠的那几盏。',
   version: 1,
   defaultEnabled: true,
   supportedLayouts: ['square', 'corner', 'horizontal', 'vertical'],
@@ -57,12 +58,20 @@ export const agentStatusModule: FloatingModuleDefinition = {
   },
   tooltip: {
     component: AgentStatusTooltip,
-    // 一屏预算：head + Endpoint + token + 4 字段 + 刷新标注 + 提问 1 行 ≈ 236px（见 AGENTS.md）。
+    // 一屏预算：单会话 = head + Endpoint + token + 4 字段 + 刷新标注 + 提问 1 行 ≈ 236px；
+    // 折叠清单 = head + 7 行 + 一行兜底 ≈ 213px —— 两种内容都在 260 内（见 AGENTS.md）。
     size: { width: 300, height: 260 },
     /**
      * 会话数据要先到达提示窗才弹（提示窗是独立 webview，事件异步），
      * 否则会先弹一个空框、再填内容（且位置可能还在上一个目标那里）。
+     *
+     * 溢出格的合成 key（`@overflow:<layout>:<cells>`）走另一条判定：**有折叠才弹** ——
+     * 折叠在悬停期间都结束了就给 false，与单会话「目标已消失」同款处理。
      */
-    hasContent: target => useAgentStatusStore().sessions.some(session => session.key === target.key),
+    hasContent: target => {
+      const sessions = useAgentStatusStore().sessions
+      const overflow = overflowListFor(target.key, sessions)
+      return overflow ? overflow.length > 0 : sessions.some(session => session.key === target.key)
+    },
   },
 }

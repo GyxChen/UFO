@@ -242,6 +242,9 @@ src-tauri/src/
 - tooltip 是独立窗口，**不适用**方形/横条/竖条三形态适配；默认尺寸 300×260（`tauri.conf.json`），组件可用 `tooltip.size` 覆盖（提示窗在 `present()` 里**先 `setSize` 再量尺寸定位**）。内容用 flex + 省略号自适应。
 - Agent 状态灯信息卡的展示字段（自上而下顺序固定）：provider/phase、Endpoint（见「代理解析器」）、token 用量、**流程脚本拓展字段 + 刷新标注**、`prompt`（用户提问）。拓展字段紧跟 token 行、提问永远在最后（不要插回提问下面，否则与「字段属用量类」的视觉分组错位）。**不展示 session id**。这些字段属于 `AgentStatusTooltip.vue`，不是提示窗的公共契约。
 - ⚠️ **指示灯不要加 `title` 属性**：`title` 会触发 Windows 原生文字提示，与悬浮窗自己的 tooltip 重复且更简陋。无障碍信息只走 `aria-label`（不产生可见提示）。
+- ⚠️ **溢出格（`+N`）上报的是合成 key**（`@overflow:<layout>:<cells>`，编解码在 `src/modules/agent-status/lib/agent-status-layout.ts`）：悬停事件只带「模块 id + key」，而提示窗是**另一个窗口**，拿不到悬浮窗的形态与格子数 —— 把它们编进 key，两侧就能用**同一个** `partitionIndicatorSessions` 重算折叠清单，屏上的占比环与清单里的行必然同源。key 由模块自己解释，外壳照旧只当字符串转发，**不改任何对外契约**。
+- 溢出格本身是「**分片环**」：外圈按折叠会话的灯色占比切开（红 → 黄 → 绿，注意力优先级顺序，不是开始时间），环外两圈同色模糊光晕做层次，中间深色核心托住 `+N`。尺寸一律按**宽度**取百分比 + `aspect-ratio: 1`（三种形态下行宽都 ≤ 行高，是竖条那条约束的推广），放大倍率受槽位 `overflow: hidden` 约束不能再加。见 `reference/mock/overflow-stack-index.html`（四套方案，采用 B）。
+- 折叠清单的 `hasContent` 是「**有折叠才弹**」；清单为空（悬停期间会话结束）时卡片给一句兜底文案，不留空框。
 - ⚠️ tooltip 的 token 单位来自模块配置，而 `floatingModules` 是窗口级 store，由外壳在 `App.vue` 里 `start()`（三窗都起）；否则提示窗永远停留在 `fallbackConfig` 的默认单位，主窗口切换后不生效。
 
 ### token 用量展示

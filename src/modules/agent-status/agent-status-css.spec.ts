@@ -108,4 +108,81 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
     expect(short, '矮槽降级块必须存在（横条 / 方形的限制轴是行高）').not.toBe('')
     expect(short).toContain('display: none')
   })
+
+  it('draws the overflow ring as a hollow band centred in the cell', () => {
+    const css = agentStatusCss()
+    const band = blockAfter(css, '.agent-status-module__ring,')
+    expect(band, '环与两圈光晕共用一条规则').not.toBe('')
+
+    // 按宽度取百分比 + aspect-ratio：格子不是正方形，同时写 width / height 会变成椭圆。
+    expect(decl(band, 'width')).toMatch(/%$/)
+    expect(decl(band, 'aspect-ratio')).toBe('1')
+    // 居中不依赖 flex 的「绝对定位子元素静态位置」，用 left/top 50% + translate 兜底。
+    expect(decl(band, 'left')).toBe('50%')
+    expect(decl(band, 'top')).toBe('50%')
+    for (const selector of [
+      '.agent-status-module__ring',
+      '.agent-status-module__halo--near',
+      '.agent-status-module__halo--far',
+    ]) {
+      expect(decl(ruleBody(css, selector), 'transform'), `${selector} 必须自己带居中的 translate`).toContain(
+        'translate(-50%, -50%)'
+      )
+    }
+
+    // 挖空中心成环带：closest-side 的半径 = 内切圆，两个百分比就是「盘的直径占比」，内 < 外。
+    const mask = decl(band, 'mask')
+    const stops = [...mask.matchAll(/(\d+)%/g)].map(match => Number(match[1]))
+    expect(mask).toContain('radial-gradient(closest-side')
+    expect(stops.length).toBe(2)
+    expect(stops[0]).toBeLessThan(stops[1])
+
+    // 核心要落在环的孔里（留出暗缝），否则彩边会糊在数字上。
+    const ringWidth = Number.parseFloat(decl(band, 'width'))
+    const coreWidth = Number.parseFloat(decl(ruleBody(css, '.agent-status-module__overflow-core'), 'width'))
+    expect(ringWidth * (stops[0] / 100)).toBeGreaterThan(coreWidth)
+  })
+
+  it('keeps the halo inside the cell and the count readable at every cell size', () => {
+    const css = agentStatusCss()
+    const ringWidth = Number.parseFloat(decl(blockAfter(css, '.agent-status-module__ring,'), 'width'))
+    const coreWidth = Number.parseFloat(decl(ruleBody(css, '.agent-status-module__overflow-core'), 'width'))
+
+    // 最外的光晕放大后仍要留在格子里（真实槽位是 overflow: hidden，越界会被切出直边）。
+    const far = ruleBody(css, '.agent-status-module__halo--far')
+    const farScale = Number.parseFloat(/(?:^|\s)scale\(([\d.]+)\)/.exec(decl(far, 'transform'))?.[1] ?? '')
+    expect(Number.isFinite(farScale)).toBe(true)
+    expect(ringWidth * farScale).toBeLessThanOrEqual(100)
+    // 越远的越淡。
+    const nearOpacity = Number.parseFloat(decl(ruleBody(css, '.agent-status-module__halo--near'), 'opacity'))
+    expect(nearOpacity).toBeGreaterThan(Number.parseFloat(decl(far, 'opacity')))
+
+    // 核心比一格小一圈（不是吃满），且数字字号跟着格子缩放：格子调大后 +N 不能停在设计值上。
+    expect(coreWidth).toBeLessThan(70)
+    const count = ruleBody(css, '.agent-status-module__overflow')
+    expect(decl(count, 'font-size')).toContain('--floating-cell-scale')
+    // 三位数（+10 起）另收一档，否则会顶到核心圆边。
+    expect(decl(ruleBody(css, '.agent-status-module__overflow--wide'), 'font-size')).toContain('--floating-cell-scale')
+  })
+
+  it('degrades the overflow ring the same way as the light in a narrow slot', () => {
+    const css = agentStatusCss()
+    for (const header of [
+      '@container floating-slot (max-height: 32px)',
+      '@container floating-slot (max-width: 32px)',
+    ]) {
+      const block = blockAfter(css, header)
+      expect(block, `${header} 降级块必须存在`).not.toBe('')
+      // 远环退场、环与核心放大一档：槽位小到看不清细节时，先保住「颜色 + 数字」。
+      expect(block).toContain('.agent-status-module__halo--far')
+      const ring = Number.parseFloat(decl(ruleBody(block, '.agent-status-module__ring'), 'width'))
+      const core = Number.parseFloat(decl(ruleBody(block, '.agent-status-module__overflow-core'), 'width'))
+      expect(ring).toBeGreaterThan(Number.parseFloat(decl(blockAfter(css, '.agent-status-module__ring,'), 'width')))
+      expect(core).toBeGreaterThan(
+        Number.parseFloat(decl(ruleBody(css, '.agent-status-module__overflow-core'), 'width'))
+      )
+      // 放大后仍要留在格子里。
+      expect(ring).toBeLessThanOrEqual(100)
+    }
+  })
 })
