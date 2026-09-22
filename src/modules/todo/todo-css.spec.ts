@@ -349,10 +349,10 @@ describe('模块样式 · 滴答待办完成情况的勾选框与折叠', () => 
   })
 
   it('truncates a long title with an ellipsis instead of spilling out of the row', () => {
-    // 标题必须凑齐这套配方，少一条都会变成「文字直接冲出卡片」（没有任何省略号）：
-    // min-width: 0 让 flex 子项能缩到内容以下，其余三条负责把溢出的部分换成 …。
-    // ⚠️ 卡片那一层的坑在 main.css：`.ufo-card` 是 grid 容器，子项必须 `min-width: 0`
-    // 才能被卡片宽度约束（否则卡片内部轨道会被 nowrap 文本顶宽，标题永远"放得下"）。
+    // 设置页那份标题：一行 + 省略号（列表要密，一屏能扫更多条）。
+    // ⚠️ `min-width: 0` 是关键：flex 子项默认可缩到内容以下 —— 少了它，里面的 nowrap 文本
+    // 会把行顶宽、`text-overflow` 永远等不到溢出（表现为「文字直接冲出卡片」）。
+    // ⚠️ 卡片那一层的同类坑在 main.css：`.ufo-card` 是 grid 容器，子项也必须 `min-width: 0`。
     const title = ruleBodyOwn(todoCss(), '.todo-status__title')
 
     expect(title, '.todo-status__title 必须存在').not.toBe('')
@@ -360,6 +360,24 @@ describe('模块样式 · 滴答待办完成情况的勾选框与折叠', () => 
     expect(decl(title, 'overflow')).toBe('hidden')
     expect(decl(title, 'text-overflow')).toBe('ellipsis')
     expect(decl(title, 'white-space')).toBe('nowrap')
+  })
+
+  it('lets the tooltip title wrap up to three lines before ellipsising', () => {
+    // 信息卡是「停下来读一条」的地方，标题被截一半就白搭 —— 只有这里放开换行。
+    const tooltip = ruleBodyOwn(todoCss(), '.todo-tooltip__scroll .todo-status__title')
+
+    expect(tooltip, '信息卡的标题必须有单独的换行规则').not.toBe('')
+    // 三行封顶 + 末行省略号（Chromium 里 line-clamp 自己补省略号，不需要 text-overflow）。
+    expect(decl(tooltip, 'display')).toBe('-webkit-box')
+    expect(decl(tooltip, '-webkit-box-orient')).toBe('vertical')
+    expect(decl(tooltip, '-webkit-line-clamp')).toBe('3')
+    expect(decl(tooltip, 'line-clamp')).toBe('3')
+    // ⚠️ 基类那条 `white-space: nowrap` 不解除就永远不会折行 —— 这条最容易被漏掉。
+    expect(decl(tooltip, 'white-space')).toBe('normal')
+    // 长 URL / 长 id 这种没有空格的串也要能断，否则它宁可溢出。
+    expect(decl(tooltip, 'overflow-wrap')).toBe('anywhere')
+    // 多行标题要有自己的行距（基类没写行高）。
+    expect(decl(tooltip, 'line-height')).toBe('1.35')
   })
 })
 

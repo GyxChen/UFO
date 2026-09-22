@@ -11,7 +11,8 @@
  * - 已完成的子目标只在进度 `N/M` 里计数，**不占行**（未完成组里不该出现打勾的行）；
  * - 加载走卡内的 `BaseLoadingOverlay`（盖这块视图，不盖整页）。
  * ⚠️ 信息卡复用同一套行组件（`sections/TodoTaskRow.vue`）与同一套 `.todo-status__*` 样式，
- *   所以两处的观感天然一致；差别只有「信息卡不带右键菜单与卡头按钮」这一条。
+ *   所以两处的观感天然一致；差别只有两条：「信息卡不带右键菜单与卡头按钮」，
+ *   以及「信息卡里的标题最多换三行、设置页仍是一行省略」（见下面 `.todo-tooltip__scroll` 那段）。
  *
  * 形态适配（四种 layout，对用户是三形态）：
  * - 方形 / 四角 / 横条：三组**横排**，组内竖着放（数字在上、色条在下，色条 = 数字的下划线）；
@@ -270,6 +271,29 @@
 /* 分组不被压扁：高度不够时整块滚动，而不是把每行挤成一条线 */
 .todo-tooltip__scroll > .todo-status__group {
   flex: 0 0 auto;
+}
+
+/*
+ * 信息卡里的任务标题：**先换行，最多三行，再不行才省略号**。
+ *
+ * 设置页那份 `.todo-status__title` 仍是一行 + 省略号（那边一屏要扫更多条，列表必须密），
+ * 信息卡是「停下来读一条」的地方，标题被截掉一半就白搭 —— 所以只有这里放开换行。
+ * 实现是 `-webkit-box` + `line-clamp: 3` 这套老配方（Chromium 里 line-clamp 会自己在末行
+ * 补省略号，不需要 `text-overflow`）。其余几条都是配套：
+ * - `white-space: normal` —— 基类那条 `nowrap` 不解除就永远不会折行；
+ * - `overflow-wrap: anywhere` —— 长 URL / 长 id 这类没有空格的串也要能断，否则它宁可溢出；
+ * - `line-height: 1.35` —— 多行标题的行距（基类没写行高，多行会挤在一起）。
+ * ⚠️ 行高变了但**行高不参与**「一行 24px」的对齐：`.todo-status__row` 是 `align-items: center`，
+ *   勾选框在三行标题里居中，短标题那行与原来完全一致。
+ */
+.todo-tooltip__scroll .todo-status__title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 /* ---- 主窗设置页 ----

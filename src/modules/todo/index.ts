@@ -45,7 +45,12 @@ export const todoModule: FloatingModuleDefinition = {
   },
   tooltip: {
     component: TodoTooltip,
-    size: { width: 340, height: 400 },
+    /*
+     * 信息卡的窗口尺寸。宽度在原来的 340 上放大到 1.2×（= 408）：任务标题在卡里最多换三行，
+     * 宽一点每行才装得下更多字、不至于早早折行。高度不变（400）—— 标题变高只是少显示几条，
+     * 滚动区自己消化，不需要跟着长。
+     */
+    size: { width: 408, height: 400 },
     // 没配 Token 时不弹卡（`hasContent` 在内容组件挂载前求值，判据只能来自配置）
     hasContent: () => todoSettings(useFloatingModulesStore().config).has_token,
   },
