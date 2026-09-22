@@ -86,6 +86,44 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
     const right = Number.parseFloat(decl(badge, 'right'))
     const width = Number.parseFloat(decl(badge, 'width'))
     expect(right + width).toBeLessThanOrEqual(100)
+    // ⚠️ 徽章是圆的、图标是方的：图标占满（100%）时四个角会伸出圆外，徽章必须自己裁。
+    expect(decl(badge, 'overflow')).toBe('hidden')
+
+    // 图标占满徽章的内容盒；宽高都不写死，交给 object-contain 按各自的比例铺满。
+    const icon = ruleBody(css, '.agent-status-module__icon')
+    expect(decl(icon, 'width')).toBe('100%')
+    expect(decl(icon, 'height')).toBe('100%')
+    // `object-contain` 是 @apply 进去的工具类，读原文而不是读声明。
+    expect(icon).toContain('object-contain')
+  })
+
+  it('amplifies the completion flash and keeps a reduced-motion fallback', () => {
+    const css = agentStatusCss()
+    const rule = ruleBody(css, '.agent-status-module__item.is-flashing .agent-status-module__dot')
+
+    // 667ms = 原来 1s 的 1.5 倍频（1 Hz → 1.5 Hz）。
+    expect(rule, '闪烁规则必须存在').not.toBe('')
+    expect(decl(rule, 'animation')).toContain('667ms')
+    expect(decl(rule, 'animation')).toContain('infinite')
+
+    const frames = blockAfter(css, '@keyframes agent-status-flash {')
+    expect(frames, '闪烁的 keyframes 必须存在').not.toBe('')
+    // 峰值**涨出去**（不是往小缩）+ 谷底压得很暗：人对「变大 / 变亮」远比「变小 / 变暗」敏感，
+    // 旧版只往 0.78 缩、谷底才 0.35，所以看着像呼吸不像事件。
+    expect(frames).toContain('scale(1.1)')
+    expect(frames).toContain('scale(0.82)')
+    expect(frames).toContain('opacity: 0.12')
+    // ⚠️ 峰值只有 1.10 的余量：灯点本身就是限制轴的 80%，再叠 1px 描边与 2px 光晕就贴到格子边了，
+    // 放大被槽位的 overflow: hidden 切成直边是这套动画最容易踩的坑。
+    expect(frames, '峰值不能再往上加（会被槽位切边）').not.toContain('scale(1.12)')
+
+    // 全站其它动画都有 prefers-reduced-motion 降级，这条以前漏了。
+    const reduced = blockAfter(css, '@media (prefers-reduced-motion: reduce)')
+    expect(reduced, '闪烁必须有「减少动态效果」降级').not.toBe('')
+    expect(reduced).toContain('.agent-status-module__item.is-flashing')
+    expect(reduced).toContain('animation: none')
+    // 降级不是「什么都不显」：停动画后留一圈更粗的静态同色描边，完成态仍然看得见。
+    expect(reduced).toContain('box-shadow')
   })
 
   it('sizes the vertical light by row width, not row height', () => {

@@ -19,7 +19,7 @@ UI设计请使用:ui-ux-pro-max-skill
 
 ## 提交约定（仅用户明确要求时）
 - **只有用户明确说「提交」「commit」「整理成一次提交」「写提交信息」，或显式调用 `/commit` 时才执行提交**；完成改动、通过测试或看到工作区有变化时，不得自动提交。
-- 用户明确要求提交后，格式与摘要写法照 `.agents/skills/commit/SKILL.md`（一段话中文摘要、标题带 `[u]` 前缀、末尾单独一行 `@C`）。
+- 用户明确要求提交后，格式与摘要写法照 `.agents/skills/commit/SKILL.md`（一段话中文摘要、标题带 `[u]` 前缀、末尾不加任何署名）。
 - 只提交：不 push、不 amend、不 force、不 `reset --hard`；只有用户明确要求时才动远端。
 - 提交前先跑本次改动相关的验证（`npx vitest run`、`npm run build`）；红了就先修，不要把坏状态提交进去。
 - 一次改动一个 commit，不把不相关的改动混在一起；工作区没有改动时不要空提交。
@@ -62,7 +62,7 @@ UI设计请使用:ui-ux-pro-max-skill
 - 主按钮：实心翠绿 + 深绿字；次按钮：描边幽灵
 - 字体：Plus Jakarta Sans（`--font-sans`）
 - Token 定义见 `src/assets/main.css`（`:root` + `@theme`）
-- 预览参考：`reference/mock/main-window-a-matte.html`
+- 预览参考：`reference/mock/main-window/main-window-a-matte.html`
 
 ## 悬浮窗开发
 悬浮窗将来会引入更多的组件,因此悬浮窗的开发提示
@@ -187,7 +187,8 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
   - ⚠️ 两级 tabbar 上下相邻，外观必须保持不同（下划线 vs 胶囊），否则看不出哪条是一级。组件名在屏幕上已由两级 tab 表达，组件页里那个 h1 用 `sr-only` 只留给读屏。
 - 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **窗口格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 前四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「窗口格子上限」**只是本组件自己的配置**（`module_settings['agent-status'].max_cells`，滑块 1 / 2 / 3 / 4 / 6 / 9 封顶 3×3），只限制本模块大小、不改动其它组件；整窗仍按各组件需求之和（可超过 9）自动伸缩，页面文案已写明。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页左列、组件列表下方的独立卡片**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
 - 打开组件设置有两条路，走同一个事件：① 主窗组件列表行的齿轮；② 点悬浮窗上该组件的区域（槽位根节点的 `data-module-id` + 外壳 `moduleIdAt()` → `emitTo('main', OPEN_MODULE_SETTINGS_EVENT)`，点空白处传 null = 打开组件列表页）。打开后落到该组件**第一个分区**（`activeSections` 变化时重置），不会停在上次看的那一块。⚠️ 顺序必须是「先 showMainWindow 再 emitTo」：窗口还没打开时事件没人接。`pointercancel`（触摸取消）只清状态，**不当点击**，否则会莫名弹主窗。
-- 布局 mock 见 `reference/mock/floating-modules-index.html`（组件选择三套，采用第三套）；两级导航 mock 见 `reference/mock/settings-nav-index.html`（双层横条 / 左侧竖排 / 分段控件，采用第一套 A：二级用胶囊条）。
+- 布局 mock 见 `reference/mock/floating-modules/floating-modules-index.html`（组件选择三套，采用第三套）；两级导航 mock 见 `reference/mock/settings-nav/settings-nav-index.html`（双层横条 / 左侧竖排 / 分段控件，采用第一套 A：二级用胶囊条）。
+- `reference/mock/` **按功能分子目录**（`floating-modules/` / `agent-status/` / `todo/` / `main-window/` / `settings-nav/`，与 `src/modules/<id>/` 同名）：每个 mock 只与同目录的兄弟互相链接，因此整组搬动不会坏链；引用某个 mock 时写全路径。
 
 ### 外壳 / 模块的边界（加组件时的验收口径）
 

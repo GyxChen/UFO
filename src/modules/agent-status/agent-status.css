@@ -51,6 +51,9 @@
   width: 40%;
   height: auto;
   aspect-ratio: 1;
+  /* ⚠️ 裁到圆内：图标是方的、徽章是圆的，图标占满（100%）时四个角会伸出圆外
+     （那两个角压在灯点上，看着像贴了个方片）。这里把圆当裁剪盒。 */
+  overflow: hidden;
   /* 深色底让 Claude（橙）/ Codex（白）图标在任意灯色上都读得清；描边把徽章边缘压清楚。 */
   background: var(--ufo-bg-main);
   border: calc(1px * var(--floating-cell-scale, 1)) solid rgba(0, 0, 0, 0.28);
@@ -58,9 +61,11 @@
 
 .agent-status-module__icon {
   @apply block object-contain;
-  /* 图标只填徽章的一部分：留出内边距，避免贴死徽章圆边。 */
-  width: 64%;
-  height: 64%;
+  /* 占满徽章（父元素的**内容盒**，即圆内那圈）。`object-contain` 兜住宽高比：
+     Claude 的 viewBox 是 1:1、Codex 是 1089:1024（略宽），不写死宽高才不会被拉扁，
+     按各自的宽高比铺满能铺的那条边。 */
+  width: 100%;
+  height: 100%;
 }
 
 /*
@@ -107,8 +112,48 @@
   box-shadow: 0 0 0 calc(2px * var(--floating-cell-scale, 1)) color-mix(in srgb, var(--ufo-status-red) 28%, transparent);
 }
 
+/*
+ * ── 完成闪烁（`Stop` / `SessionEnd` 两种完成态）────────────────────────────
+ *
+ * 语义：绿闪 = **一轮刚跑完**（`Stop` 之后落成黄常亮 / `SessionEnd` 之后移除）。别的灯态都不闪，
+ * 否则「闪 = 需要注意」这个信号就失效了。
+ *
+ * 幅度与节奏（用户定的方案 C + 频率 1.5×）：
+ * - 周期 `667ms` = 现在那 1s 的 **1.5 倍频**（1 Hz → 1.5 Hz）；
+ * - 谷底不透明度 0.35 → **0.12**、峰值尺寸从「只到 1」改成**涨到 1.10**、谷底落到 0.82。
+ *   旧版是「不透明度 1↔0.35 + 缩到 0.78」：既没有跳变的空间，又是**往小缩**——
+ *   而人对「变大 / 变亮」比「变小 / 变暗」敏感得多，所以看着像呼吸、不像事件。
+ * - ⚠️ 峰值只能到 **1.10**：灯点本身就是限制轴的 80%，四周只剩 10%；再叠上 1px 白描边与
+ *   2px 同色光晕，1.10 时刚好落在格子内（45 格：31.2×1.10 + 4 ≈ 38.3 ≤ 39；32 格：20.8×1.10 + 2.8 ≈ 25.7 ≤ 26）。
+ *   灯点占满更多、或把峰值继续往上加，就会被槽位的 `overflow: hidden` 切出直边。
+ */
 .agent-status-module__item.is-flashing .agent-status-module__dot {
-  animation: agent-status-flash 1s ease-in-out infinite;
+  animation: agent-status-flash 667ms ease-in-out infinite;
+}
+
+@keyframes agent-status-flash {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  50% {
+    opacity: 0.12;
+    transform: scale(0.82);
+  }
+}
+
+/*
+ * 「减少动态效果」：停下动画，但**保留完成态的视觉** —— 一圈更粗的静态同色描边。
+ * 直接 `animation: none` 会让这批用户永远看不出「刚完成」，等于把信息删掉；
+ * 全站其它动画都有这条降级，这里以前漏了。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .agent-status-module__item.is-flashing .agent-status-module__dot {
+    animation: none;
+    box-shadow: 0 0 0 calc(3px * var(--floating-cell-scale, 1))
+      color-mix(in srgb, var(--ufo-status-green) 45%, transparent);
+  }
 }
 
 /*
@@ -315,18 +360,6 @@
 
   .agent-status-module__overflow--wide {
     font-size: calc(8px * var(--floating-cell-scale, 1));
-  }
-}
-
-@keyframes agent-status-flash {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.35;
-    transform: scale(0.78);
   }
 }
 

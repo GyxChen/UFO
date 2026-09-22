@@ -27,8 +27,6 @@ description: 把当前工作区改动整理成一次简洁的中文 git commit�
 ```powershell
 git commit -m @'
 <一段话摘要>
-
-@C
 '@
 ```
 
@@ -45,6 +43,6 @@ git commit -m @'
 ## 约束
 
 - 只做 commit，不做 push / force / reset hard。
-- commit message 末尾只加一行 `@C`；不要写 `Co-Authored-By: Claude …` 这类署名。
+- commit message 末尾**不加任何署名**：`@C` 与 `Co-Authored-By: Claude …` 都不要（用户明确要求）。
 - 摘要必须是一段完整中文（可带 `[u]` 前缀），说明「改了什么、为什么」。
 - 若 hooks 修改了文件导致 commit 失败，按提示处理后再提交一次；不要反复空转。
