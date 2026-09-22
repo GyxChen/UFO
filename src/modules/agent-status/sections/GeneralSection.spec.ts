@@ -107,7 +107,7 @@ describe('GeneralSection', () => {
   it('saves the max-cells slider into its own config block', async () => {
     const wrapper = await mountWith(backendConfig({}))
     const input = wrapper.get<HTMLInputElement>('.base-slider__input')
-    // 滑块按档位下标驱动：拖到下标 2 = CELL_STEPS[2] = 3 格，松手落盘。
+    // 滑块按档位下标驱动：拖到下标 2 = AGENT_MAX_CELL_STEPS[2] = 3 盏灯，松手落盘。
     await input.setValue('2')
     await input.trigger('change')
     await flushPromises()
@@ -115,5 +115,18 @@ describe('GeneralSection', () => {
     // 格子上限是本组件自己的配置，写进 module_settings['agent-status']。
     const block = saved?.module_settings[AGENT_STATUS_MODULE_ID] as Record<string, unknown>
     expect(block?.max_cells).toBe(3)
+  })
+
+  it('labels every slider tick with the corner shape of its step', async () => {
+    const wrapper = await mountWith(backendConfig({}))
+
+    // 刻度与档位一一对应，标注是各档贴到四角时的方块形状。
+    const ticks = wrapper.findAll('.base-slider__tick')
+    expect(ticks.map(tick => tick.text())).toEqual(['1×1', '1×2', '1×3', '2×2', '2×3', '3×3'])
+
+    // 当前档的刻度加亮，其余保持灰。
+    const active = ticks.filter(tick => tick.classes().includes('base-slider__tick--active'))
+    expect(active).toHaveLength(1)
+    expect(active[0]?.text()).toBe('3×3') // 默认上限 9 盏灯 = 3×3
   })
 })

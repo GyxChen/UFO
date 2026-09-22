@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 溢出格方案 C · 微型灯阵</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./overflow-stack.css" />
+    <style>
+      /*
+       * 方案 C：微型灯阵 —— 直接把被折叠的灯缩成小灯点，沿对角线叠 3 盏（真实灯色、真实闪烁），
+       * 右下角用与「平台图标徽章」同一个位置、同一套做法的圆片放 +N。
+       *
+       * 与前两套的区别：那里的颜色是「素材」（摆盘 / 环），这里颜色是**灯本身** ——
+       * 红色的小灯点就是那盏出错的灯，连 is-flashing 都照原样闪，语义最直白。
+       */
+      .ov__mini {
+        position: absolute;
+        width: 50%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: var(--c);
+        border: calc(1px * var(--scale)) solid rgba(255, 255, 255, 0.4);
+        /* 外圈一道窗口底色：把被压住的那盏"抠"出一条缝，重叠才读得出是几盏。 */
+        box-shadow:
+          0 0 0 calc(1.5px * var(--scale)) rgba(48, 48, 48, 0.92),
+          0 calc(1px * var(--scale)) calc(3px * var(--scale)) rgba(0, 0, 0, 0.5);
+      }
+
+      /* 对角排布：前排（最需要注意的灯色）在左下，后排往右上退。 */
+      .ov__mini--a {
+        left: 0;
+        bottom: 0;
+      }
+
+      .ov__mini--b {
+        left: 20%;
+        bottom: 20%;
+      }
+
+      .ov__mini--c {
+        left: 40%;
+        bottom: 40%;
+      }
+
+      /* 折叠里的灯也会闪：与真实指示灯同一条关键帧，保证「前后排」节奏一致。 */
+      .ov__mini.is-flashing {
+        animation: mock-flash 1s ease-in-out infinite;
+      }
+
+      /* +N 圆片：直接沿用「平台图标徽章」的槽位（right/bottom 3%、40% 见方）。 */
+      .ov__count {
+        position: absolute;
+        right: 3%;
+        bottom: 3%;
+        display: grid;
+        place-items: center;
+        width: 40%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: rgba(42, 42, 42, 0.95);
+        border: calc(1px * var(--scale)) solid rgba(0, 0, 0, 0.32);
+        box-shadow: 0 calc(1px * var(--scale)) calc(2px * var(--scale)) rgba(0, 0, 0, 0.45);
+      }
+
+      .ov__count span {
+        font-size: calc(9px * var(--scale));
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        color: #fff;
+      }
+
+      /* 窄槽降级（对应实现的 @container 32px 分支）：小灯点糊成一团，只留最需要注意的一盏 + 数字。 */
+      .cell.is-narrow .ov__mini--b,
+      .cell.is-narrow .ov__mini--c {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="page-head">
+        <h1>方案 C · 微型灯阵<span class="tag">语义最直白</span></h1>
+        <p class="lead">
+          被折叠的灯不"抽象"成色块，而是<b>原样缩小排进溢出格</b>：沿对角线叠 3 盏真实灯点（带白边、带光晕、
+          该闪的照样闪），右下角沿用「平台图标徽章」的位置与做法放一个 <code>+N</code> 圆片。
+          用户看到的不是"一堆颜色"，而是"后面还压着三盏灯"。
+        </p>
+        <nav class="nav">
+          <a href="./overflow-stack-index.html">← 四套方案索引</a>
+          <a href="./overflow-stack-a-stack.html">A 实心堆叠</a>
+          <a href="./overflow-stack-b-ring.html">B 分片环</a>
+          <a class="is-active" href="./overflow-stack-c-cluster.html">C 微型灯阵</a>
+          <a href="./overflow-stack-d-ripple.html">D 涟漪同心</a>
+        </nav>
+      </div>
+
+      <div class="card">
+        <h2>设计要点</h2>
+        <ul class="points">
+          <li><b>最多 3 盏</b>：与其它方案同一个上限；前排（左下）放最需要注意的那盏（红 → 黄 → 绿）。</li>
+          <li>
+            <b>重叠靠"抠边"读</b>：每个小灯点外圈一道窗口底色（<code>box-shadow</code> 实心环），
+            后面的灯被压住的地方露出一条深缝 —— 和平台图标徽章从灯点上"抠"出来是同一招。
+          </li>
+          <li><b>闪烁保留</b>：折叠里的完成态/等待态灯照样闪，用户扫一眼就知道后面有没有刚跑完的。</li>
+          <li>数字落在徽章位，<b>与普通灯的 provider 徽章同一个位置</b>：视线不用重新找。</li>
+          <li>代价：三盏小灯 + 数字，是四套里元素最多的一套，格子小（≤32px）时必须降级成一盏。</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>① 溢出格特写 · 三档格子大小</h2>
+        <p class="card__hint">
+          小灯点 = 一格边长的 50%、错位步长 20%、数字字号 9px，都乘 <code>--floating-cell-scale</code>。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>普通灯</b><br />45px 参照（徽章位一致）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>45px</b>（默认一格）<br />3 盏 + 数字</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 64px; --scale: 1.42">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>64px</b></div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 96px; --scale: 2.13">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>96px</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>② 不同配色 / 不同折叠数量 / 闪烁</h2>
+        <p class="card__hint">
+          中间那格前排是「绿闪」（刚跑完一轮）；最后一格是被同级组件挤到 28px 的降级形态 —— 只留一盏 + 数字。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__count"><span>+2</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">全绿 · +2</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__mini ov__mini--a is-flashing" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__count"><span>+4</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">前排绿闪（刚跑完）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+12</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">折叠 12 个 · 三位数</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 28px; --scale: 0.62">
+                <div class="cell is-narrow">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">被挤到 28px<br />降级成一盏 + 数字</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>③ 四种形态实况</h2>
+        <p class="card__hint">
+          真实尺寸 45px，6 个会话：1 盏绿的可见、5 盏折叠（红 1 / 黄 2 / 绿 2）。方形未贴边只有一格，整窗就是这片灯阵。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 1; --rows: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>方形</b>（未贴边 1 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 2; --rows: 1" data-layout="corner">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>贴角</b>（1×2）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 4; --rows: 1" data-layout="horizontal">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/codex.svg" alt="Codex" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--yellow">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>横条</b>（4 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 1; --rows: 3" data-layout="vertical">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/codex.svg" alt="Codex" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--yellow is-flashing">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>竖条</b>（3 格）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>④ 悬停溢出格 → 折叠会话清单</h2>
+        <p class="card__hint">
+          清单与其它三套相同。灯阵已经显示了「3 盏灯的颜色」，清单补上「每一盏是谁、在问什么、平台是哪个」。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__mini ov__mini--c" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__mini ov__mini--b" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__mini ov__mini--a" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">悬停它 →</div>
+            </div>
+
+            <div class="stage">
+              <div class="tip">
+                <div class="tip__head">
+                  <span class="tip__title">后面还有 5 个会话</span>
+                  <span class="tip__counts">
+                    <span class="chip chip--red"><i></i>1</span>
+                    <span class="chip chip--yellow"><i></i>2</span>
+                    <span class="chip chip--green"><i></i>2</span>
+                  </span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--red"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--red">出错</span>
+                  <span class="tip__prompt">修复登录页的重定向循环</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--yellow"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--yellow">等你操作</span>
+                  <span class="tip__prompt">把迁移脚本改成分批执行</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--yellow"></span>
+                  <img src="../../src/assets/codex.svg" alt="Codex" />
+                  <span class="tip__phase tip__phase--yellow">等你操作</span>
+                  <span class="tip__prompt">检查这个补丁的边界条件</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--green"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--green">执行中</span>
+                  <span class="tip__prompt">为 token 统计补一组单元测试</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--green"></span>
+                  <img src="../../src/assets/codex.svg" alt="Codex" />
+                  <span class="tip__phase tip__phase--green">执行中</span>
+                  <span class="tip__prompt">重构 rollout 解析的增量逻辑</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="foot">
+        价格：新增 CSS 约 45 行（小灯点 + 两处错位 + 徽章位数字），模板要按折叠会话的颜色排 3 个 <code>.ov__mini</code>；
+        「窄槽降级成一盏」是唯一新增的降级分支，需要在 <code>@container</code> 里补一条。
+      </p>
+    </div>
+  </body>
+</html>

@@ -7,7 +7,8 @@
  * 需要「占满高度 + 左右各自滚动」的两个面板（信息卡拓展 / 会话记录）才各占一个二级 tab。
  *
  * 左卡的字段是本组件自己的配置（`../settings` 读写外层的 `module_settings['agent-status']`，字段名不经过外壳）；
- * 右卡的格子上限是**整个悬浮窗**的参数，同级组件共享，因此仍由外壳 store 持有。
+ * 右卡的「最多显示几盏灯」也是本组件自己的配置（同块的 `max_cells`），只限制状态灯，
+ * 不影响其它组件 —— 同级组件各管各的格子数，整窗按它们的需求之和自动伸缩。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
@@ -74,9 +75,18 @@ const proxyResolverOptions = computed(() =>
 const maxCellsIndex = ref(indexForCells(settings.value.max_cells))
 const currentMaxCells = computed(() => AGENT_MAX_CELL_STEPS[maxCellsIndex.value] ?? MAX_AGENT_CELLS)
 
-/** 贴角网格标注：档位 → 行×列，放在取值旁帮用户理解这个数撑多大。 */
+/** 贴角网格标注：档位 → 行×列（如 9 盏灯 = 3×3 方块），放在取值旁帮用户理解这个数撑多大。 */
 const cornerShapes: Record<number, string> = { 1: '1×1', 2: '1×2', 3: '1×3', 4: '2×2', 6: '2×3', 9: '3×3' }
 const currentCornerShape = computed(() => cornerShapes[currentMaxCells.value] ?? '')
+
+/**
+ * 滑块刻度：每个档位一枚，下标即档位、标注贴到四角时的方块形状。
+ * 刻度是纯展示（aria-hidden），读屏走 aria-valuetext。
+ */
+const maxCellTicks = AGENT_MAX_CELL_STEPS.map((cells, index) => ({
+  value: index,
+  label: cornerShapes[cells] ?? String(cells),
+}))
 
 /** 取某个格子数对应的滑块下标（不大于它的最大档位；越界夹到两端）。 */
 function indexForCells(value: number): number {
@@ -122,7 +132,7 @@ async function updateRunningTimeout() {
   }
 }
 
-/** 滑块松手后落盘：把档位下标映射回格子数，写进本组件自己的配置块；失败 / 没变时退回已知值。 */
+/** 滑块松手后落盘：把档位下标映射回格子数（= 最多显示几盏灯），写进本组件自己的配置块；失败 / 没变时退回已知值。 */
 async function updateMaxCells() {
   const next = currentMaxCells.value
   if (next === settings.value.max_cells) {
@@ -242,28 +252,30 @@ async function saveTimeouts() {
     <section class="ufo-card module-settings" aria-labelledby="agent-status-cells-title">
       <div class="ufo-card__header">
         <h2 id="agent-status-cells-title" class="ufo-card__title">窗口格子</h2>
-        <span class="ufo-card__hint">最大 {{ currentMaxCells }} 格</span>
+        <span class="ufo-card__hint">最多 {{ currentMaxCells }} 盏灯</span>
       </div>
 
       <p class="ufo-card__hint">
-        窗口按会话数在阶梯 1 / 2 / 3 / 4 / 6 / 9 里自动伸缩：横条、竖条按个数精确显示，贴角对应 1×1…3×3（最少 1×2）。
-        这里设的是本模块的上限，超出的会话会收进最后一格的 +N；只影响状态灯，不改动其它组件。
+        有几个会话就显示几盏灯：上下贴边时横向排开、左右贴边时纵向排开、贴到四角时排成方块。
+        这里限制的是「最多显示几盏」，超出的会话折叠成最后一格的 +N；只影响状态灯，不影响其它组件。
       </p>
 
-      <SettingsField label="最大格子数" label-id="max-cells-label">
+      <SettingsField label="最多显示" label-id="max-cells-label">
         <div class="module-settings__cap-row">
+          <!-- 刻度即档位：拖到哪档就是几盏灯，每档下方标注贴到四角时的方块形状。 -->
           <BaseSlider
             v-model="maxCellsIndex"
             class="flex-1"
             :min="0"
             :max="AGENT_MAX_CELL_STEPS.length - 1"
             :step="1"
+            :ticks="maxCellTicks"
             aria-labelledby="max-cells-label"
-            :aria-value-text="`${currentMaxCells} 格`"
+            :aria-value-text="`${currentMaxCells} 盏灯`"
             @change="updateMaxCells"
           />
           <span class="module-settings__cap-value">
-            {{ currentMaxCells }} 格<span v-if="currentCornerShape"> · 贴角 {{ currentCornerShape }}</span>
+            {{ currentMaxCells }} 盏<span v-if="currentCornerShape"> · 四角 {{ currentCornerShape }}</span>
           </span>
         </div>
       </SettingsField>

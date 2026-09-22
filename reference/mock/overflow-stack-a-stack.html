@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 溢出格方案 A · 实心错位堆叠</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./overflow-stack.css" />
+    <style>
+      /*
+       * 方案 A：实心错位堆叠（叠筹码）。
+       * 前排是一块深色玻璃盘托住 +N，后面沿左上方向错位叠着彩色灯盘 ——
+       * 层数 = min(折叠会话数, 3)，颜色按「红 > 黄 > 绿」的注意力优先级从**靠前**的层往后排，
+       * 于是最靠近前沿、露得最多的那圈永远是最需要注意的颜色。
+       */
+      .ov__layer {
+        position: absolute;
+        width: 72%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: var(--c);
+        /* 层与层之间压一圈暗边 + 落影：不然几层会糊成一团色斑，看不出「叠了几张」。 */
+        border: calc(1px * var(--scale)) solid rgba(0, 0, 0, 0.55);
+        box-shadow: 0 calc(1px * var(--scale)) calc(3px * var(--scale)) rgba(0, 0, 0, 0.5);
+        /* --o 是层序（1 = 最靠前），错位量 = 2px × 层序 × 格子倍率。 */
+        transform: translate(calc(-2px * var(--o) * var(--scale)), calc(-2px * var(--o) * var(--scale)));
+      }
+
+      /* 前盘：深色玻璃，托住 +N；外发光取自最优先的隐藏灯色，让整摞有「底光」。 */
+      .ov__face {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 72%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: rgba(42, 42, 42, 0.94);
+        border: calc(1px * var(--scale)) solid rgba(255, 255, 255, 0.16);
+        box-shadow:
+          0 0 calc(7px * var(--scale)) color-mix(in srgb, var(--glow) 45%, transparent),
+          inset 0 calc(1px * var(--scale)) 0 rgba(255, 255, 255, 0.12);
+      }
+
+      .ov__count {
+        font-size: calc(12px * var(--scale));
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        line-height: 1;
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="page-head">
+        <h1>方案 A · 实心错位堆叠<span class="tag">最像「一叠灯」</span></h1>
+        <p class="lead">
+          溢出格的前排是一块深色盘托住 <code>+N</code>，后面沿左上错位叠着彩色灯盘，每层之间压一圈暗边 ——
+          一眼就是「这里还压着好几盏灯」。底色盘与真实灯点同尺寸（占格 72%），所以溢出格和普通灯并排时重量一致。
+        </p>
+        <nav class="nav">
+          <a href="./overflow-stack-index.html">← 四套方案索引</a>
+          <a class="is-active" href="./overflow-stack-a-stack.html">A 实心堆叠</a>
+          <a href="./overflow-stack-b-ring.html">B 分片环</a>
+          <a href="./overflow-stack-c-cluster.html">C 微型灯阵</a>
+          <a href="./overflow-stack-d-ripple.html">D 涟漪同心</a>
+        </nav>
+      </div>
+
+      <div class="card">
+        <h2>设计要点</h2>
+        <ul class="points">
+          <li><b>层数 = min(折叠会话数, 3)</b>：3 层已经足够表达「一摞」，再多只会把格子涂满。</li>
+          <li>
+            <b>颜色按注意力优先级排</b>：红在前、绿在后。露得最多的那圈是最需要注意的那盏，缩到 45px 也能看出「后面有红的」。
+          </li>
+          <li>溢出时<b>至少折叠 2 个会话</b>（容量满时最后留一格，超出量 ≥ 2），所以永远不会出现「一层堆叠」的怪样子。</li>
+          <li>前盘是深色玻璃而不是真灯：<code>+N</code> 要读得清，颜色交给后面三层。</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>① 溢出格特写 · 三档格子大小</h2>
+        <p class="card__hint">
+          格子大小可在主窗「悬浮窗设置」里调（32–96px）。错位量、暗边、落影都乘 <code>--floating-cell-scale</code>，
+          格子调大时整摞等比放大，不会「盘子长大、层还挤在一起」。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>普通灯</b><br />45px 参照</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>45px</b>（默认一格）<br />3 层</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 64px; --scale: 1.42">
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>64px</b><br />3 层</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 96px; --scale: 2.13">
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>96px</b><br />3 层</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>② 折叠数量不同（层数与位数）</h2>
+        <p class="card__hint">折叠 2 个 = 2 层；≥3 个封顶 3 层，数字变宽。三档格子下 <code>+12</code> 都读得清。</p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-yellow)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+2</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">折叠 2 个<br />2 层</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+12</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">折叠 12 个<br />3 层 + 三位数</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 28px; --scale: 0.62" data-narrow>
+                <div class="cell is-narrow">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">被同级组件挤到 28px<br />仍能看出「叠了」</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>③ 四种形态实况</h2>
+        <p class="card__hint">
+          真实尺寸 45px。场景：6 个会话同时活着 —— 1 盏绿的可见，5 盏被折叠（红 1 / 黄 2 / 绿 2）。
+          <b>方形未贴边只有一格</b>，此时整窗就是这块溢出格，堆叠是用户的唯一信息来源。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 1; --rows: 1">
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>方形</b>（未贴边 1 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 2; --rows: 1" data-layout="corner">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>贴角</b>（1×2，2 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 4; --rows: 1" data-layout="horizontal">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/codex.svg" alt="Codex" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--yellow">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>横条</b>（4 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 1; --rows: 3" data-layout="vertical">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/codex.svg" alt="Codex" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--yellow is-flashing">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>竖条</b>（3 格）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>④ 悬停溢出格 → 折叠会话清单</h2>
+        <p class="card__hint">
+          四套方案的悬停清单相同：溢出格上报一个<b>合成悬停目标</b>（不是任何单个会话的 key），提示窗改渲染这张清单。
+          提示窗是点击穿透窗口（<code>focusable: false</code> + 忽略光标事件），所以清单<b>不可交互</b> ——
+          不做 hover 高亮、不靠 title，信息要一眼读全。行数超出时内部滚动，超出 8 行折叠成「还有 N 个」。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov" style="--glow: var(--ufo-status-red)">
+                    <span class="ov__layer" style="--c: var(--ufo-status-green); --o: 3"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-yellow); --o: 2"></span>
+                    <span class="ov__layer" style="--c: var(--ufo-status-red); --o: 1"></span>
+                    <span class="ov__face"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">悬停它 →</div>
+            </div>
+
+            <div class="stage">
+              <div class="tip">
+                <div class="tip__head">
+                  <span class="tip__title">后面还有 5 个会话</span>
+                  <span class="tip__counts">
+                    <span class="chip chip--red"><i></i>1</span>
+                    <span class="chip chip--yellow"><i></i>2</span>
+                    <span class="chip chip--green"><i></i>2</span>
+                  </span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--red"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--red">出错</span>
+                  <span class="tip__prompt">修复登录页的重定向循环</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--yellow"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--yellow">等你操作</span>
+                  <span class="tip__prompt">把迁移脚本改成分批执行</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--yellow"></span>
+                  <img src="../../src/assets/codex.svg" alt="Codex" />
+                  <span class="tip__phase tip__phase--yellow">等你操作</span>
+                  <span class="tip__prompt">检查这个补丁的边界条件</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--green"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--green">执行中</span>
+                  <span class="tip__prompt">为 token 统计补一组单元测试</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--green"></span>
+                  <img src="../../src/assets/codex.svg" alt="Codex" />
+                  <span class="tip__phase tip__phase--green">执行中</span>
+                  <span class="tip__prompt">重构 rollout 解析的增量逻辑</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="foot">
+        价格：新增 CSS 约 40 行（三层错位 + 暗边），模板多包一层 <code>.ov__face</code>；颜色排序与层数由模块自己的
+        <code>lib/</code> 纯函数算，可单测。
+      </p>
+    </div>
+  </body>
+</html>

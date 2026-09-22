@@ -95,6 +95,40 @@ describe('BaseSlider', () => {
     const atMax = mount(BaseSlider, { props: { modelValue: 96, min: 32, max: 96 } })
     expect(atMax.get('.base-slider').attributes('style')).toContain('100%')
   })
+
+  it('renders ticks at each value, highlighting the current one', async () => {
+    const wrapper = mount(BaseSlider, {
+      props: {
+        modelValue: 1,
+        min: 0,
+        max: 2,
+        ticks: [
+          { value: 0, label: '1×1' },
+          { value: 1, label: '1×2' },
+          { value: 2, label: '2×2' },
+        ],
+      },
+    })
+
+    // 每档一枚刻度，标注照传；刻度行整体 aria-hidden（读屏走 aria-valuetext）。
+    const ticks = wrapper.findAll('.base-slider__tick')
+    expect(ticks.map(tick => tick.text())).toEqual(['1×1', '1×2', '2×2'])
+    expect(wrapper.get('.base-slider__ticks').attributes('aria-hidden')).toBe('true')
+
+    // 只有当前值的刻度带 active 类。
+    const active = ticks.filter(tick => tick.classes().includes('base-slider__tick--active'))
+    expect(active.map(tick => tick.text())).toEqual(['1×2'])
+
+    // 拖到另一档后，加亮跟随移动。
+    await wrapper.get('input').setValue('2')
+    const activeAfter = wrapper.findAll('.base-slider__tick--active')
+    expect(activeAfter.map(tick => tick.text())).toEqual(['2×2'])
+  })
+
+  it('renders no tick row when no ticks are given', () => {
+    const wrapper = mount(BaseSlider, { props: { modelValue: 45, min: 32, max: 96 } })
+    expect(wrapper.find('.base-slider__ticks').exists()).toBe(false)
+  })
 })
 
 describe('BaseSelect', () => {

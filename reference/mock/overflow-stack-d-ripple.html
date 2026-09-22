@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 溢出格方案 D · 涟漪同心</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./overflow-stack.css" />
+    <style>
+      /*
+       * 方案 D：涟漪同心 —— 前面是**一盏真正的灯**（折叠里最需要注意的那盏，该闪就闪），
+       * 后面 1–2 圈同心的细环按次优先级的灯色向外淡出，右下角沿用徽章位放 +N。
+       *
+       * 与前几套的根本差别：这里是「一盏大灯 + 波纹」，45px 下灯色最醒目（灯占格 62%，
+       * 而非 A/B 那种「深盘 +N 在前、颜色退到后面」）。
+       */
+      .ov__ripple {
+        position: absolute;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        border: calc(1px * var(--scale)) solid;
+        /* 环用「本色 + 透明度」而不是纯本色：同心环太实会变成靶心，抢掉前面那盏灯。 */
+        border-color: color-mix(in srgb, var(--c) 72%, transparent);
+      }
+
+      /* 近环 = 次优先级灯色，远环 = 第三优先级。 */
+      .ov__ripple--near {
+        width: 78%;
+        opacity: 0.8;
+      }
+
+      .ov__ripple--far {
+        width: 94%;
+        opacity: 0.42;
+      }
+
+      /* 前面的真灯：与普通灯同款（80%→62% 缩小一格，给两圈涟漪留出位置）。 */
+      .ov__front {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 62%;
+        aspect-ratio: 1;
+      }
+
+      .ov__frontdot {
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: var(--c);
+        border: calc(1px * var(--scale)) solid rgba(255, 255, 255, 0.4);
+        box-shadow:
+          0 0 0 calc(2px * var(--scale)) color-mix(in srgb, var(--c) 28%, transparent),
+          0 calc(1px * var(--scale)) calc(4px * var(--scale)) rgba(0, 0, 0, 0.45);
+      }
+
+      /* 折叠里的灯也照原样闪：完成态/等待态的小灯在涟漪中心闪，和真灯节奏一致。 */
+      .ov__front.is-flashing .ov__frontdot {
+        animation: mock-flash 1s ease-in-out infinite;
+      }
+
+      /* +N：与方案 C 一样落在「平台图标徽章」的位置（right/bottom 3%、40% 见方）。 */
+      .ov__count {
+        position: absolute;
+        right: 3%;
+        bottom: 3%;
+        display: grid;
+        place-items: center;
+        width: 40%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: rgba(42, 42, 42, 0.95);
+        border: calc(1px * var(--scale)) solid rgba(0, 0, 0, 0.32);
+        box-shadow: 0 calc(1px * var(--scale)) calc(2px * var(--scale)) rgba(0, 0, 0, 0.45);
+      }
+
+      .ov__count span {
+        font-size: calc(9px * var(--scale));
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        color: #fff;
+      }
+
+      /* 窄槽降级：涟漪退场，只留「一盏灯 + 数字」—— 灯色优先。 */
+      .cell.is-narrow .ov__ripple--far {
+        display: none;
+      }
+
+      .cell.is-narrow .ov__ripple--near {
+        width: 86%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="page-head">
+        <h1>方案 D · 涟漪同心<span class="tag">小格子里最醒目的灯色</span></h1>
+        <p class="lead">
+          溢出格前半是<b>一盏真正的灯</b> —— 折叠里最需要注意的那盏（红 → 黄 → 绿），它的颜色、描边、光晕、闪烁全按真灯渲染；
+          后面 1–2 圈同心细环按次优先级的灯色向外淡出，右下角仍用徽章位放 <code>+N</code>。
+          一眼看到的是「一盏灯 + 它后面还有几圈」，而不是「一个色块 + 一个数字」。
+        </p>
+        <nav class="nav">
+          <a href="./overflow-stack-index.html">← 四套方案索引</a>
+          <a href="./overflow-stack-a-stack.html">A 实心堆叠</a>
+          <a href="./overflow-stack-b-ring.html">B 分片环</a>
+          <a href="./overflow-stack-c-cluster.html">C 微型灯阵</a>
+          <a class="is-active" href="./overflow-stack-d-ripple.html">D 涟漪同心</a>
+        </nav>
+      </div>
+
+      <div class="card">
+        <h2>设计要点</h2>
+        <ul class="points">
+          <li><b>环数 = min(折叠数, 3) − 1</b>：折叠恒 ≥ 2，所以永远至少一圈涟漪，也永远不超过两圈。</li>
+          <li><b>灯色最醒目</b>：前面的灯占格 62%（A 的深盘只有 72% 且被 +N 占满），45px 下这就是四套里最容易读出颜色的一套。</li>
+          <li>涟漪用「本色 + 透明度」的<b>细环</b>，不是实心同心圆：太实会变靶心，抢掉前面那盏灯。</li>
+          <li>环的次序按注意力优先级向外排（红 → 黄 → 绿），越远越淡。</li>
+          <li>
+            风险：一盏 <b>红灯</b> 在最前面容易被误读成「这一格对应的会话在报错」，而它其实是折叠里的某个会话 ——
+            <code>+N</code> 徽章与缩略的灯径就是区分手段（普通灯是 80% + 平台图标徽章）。
+          </li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>① 溢出格特写 · 三档格子大小</h2>
+        <p class="card__hint">
+          灯径 62% / 近环 78% / 远环 94% —— 远环外沿正好压住格子边，真实槽位是 <code>overflow: hidden</code>，
+          94% 是不能再放大的上限。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>普通灯</b><br />45px 参照</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>45px</b>（默认一格）<br />红灯 + 2 圈</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 64px; --scale: 1.42">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>64px</b></div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 96px; --scale: 2.13">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>96px</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>② 不同配色 / 折叠数量 / 闪烁</h2>
+        <p class="card__hint">
+          最左：折叠 2 个（只有一圈涟漪）；三、四：前排是绿闪 —— 折叠里刚跑完一轮，用户在悬浮窗上就能看到。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-yellow)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+2</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">黄灯 + 1 圈 · +2</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-green)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+12</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">全绿 · 三位数 +12</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-red)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front is-flashing" style="--c: var(--ufo-status-green)"
+                      ><span class="ov__frontdot"></span
+                    ></span>
+                    <span class="ov__count"><span>+4</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">前排绿闪（刚跑完）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 28px; --scale: 0.62">
+                <div class="cell is-narrow">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">被挤到 28px<br />远环退场，灯色仍在</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>③ 四种形态实况</h2>
+        <p class="card__hint">
+          真实尺寸 45px，6 个会话：1 盏绿的可见、5 盏折叠（红 1 / 黄 2 / 绿 2）—— 折叠里有红灯，所以溢出格前排是红灯。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 1; --rows: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>方形</b>（未贴边 1 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 2; --rows: 1" data-layout="corner">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>贴角</b>（1×2）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 4; --rows: 1" data-layout="horizontal">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/codex.svg" alt="Codex" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--yellow">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>横条</b>（4 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 1; --rows: 3" data-layout="vertical">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/codex.svg" alt="Codex" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--yellow is-flashing">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>竖条</b>（3 格）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>④ 悬停溢出格 → 折叠会话清单</h2>
+        <p class="card__hint">
+          清单与其它三套相同。前面的红灯给出了「最需要注意的那盏」的颜色，清单给出全部 5 盏的细节。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov">
+                    <span class="ov__ripple ov__ripple--far" style="--c: var(--ufo-status-green)"></span>
+                    <span class="ov__ripple ov__ripple--near" style="--c: var(--ufo-status-yellow)"></span>
+                    <span class="ov__front" style="--c: var(--ufo-status-red)"><span class="ov__frontdot"></span></span>
+                    <span class="ov__count"><span>+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">悬停它 →</div>
+            </div>
+
+            <div class="stage">
+              <div class="tip">
+                <div class="tip__head">
+                  <span class="tip__title">后面还有 5 个会话</span>
+                  <span class="tip__counts">
+                    <span class="chip chip--red"><i></i>1</span>
+                    <span class="chip chip--yellow"><i></i>2</span>
+                    <span class="chip chip--green"><i></i>2</span>
+                  </span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--red"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--red">出错</span>
+                  <span class="tip__prompt">修复登录页的重定向循环</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--yellow"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--yellow">等你操作</span>
+                  <span class="tip__prompt">把迁移脚本改成分批执行</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--yellow"></span>
+                  <img src="../../src/assets/codex.svg" alt="Codex" />
+                  <span class="tip__phase tip__phase--yellow">等你操作</span>
+                  <span class="tip__prompt">检查这个补丁的边界条件</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--green"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--green">执行中</span>
+                  <span class="tip__prompt">为 token 统计补一组单元测试</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--green"></span>
+                  <img src="../../src/assets/codex.svg" alt="Codex" />
+                  <span class="tip__phase tip__phase--green">执行中</span>
+                  <span class="tip__prompt">重构 rollout 解析的增量逻辑</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="foot">
+        价格：新增 CSS 约 40 行（两圈环 + 缩小的真灯 + 徽章位数字），复用现有 <code>--ufo-status-*</code>
+        与闪烁关键帧；窄槽只需在 <code>@container</code> 里补「远环退场」一条。
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 溢出格方案 B · 分片环</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./overflow-stack.css" />
+    <style>
+      /*
+       * 方案 B：分片环（甜甜圈 + 外光晕）。
+       * 外圈按折叠会话的**状态占比**分成扇形（红 / 黄 / 绿各占多少一眼读出），
+       * 后面再叠两圈放大 + 模糊的同色光晕制造层次，中间一块深色核心托住 +N。
+       * 四套里信息量最大的一套，也是唯一能表达「折叠里有几盏红」的比例关系的一套。
+       */
+      .ov__ring,
+      .ov__halo {
+        position: absolute;
+        width: 78%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: var(--g);
+      }
+
+      /*
+       * 挖空中心成环带：内 74% 透明、78% 起实心（留 4% 过渡当抗锯齿）。
+       * 环带宽 = 78% 盘的 22% ≈ 一格边长的 17%（45px 时约 7.7px）。
+       */
+      .ov__ring {
+        -webkit-mask: radial-gradient(closest-side, transparent 74%, #000 78%);
+        mask: radial-gradient(closest-side, transparent 74%, #000 78%);
+        filter: drop-shadow(0 calc(1px * var(--scale)) calc(2px * var(--scale)) rgba(0, 0, 0, 0.5));
+      }
+
+      /* 两圈外光晕：同色放大 + 模糊，越远越淡 —— 层次感全在这两圈上。 */
+      .ov__halo {
+        -webkit-mask: radial-gradient(closest-side, transparent 74%, #000 78%);
+        mask: radial-gradient(closest-side, transparent 74%, #000 78%);
+        filter: blur(calc(2px * var(--scale)));
+      }
+
+      /*
+       * 放大倍率受「格子 = 硬边界」约束：远环 78% × 1.10 ≈ 一格边长的 86%，再加 2px 模糊 ≈ 22.3px，
+       * 刚好压在半格（45px 的一半 = 22.5px）以内。再往上加就会被槽位的 overflow: hidden 切出直边。
+       */
+      .ov__halo--near {
+        transform: scale(1.06);
+        opacity: 0.5;
+      }
+
+      .ov__halo--far {
+        transform: scale(1.1);
+        opacity: 0.28;
+      }
+
+      /* 核心：深色盘托住 +N，与环之间留一圈暗缝，避免环的彩边直接糊在数字上。 */
+      .ov__core {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 54%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: rgba(31, 31, 31, 0.95);
+        border: calc(1px * var(--scale)) solid rgba(255, 255, 255, 0.14);
+        box-shadow: inset 0 calc(1px * var(--scale)) 0 rgba(255, 255, 255, 0.1);
+      }
+
+      .ov__count {
+        font-size: calc(11px * var(--scale));
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="page-head">
+        <h1>方案 B · 分片环<span class="tag">信息量最大</span></h1>
+        <p class="lead">
+          溢出格的外圈是一条按<b>折叠会话状态占比</b>切开的彩色环（红 / 黄 / 绿各占多少一目了然），
+          后面叠两圈同色模糊光晕做层次，中间深色核心托住 <code>+N</code>。
+          这是四套里唯一能表达比例关系的 —— 「折叠的 5 个里有一盏红的」不用悬停就能看出来。
+        </p>
+        <nav class="nav">
+          <a href="./overflow-stack-index.html">← 四套方案索引</a>
+          <a href="./overflow-stack-a-stack.html">A 实心堆叠</a>
+          <a class="is-active" href="./overflow-stack-b-ring.html">B 分片环</a>
+          <a href="./overflow-stack-c-cluster.html">C 微型灯阵</a>
+          <a href="./overflow-stack-d-ripple.html">D 涟漪同心</a>
+        </nav>
+      </div>
+
+      <div class="card">
+        <h2>设计要点</h2>
+        <ul class="points">
+          <li><b>环 = 占比图</b>：从 12 点顺时针按「红 → 黄 → 绿」排，扇形角度 = 该状态会话数占比。</li>
+          <li><b>层次感来自两圈光晕</b>：同色放大 6% / 10% 再模糊，越远越淡；不是靠描边堆叠。</li>
+          <li>核心只放数字，深色底 + 一圈暗缝把彩环推远，<code>+N</code> 在任何配色下都读得清。</li>
+          <li>
+            代价：<b>外圈吃完后核心只剩一格边长的 54%</b>（45px 时 24px），<code>+12</code> 这类三位数比其它方案紧 ——
+            光晕必须留在格子里（真实槽位是 <code>overflow: hidden</code>），所以放大倍率不能再往上加。
+          </li>
+          <li>只有一盏灯被折叠？不会发生：容量满时最后留一格，折叠量恒 ≥ 2。</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>① 溢出格特写 · 三档格子大小</h2>
+        <p class="card__hint">环宽、光晕模糊半径、字号都乘 <code>--floating-cell-scale</code>，随「格子大小」等比放大。</p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>普通灯</b><br />45px 参照</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>45px</b>（默认一格）<br />红 1 / 黄 2 / 绿 2</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 64px; --scale: 1.42">
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>64px</b></div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 96px; --scale: 2.13">
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>96px</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>② 不同配色 / 不同折叠数量</h2>
+        <p class="card__hint">
+          左：全绿（都在跑，可以不管）；中：红黄各半（得看一眼）；右：折叠 12 个 —— 三档格子下
+          <code>+12</code> 是这套方案最紧的一档。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span class="lamp ov" style="--g: conic-gradient(var(--ufo-status-green) 0 100%)">
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+2</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">全绿 · +2</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 50%,
+                        var(--ufo-status-yellow) 50% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+4</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">红黄各半 · +4</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 17%,
+                        var(--ufo-status-yellow) 17% 58%,
+                        var(--ufo-status-green) 58% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+12</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">折叠 12 个 · 三位数</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 64px; --scale: 1.42">
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 17%,
+                        var(--ufo-status-yellow) 17% 58%,
+                        var(--ufo-status-green) 58% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+12</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">64px 下三位数从容</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 28px; --scale: 0.62" data-narrow>
+                <div class="cell is-narrow">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">被挤到 28px<br />只剩一圈色 + 数字</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>③ 四种形态实况</h2>
+        <p class="card__hint">
+          真实尺寸 45px，6 个会话：1 盏绿的可见、5 盏折叠（红 1 / 黄 2 / 绿 2）。方形未贴边只有一格，整窗就是这块环。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 1; --rows: 1">
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>方形</b>（未贴边 1 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 2; --rows: 1" data-layout="corner">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>贴角</b>（1×2）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 4; --rows: 1" data-layout="horizontal">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/codex.svg" alt="Codex" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--yellow">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>横条</b>（4 格）</div>
+            </div>
+
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1; --cols: 1; --rows: 3" data-layout="vertical">
+                <div class="cell">
+                  <span class="lamp lamp--green">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/codex.svg" alt="Codex" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span class="lamp lamp--yellow is-flashing">
+                    <span class="lamp__dot"></span>
+                    <span class="lamp__badge"><img src="../../src/assets/claude.svg" alt="Claude" /></span>
+                  </span>
+                </div>
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label"><b>竖条</b>（3 格）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>④ 悬停溢出格 → 折叠会话清单</h2>
+        <p class="card__hint">
+          清单与其它三套相同：合成悬停目标 → 提示窗渲染列表。环已经给出比例，清单负责给出「是哪几个、在问什么」。
+        </p>
+        <div class="desktop">
+          <div class="stages">
+            <div class="stage">
+              <div class="fw" style="--cell: 45px; --scale: 1">
+                <div class="cell">
+                  <span
+                    class="lamp ov"
+                    style="
+                      --g: conic-gradient(
+                        var(--ufo-status-red) 0 20%,
+                        var(--ufo-status-yellow) 20% 60%,
+                        var(--ufo-status-green) 60% 100%
+                      );
+                    "
+                  >
+                    <span class="ov__halo ov__halo--far"></span>
+                    <span class="ov__halo ov__halo--near"></span>
+                    <span class="ov__ring"></span>
+                    <span class="ov__core"><span class="ov__count">+5</span></span>
+                  </span>
+                </div>
+              </div>
+              <div class="stage__label">悬停它 →</div>
+            </div>
+
+            <div class="stage">
+              <div class="tip">
+                <div class="tip__head">
+                  <span class="tip__title">后面还有 5 个会话</span>
+                  <span class="tip__counts">
+                    <span class="chip chip--red"><i></i>1</span>
+                    <span class="chip chip--yellow"><i></i>2</span>
+                    <span class="chip chip--green"><i></i>2</span>
+                  </span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--red"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--red">出错</span>
+                  <span class="tip__prompt">修复登录页的重定向循环</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--yellow"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--yellow">等你操作</span>
+                  <span class="tip__prompt">把迁移脚本改成分批执行</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--yellow"></span>
+                  <img src="../../src/assets/codex.svg" alt="Codex" />
+                  <span class="tip__phase tip__phase--yellow">等你操作</span>
+                  <span class="tip__prompt">检查这个补丁的边界条件</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--green"></span>
+                  <img src="../../src/assets/claude.svg" alt="Claude" />
+                  <span class="tip__phase tip__phase--green">执行中</span>
+                  <span class="tip__prompt">为 token 统计补一组单元测试</span>
+                </div>
+                <div class="tip__row">
+                  <span class="dot dot--green"></span>
+                  <img src="../../src/assets/codex.svg" alt="Codex" />
+                  <span class="tip__phase tip__phase--green">执行中</span>
+                  <span class="tip__prompt">重构 rollout 解析的增量逻辑</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="foot">
+        价格：新增 CSS 约 45 行（环 + 两圈光晕 + 核心），扇形由模块 <code>lib/</code> 的纯函数算成
+        <code>conic-gradient</code> 字符串，可单测。<b>注意</b>：光晕必须留在格子内（真实槽位是
+        <code>overflow: hidden</code>），放大倍率要按最紧的一档格子留好余量。
+      </p>
+    </div>
+  </body>
+</html>
