@@ -3,7 +3,7 @@ import type { Component } from 'vue'
 import type { DockedEdges } from './snap'
 import type { FloatingHoverTarget } from './floating-module-context'
 import type { FloatingModuleDefinition } from './floating-modules'
-import { placeTooltip, resolveTooltipDefinition } from './tooltip'
+import { clampTooltipSize, placeTooltip, resolveTooltipDefinition, resolveTooltipSize } from './tooltip'
 
 /** 只用来占位的假组件：解析器不关心组件内容，只关心模块有没有声明信息卡。 */
 const stubComponent: Component = { template: '<span />' }
@@ -152,5 +152,57 @@ describe('resolveTooltipDefinition', () => {
   it('ignores modules that only declare a tooltip without a component', () => {
     const broken = [{ ...definition('broken', true), tooltip: {} as FloatingModuleDefinition['tooltip'] }]
     expect(resolveTooltipDefinition(broken, { moduleId: 'broken', key: 'x' })).toBeNull()
+  })
+})
+
+describe('resolveTooltipSize', () => {
+  const target: FloatingHoverTarget = { moduleId: 'agent-status', key: 'session-a' }
+
+  it('returns the declared size as-is', () => {
+    expect(resolveTooltipSize({ component: stubComponent, size: { width: 300, height: 260 } }, target)).toEqual({
+      width: 300,
+      height: 260,
+    })
+  })
+
+  it('computes the size from the hover target when it is a function', () => {
+    const tooltip = {
+      component: stubComponent,
+      // 折叠清单那类内容：行数随目标变化，尺寸得跟着目标现算。
+      size: (item: FloatingHoverTarget) => ({ width: 300, height: item.key.length }),
+    }
+    expect(resolveTooltipSize(tooltip, target)?.height).toBe(target.key.length)
+  })
+
+  it('returns null when nothing is declared or there is no target', () => {
+    // 没声明 = 沿用窗口默认尺寸；声明成函数但这次没有目标 = 也算不出，同样沿用默认。
+    expect(resolveTooltipSize({ component: stubComponent }, target)).toBeNull()
+    expect(resolveTooltipSize({ component: stubComponent, size: () => ({ width: 1, height: 1 }) }, null)).toBeNull()
+    expect(resolveTooltipSize(undefined, target)).toBeNull()
+  })
+})
+
+describe('clampTooltipSize', () => {
+  it('clamps a taller-than-screen card into the work area', () => {
+    // 折叠几十个会话时算出来的高度可能超过屏幕：窗口不能比工作区还高，超出的交给内容自己滚。
+    const clamped = clampTooltipSize({ width: 300, height: 4000 }, { width: 1920, height: 1040 })
+    expect(clamped).toEqual({ width: 300, height: 1040 - 8 })
+  })
+
+  it('keeps a reasonable floor for absurdly small sizes', () => {
+    const clamped = clampTooltipSize({ width: 10, height: 10 }, { width: 1920, height: 1040 })
+    expect(clamped.width).toBeGreaterThanOrEqual(200)
+    expect(clamped.height).toBeGreaterThanOrEqual(88)
+  })
+
+  it('rounds fractional sizes to whole pixels', () => {
+    const clamped = clampTooltipSize({ width: 300.4, height: 165.6 }, { width: 1920, height: 1040 })
+    expect(clamped).toEqual({ width: 300, height: 166 })
+  })
+
+  it('falls back to the floor when the work area is tinier than the floor', () => {
+    // 工作区比地板还小（极端情况）：取地板，位置由 placeTooltip 的夹取兜底。
+    const clamped = clampTooltipSize({ width: 300, height: 300 }, { width: 160, height: 60 })
+    expect(clamped).toEqual({ width: 200, height: 88 })
   })
 })

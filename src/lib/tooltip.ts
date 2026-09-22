@@ -1,6 +1,6 @@
 import type { DockedEdges, PhysicalPoint, PhysicalSize, WorkArea } from './snap'
 import type { FloatingHoverTarget } from './floating-module-context'
-import type { FloatingModuleDefinition } from './floating-modules'
+import type { FloatingModuleDefinition, FloatingModuleTooltip, FloatingTooltipSize } from './floating-modules'
 
 /** 信息提示窗的窗口 label。 */
 export const TOOLTIP_WINDOW_LABEL = 'tooltip'
@@ -64,6 +64,52 @@ export interface TooltipPlacement {
 const DEFAULT_GAP = 8
 /** 提示窗与工作区边缘的默认留白。 */
 const DEFAULT_MARGIN = 4
+
+/**
+ * 提示窗尺寸的地板：再矮 / 再窄也要露得出头部一行与一段文字，
+ * 否则（模块算错或工作区极小）窗口会塌成一条线，看上去像没弹。
+ */
+const MIN_TOOLTIP_WIDTH = 200
+const MIN_TOOLTIP_HEIGHT = 88
+
+/**
+ * 取模块为这次悬停声明的提示窗尺寸；没声明（或声明成函数但这次没有悬停目标）时返回 null，
+ * 调用方沿用窗口的默认尺寸。
+ *
+ * 提示窗只认「模块 → 尺寸」这一步，不认识尺寸是怎么算出来的 ——
+ * 折叠清单那类「行数随目标变化」的内容因此可以把「要几行」的逻辑留在模块自己手里。
+ */
+export function resolveTooltipSize(
+  tooltip: FloatingModuleTooltip | null | undefined,
+  target: FloatingHoverTarget | null | undefined
+): FloatingTooltipSize | null {
+  const declared = tooltip?.size
+  if (!declared) return null
+  if (typeof declared === 'function') {
+    return target ? declared(target) : null
+  }
+  return declared
+}
+
+/**
+ * 把模块声明的尺寸夹进工作区：内容再多也不能让提示窗比屏幕还高
+ * （超出的部分由内容自己滚，见 agent 折叠清单的列表容器）。
+ *
+ * 上下各留 `margin`，与 `placeTooltip` 的留白同一口径；工作区小于地板时取地板
+ * —— 此时窗口必然越界，交给 `placeTooltip` 的夹取兜底，至少还能看见左上角那块内容。
+ */
+export function clampTooltipSize(
+  size: FloatingTooltipSize,
+  workAreaSize: PhysicalSize,
+  margin: number = DEFAULT_MARGIN
+): FloatingTooltipSize {
+  const maxWidth = Math.max(MIN_TOOLTIP_WIDTH, Math.floor(workAreaSize.width - margin * 2))
+  const maxHeight = Math.max(MIN_TOOLTIP_HEIGHT, Math.floor(workAreaSize.height - margin * 2))
+  return {
+    width: Math.min(Math.max(Math.round(size.width), MIN_TOOLTIP_WIDTH), maxWidth),
+    height: Math.min(Math.max(Math.round(size.height), MIN_TOOLTIP_HEIGHT), maxHeight),
+  }
+}
 
 /**
  * 计算提示窗的物理坐标。

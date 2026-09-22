@@ -17,6 +17,7 @@
  * 真实像素用无头 Chrome 量过（45 / 64 / 96 三档竖条都能放下）。
  */
 import { describe, expect, it } from 'vitest'
+import { OVERFLOW_TOOLTIP_METRICS } from './lib/tooltip-size'
 
 /** 模块样式文件：路径 → 原文。 */
 const moduleStyles = import.meta.glob('/src/modules/agent-status/*.css', {
@@ -107,6 +108,30 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
     const short = blockAfter(css, '@container floating-slot (max-height: 32px)')
     expect(short, '矮槽降级块必须存在（横条 / 方形的限制轴是行高）').not.toBe('')
     expect(short).toContain('display: none')
+  })
+
+  it('keeps the overflow list height contract in sync with lib/tooltip-size.ts', () => {
+    const css = agentStatusCss()
+    // 行高钉死：信息卡的窗口高度就是按它算出来的（OVERFLOW_TOOLTIP_METRICS.row）。
+    expect(Number.parseFloat(decl(ruleBody(css, '.tooltip-overflow-row'), 'height'))).toBe(
+      OVERFLOW_TOOLTIP_METRICS.row
+    )
+    // 头部与兜底行同理 —— 不钉死就会随行高变化，把算好的窗口高度顶偏。
+    expect(Number.parseFloat(decl(ruleBody(css, '.tooltip-overflow-head'), 'height'))).toBe(
+      OVERFLOW_TOOLTIP_METRICS.head
+    )
+    expect(Number.parseFloat(decl(ruleBody(css, '.tooltip-overflow-note'), 'line-height'))).toBe(
+      OVERFLOW_TOOLTIP_METRICS.note
+    )
+    // 折叠几个就列几行（不截断），行数超过屏幕时在这里滚，而不是把窗口撑出屏幕。
+    expect(decl(ruleBody(css, '.tooltip-overflow-list'), 'overflow-y')).toBe('auto')
+    // 被 flex 压扁会让行高失效（高度账全错），必须 shrink-0。
+    expect(ruleBody(css, '.tooltip-overflow-row')).toContain('shrink-0')
+    // 高度账里剩下的两项来自外壳（`src/assets/main.css` 的 `.tooltip-shell`：`p-2.5` = 上下 10px、
+    // `gap-1.5` = 相邻 6px）。⚠️ 测试环境只放行模块 CSS 的 `?raw`（见 vitest.config.ts 的 `css.include`），
+    // 入口那份读不到原文，所以它们只能靠这里的常量名与注释对齐 —— 改 main.css 时看这条注释。
+    expect(OVERFLOW_TOOLTIP_METRICS.shellPaddingY).toBe(10)
+    expect(OVERFLOW_TOOLTIP_METRICS.gap).toBe(6)
   })
 
   it('draws the overflow ring as a hollow band centred in the cell', () => {

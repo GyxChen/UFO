@@ -17,6 +17,11 @@ import AgentStatusTooltip from './AgentStatusTooltip.vue'
 import { agentStatusModule } from './index'
 import { buildMockStatusSnapshot } from './lib/mock'
 import { overflowHoverKey } from './lib/agent-status-layout'
+import {
+  AGENT_TOOLTIP_SESSION_HEIGHT,
+  AGENT_TOOLTIP_WIDTH,
+  OVERFLOW_TOOLTIP_METRICS,
+} from './lib/tooltip-size'
 import { floatingModuleKey } from '@/lib/floating-module-context'
 import type { FloatingLayout } from '@/lib/floating-layout'
 import { useAgentStatusStore } from './stores/agentStatus'
@@ -129,13 +134,40 @@ describe('溢出格 · 折叠清单', () => {
     expect(rows[0].get('.tooltip-overflow-row__prompt').text().length).toBeGreaterThan(0)
   })
 
-  it('folds the tail of a long list into one line', () => {
+  it('lists every folded session instead of folding the tail', () => {
     const wrapper = mountTooltip(12, overflowHoverKey('square', 1))
 
-    // 一屏放得下 7 行：剩下的折成一句，不把卡片撑出提示窗的高度。
+    // 折叠几个就列几行（用户要求全列出来）：12 个会话在 1 格里全被折叠，清单就得是 12 行。
     const rows = wrapper.findAll('.tooltip-row').filter(row => !row.classes('tooltip-row--head'))
-    expect(rows).toHaveLength(7)
-    expect(wrapper.get('.tooltip-overflow-note').text()).toBe('还有 5 个未列出')
+    expect(rows).toHaveLength(12)
+    expect(wrapper.find('.tooltip-overflow-note').exists()).toBe(false)
+    // 行全部落在可滚动的清单容器里（行数超过屏幕时靠它滚，而不是把窗口撑出屏外）。
+    expect(wrapper.get('.tooltip-overflow-list').findAll('.tooltip-overflow-row')).toHaveLength(12)
+  })
+
+  it('grows the tooltip window with the number of folded sessions', () => {
+    const sizeFor = (count: number, key: string) => {
+      freshPinia(count)
+      const size = agentStatusModule.tooltip!.size
+      expect(typeof size, '折叠清单的高度必须按目标现算').toBe('function')
+      return (size as (target: { moduleId: string; key: string }) => { width: number; height: number })({
+        moduleId: 'agent-status',
+        key,
+      })
+    }
+
+    const few = sizeFor(5, overflowHoverKey('square', 1))
+    const many = sizeFor(12, overflowHoverKey('square', 1))
+    const single = sizeFor(5, 'claude:mock-0')
+
+    // 单会话卡片仍是固定的一屏预算（`overflowListFor` 对它返回 null）。
+    expect(single.height).toBe(AGENT_TOOLTIP_SESSION_HEIGHT)
+    // 折叠行越多窗口越高，且都宽 300。
+    expect(many.height).toBeGreaterThan(few.height)
+    expect([few.width, many.width]).toEqual([AGENT_TOOLTIP_WIDTH, AGENT_TOOLTIP_WIDTH])
+    // 行数就是高度账的变量：多出来的高度正好是 7 行 + 7 条行间距。
+    const { row, gap } = OVERFLOW_TOOLTIP_METRICS
+    expect(many.height - few.height).toBe(7 * (row + gap))
   })
 
   it('keeps the card non-empty when the fold is gone', () => {

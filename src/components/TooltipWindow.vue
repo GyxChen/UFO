@@ -4,8 +4,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, monitorFromPoint, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
 import {
+  clampTooltipSize,
   placeTooltip,
   resolveTooltipDefinition,
+  resolveTooltipSize,
   TOOLTIP_HOVER_EVENT,
   TOOLTIP_INTERACTION_EVENT,
   type TooltipHoverPayload,
@@ -22,6 +24,11 @@ import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 const window = getCurrentWindow()
 const hover = ref<TooltipHoverPayload | null>(null)
 let unlisten: UnlistenFn | undefined
+/**
+ * 窗口的默认尺寸（tauri.conf.json 里声明的那份），挂载时量一次。
+ * 模块没声明 `tooltip.size` 时把窗口还原成它 —— 否则会沿用上一个内容撑大的尺寸。
+ */
+let defaultSize: PhysicalSize | null = null
 
 /**
  * 此刻该展示哪个模块的信息卡：有悬停目标 + 该模块声明了 `tooltip` + 模块认为内容已就绪。
@@ -53,9 +60,14 @@ const displayKey = computed(() => (content.value ? `${activeDefinition.value?.id
 /**
  * 按内容组件声明的尺寸调整提示窗（`tooltip.size`）；没声明就沿用 tauri.conf.json 的默认值。
  * 必须在量尺寸定位之前做，否则会按旧高度算出位置再挪动。
+ *
+ * `size` 可以是「按悬停目标算」的函数：折叠清单要按行数长高才装得下全部行，
+ * 所以这里先把目标交给模块算出想要的尺寸，再夹进工作区（比屏幕还高的窗口没法看）。
+ * 未声明尺寸时把窗口还原成默认尺寸 —— 上一个内容可能把它撑大过。
  */
-async function applyTooltipSize() {
-  const size = activeDefinition.value?.tooltip?.size
+async function applyTooltipSize(target: TooltipHoverPayload['target'], workArea: PhysicalSize) {
+  const declared = resolveTooltipSize(activeDefinition.value?.tooltip, target)
+  const size = declared ? clampTooltipSize(declared, workArea) : defaultSize
   if (!size) return
   try {
     await window.setSize(new PhysicalSize(size.width, size.height))
@@ -68,23 +80,20 @@ async function applyTooltipSize() {
 async function present(payload: TooltipHoverPayload) {
   const centerX = Math.round(payload.anchor.x + payload.anchor.width / 2)
   const centerY = Math.round(payload.anchor.y + payload.anchor.height / 2)
-  await applyTooltipSize()
-  const [size, monitor] = await Promise.all([
-    window.outerSize(),
-    // 以 anchor 中心取屏：多屏下提示窗自身所在屏未必与悬浮窗同屏。
-    monitorFromPoint(centerX, centerY),
-  ])
+  // 以 anchor 中心取屏：多屏下提示窗自身所在屏未必与悬浮窗同屏。
+  // 必须先拿到工作区，才能把模块要的尺寸夹进屏幕再 setSize。
+  const monitor = await monitorFromPoint(centerX, centerY)
   if (!monitor) return
 
-  const { position } = placeTooltip(
-    payload.anchor,
-    { width: size.width, height: size.height },
-    {
-      position: { x: monitor.workArea.position.x, y: monitor.workArea.position.y },
-      size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
-    },
-    payload.docked
-  )
+  const workArea = {
+    position: { x: monitor.workArea.position.x, y: monitor.workArea.position.y },
+    size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
+  }
+
+  await applyTooltipSize(payload.target, workArea.size)
+  const size = await window.outerSize()
+
+  const { position } = placeTooltip(payload.anchor, { width: size.width, height: size.height }, workArea, payload.docked)
 
   await invoke('set_tooltip_interactive', { interactive: true })
   await window.setPosition(new PhysicalPosition(position.x, position.y))
@@ -117,6 +126,8 @@ watch(displayKey, key => {
 })
 
 onMounted(async () => {
+  // 先记默认尺寸再开始跟随内容改尺寸，否则「没声明 size 的模块」就没有可还原的基准。
+  defaultSize = await window.outerSize()
   unlisten = await listen<TooltipHoverPayload>(TOOLTIP_HOVER_EVENT, event => {
     hover.value = event.payload
   })

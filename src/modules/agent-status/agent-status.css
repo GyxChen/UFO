@@ -389,10 +389,32 @@
 
 /*
  * ── 溢出格的折叠清单（悬停 +N 折叠指示器时信息卡的内容） ──────────────
- * 一行一个被折叠的会话：灯 + 平台图标 + 阶段 + 提问摘要。
+ * 一行一个被折叠的会话：灯 + 平台图标 + 阶段 + 提问摘要。折叠几个就列几行（不截断），
+ * 信息卡的窗口高度按行数算（`lib/tooltip-size.ts`）；行数多到超过屏幕时窗口被夹在工作区内，
+ * 多出来的行在这里滚。所以容器要占满剩余高度、且自己滚。
+ *
  * 不展示 session id、不做行悬停高亮 —— 这是「扫一眼定位要不要去管」的清单，
  * 行本身没有可点的动作（单会话信息卡的关闭按钮才需要交互）。
  */
+
+/* 清单本体：占满头部与兜底行之间的剩余高度；行太多时在这里滚（带槽位，滚动条不挤窄行）。 */
+.tooltip-overflow-list {
+  @apply flex min-h-0 flex-1 flex-col gap-1.5;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+/*
+ * 每行的行高**固定**：信息卡的窗口高度就是按它算出来的（`OVERFLOW_TOOLTIP_METRICS.row`），
+ * 行高随内容变（提问长短不影响，图标已定高）会让窗口高度对不上、底部露出空隙或被切一行。
+ * shrink-0 保证行多时不被 flex 压扁 —— 超出就该滚，而不是挤成一团。
+ */
+.tooltip-overflow-row {
+  @apply shrink-0;
+  height: 18px;
+}
 
 /* 头部右侧的状态统计片：红 / 黄 / 绿各自计数，省得逐行读才知道折叠里有没有红的。 */
 .tooltip-overflow-counts {
@@ -446,10 +468,20 @@
   color: var(--ufo-muted);
 }
 
-/* 清单结尾的兜底行（「还有 N 个未列出」/「折叠的会话都已结束」）。 */
+/*
+ * 折叠清单的头部：高度**固定**成 25px（含 `pb-1.5` 的 6px 与 1px 分隔线，见 box-sizing: border-box），
+ * 与 `OVERFLOW_TOOLTIP_METRICS.head` 对齐 —— 这行没有单会话卡里的 22px 关闭按钮撑着，
+ * 不钉死就会随字号/行高变化，把算好的窗口高度顶偏。
+ */
+.tooltip-overflow-head {
+  height: 25px;
+}
+
+/* 清单结尾的兜底行（「折叠的会话都已结束」）：行高也钉死，同样是为了高度账对得上。 */
 .tooltip-overflow-note {
   @apply m-0 text-[11px];
   color: var(--ufo-muted);
+  line-height: 15px;
 }
 
 .ep-panel {

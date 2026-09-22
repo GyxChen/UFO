@@ -134,7 +134,7 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
 | `reportHover(key)` | 模块 → 宿主 | 上报悬停对象（模块自定义 key，如会话 key），null = 离开；槽位会补上 moduleId，模块不需要知道自己的 id |
 | `allocatedCells` | 宿主 → 模块 | 本模块实际分到的格子数（按需求比例切分窗口，至少 1 格），网格类模块据此决定列行 |
 | `layout-mode` prop | 宿主 → 模块 | 当前形态，模块必须同时适配方形 / 四角 / 横条 / 竖条 |
-| `tooltip`（定义字段） | 模块 → 提示窗 | 可选的悬停信息卡：内容组件 + `size`（可选，覆盖提示窗默认尺寸）+ `hasContent(target)` 就绪判定；不给就悬停不弹窗 |
+| `tooltip`（定义字段） | 模块 → 提示窗 | 可选的悬停信息卡：内容组件 + `size`（可选，覆盖提示窗默认尺寸；也可给**按悬停目标算的函数** —— 内容行数随目标变化时窗口跟着长高，外壳只负责把高度夹进工作区）+ `hasContent(target)` 就绪判定；不给就悬停不弹窗 |
 | `activate()`（定义字段） | 模块 → 外壳 | 可选的模块生命周期：外壳在每个窗口挂载时调一次（`activateModules`，卸载时逆序调返回值）。模块在这里启动自己的 store / 订阅跨窗口事件 —— **外壳不认识任何模块的数据源**，所以「谁需要先 start」只写在模块自己身上。⚠️ 不能改成组件 `onMounted`：提示窗的 `tooltip.hasContent` 在内容组件挂载**之前**就要答案，数据晚到一步就永远弹不出来 |
 | `module_settings[<id>]`（配置块） | 模块 ↔ 外壳 | 模块自己的配置：外壳按 id 存一块 JSON（`FloatingModuleConfig.module_settings`），**不解释里面任何字段**。模块用 `useFloatingModulesStore().moduleSettings(id)` / `updateModuleSettings(id, patch)` 读写，字段名 / 默认值 / 取值范围写在自己的 `settings.ts`（如 `src/modules/agent-status/settings.ts`）。Rust 侧同理：外壳整块透传，模块在 `src-tauri/src/modules/agent_status/settings.rs` 里解析 / 认领旧字段 / 同步运行时 |
 

@@ -63,19 +63,10 @@ const overflowList = computed(() => overflowListFor(props.target.key, store.sess
 /** 折叠会话（非溢出模式时为空数组，模板不必再判空）。 */
 const hiddenSessions = computed(() => overflowList.value ?? [])
 
-/** 折叠会话的灯色分片（红 → 黄 → 绿），给头部的统计片用；与环同一份口径。 */
-const hiddenSegments = computed(() => overflowSegments(hiddenSessions.value))
-
 /**
- * 清单最多列几行：提示窗高度是固定的（`tooltip.size` 300×260，内容区约 240px），
- * 头部约 28px、一行约 24px，7 行 + 一行「还有 N 个未列出」≈ 213px，底部还留得住白。
- * 超出的折成一行小字 —— 溢出格折叠的会话数上不封顶（最多能到十几盏）。
+ * 折叠会话的灯色分片（红 → 黄 → 绿），给头部的统计片用；与环同一份口径。
  */
-const MAX_LISTED_SESSIONS = 7
-/** 清单里实际渲染的会话（超出部分只报数量）。 */
-const listedSessions = computed(() => hiddenSessions.value.slice(0, MAX_LISTED_SESSIONS))
-/** 没能列进清单的会话数。 */
-const restSessions = computed(() => Math.max(hiddenSessions.value.length - MAX_LISTED_SESSIONS, 0))
+const hiddenSegments = computed(() => overflowSegments(hiddenSessions.value))
 
 /** provider → 平台图标（清单里每行都要按自己的 provider 取）。 */
 function iconFor(item: SessionSnapshot) {
@@ -165,9 +156,11 @@ async function dismissSession() {
   <!--
     溢出模式：悬停的是 `+N` 折叠指示器，这里列出被折叠的那几盏灯。
     头部先给「还剩几个 + 红黄绿各几个」，下面一行一个会话 —— 扫一眼就能定位到要不要去管的那盏。
+    ⚠️ 折叠几个就列几行，**不截断**（窗口高度按行数现算，见 module 定义里的 `tooltip.size`）；
+       行数多到超过屏幕时窗口被夹在工作区内，多出来的行在这里滚。
   -->
   <template v-if="overflowList">
-    <div class="tooltip-row tooltip-row--head">
+    <div class="tooltip-row tooltip-row--head tooltip-overflow-head">
       <span class="tooltip-row__value">后面还有 {{ hiddenSessions.length }} 个会话</span>
       <span class="tooltip-overflow-counts">
         <span
@@ -181,22 +174,25 @@ async function dismissSession() {
       </span>
     </div>
 
-    <div v-for="item in listedSessions" :key="item.key" class="tooltip-row">
-      <span class="tooltip-dot" :class="`tooltip-dot--${colorForSession(item)}`" aria-hidden="true" />
-      <img :src="iconFor(item)" :alt="item.provider" class="tooltip-provider-icon" aria-hidden="true" />
-      <span class="tooltip-overflow-row__phase" :class="`tooltip-overflow-row__phase--${colorForSession(item)}`">{{
-        phaseLabel(item.phase)
-      }}</span>
-      <!-- 提问可能很长：省略号截断，完整原文走 title。未上报提问时给一句占位，避免行内出现空洞。 -->
-      <span class="tooltip-overflow-row__prompt" :title="item.prompt ?? ''">{{ item.prompt ?? '（未上报提问）' }}</span>
+    <div class="tooltip-overflow-list">
+      <div v-for="item in hiddenSessions" :key="item.key" class="tooltip-row tooltip-overflow-row">
+        <span class="tooltip-dot" :class="`tooltip-dot--${colorForSession(item)}`" aria-hidden="true" />
+        <img :src="iconFor(item)" :alt="item.provider" class="tooltip-provider-icon" aria-hidden="true" />
+        <span
+          class="tooltip-overflow-row__phase"
+          :class="`tooltip-overflow-row__phase--${colorForSession(item)}`"
+          >{{ phaseLabel(item.phase) }}</span
+        >
+        <!-- 提问可能很长：省略号截断，完整原文走 title。未上报提问时给一句占位，避免行内出现空洞。 -->
+        <span class="tooltip-overflow-row__prompt" :title="item.prompt ?? ''">{{ item.prompt ?? '（未上报提问）' }}</span>
+      </div>
     </div>
 
     <!--
-      兜底行：折叠数超过一屏（> 7）时报一句；悬停期间会话结束导致清单空了，也给一句话，
-      否则卡片会剩一个只有头部的空框（悬浮窗那块折叠指示器也要等快照下一帧才消失）。
+      兜底行：悬停期间会话结束导致清单空了（悬浮窗那块折叠指示器要等快照下一帧才消失），
+      给一句话，否则卡片会剩一个只有头部的空框。
     -->
-    <p v-if="restSessions" class="tooltip-overflow-note">还有 {{ restSessions }} 个未列出</p>
-    <p v-else-if="!hiddenSessions.length" class="tooltip-overflow-note">折叠的会话都已结束</p>
+    <p v-if="!hiddenSessions.length" class="tooltip-overflow-note">折叠的会话都已结束</p>
   </template>
 
   <template v-else-if="session">

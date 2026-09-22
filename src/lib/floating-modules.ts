@@ -95,6 +95,12 @@ export interface FloatingModuleSettings {
   sections: FloatingModuleSection[]
 }
 
+/** 信息卡窗口的尺寸（物理像素）。 */
+export interface FloatingTooltipSize {
+  width: number
+  height: number
+}
+
 /**
  * 模块的悬停信息卡：提示窗是独立窗口，由外壳按模块分派内容。
  * 宿主（提示窗）不认识任何模块语义，只负责「谁悬停了 → 渲染谁的组件」。
@@ -108,8 +114,12 @@ export interface FloatingModuleTooltip {
   /**
    * 该组件希望的提示窗尺寸（物理像素）；省略 = 用 tauri.conf.json 里的默认尺寸。
    * 提示窗在显示前按它 `setSize`，所以不同组件可以有不同高度的信息卡。
+   *
+   * 也可以给**按悬停目标算的函数**：内容行数随目标变化时（如折叠清单里有几个会话），
+   * 窗口要跟着长高才装得下全部行。外壳只负责取值、并把结果夹进工作区，
+   * 不认识里面是按什么算的（见 `resolveTooltipSize` / `clampTooltipSize`）。
    */
-  size?: { width: number; height: number }
+  size?: FloatingTooltipSize | ((target: FloatingHoverTarget) => FloatingTooltipSize)
   /**
    * 该悬停目标此刻是否有内容可展示（如该模块的数据已到达本窗口）。
    * 省略 = 只要有悬停目标就弹窗；返回 false 时不弹，避免先弹一个空框再填内容。

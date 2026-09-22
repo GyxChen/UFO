@@ -1,5 +1,10 @@
 import type { FloatingModuleDefinition } from '@/lib/floating-modules'
 import { overflowListFor } from './lib/agent-status-layout'
+import {
+  AGENT_TOOLTIP_SESSION_HEIGHT,
+  AGENT_TOOLTIP_WIDTH,
+  overflowTooltipHeight,
+} from './lib/tooltip-size'
 import { useAgentStatusStore } from './stores/agentStatus'
 import { useFlowResultsStore } from './stores/flowResults'
 import AgentStatusModule from './AgentStatusModule.vue'
@@ -58,9 +63,19 @@ export const agentStatusModule: FloatingModuleDefinition = {
   },
   tooltip: {
     component: AgentStatusTooltip,
-    // 一屏预算：单会话 = head + Endpoint + token + 4 字段 + 刷新标注 + 提问 1 行 ≈ 236px；
-    // 折叠清单 = head + 7 行 + 一行兜底 ≈ 213px —— 两种内容都在 260 内（见 AGENTS.md）。
-    size: { width: 300, height: 260 },
+    /**
+     * 窗口尺寸按悬停目标现算：
+     * - 单会话卡片 = 固定的一屏预算（head + Endpoint + token + 4 字段 + 刷新标注 + 提问 ≈ 236px）；
+     * - `+N` 折叠清单 = **折叠几个会话就多高**（行数不设上限，用户要求全列出来），
+     *   由 `overflowTooltipHeight` 按行数算，超出屏幕的部分由外壳夹进工作区、清单内部滚（见 lib/tooltip-size.ts）。
+     */
+    size: target => {
+      const overflow = overflowListFor(target.key, useAgentStatusStore().sessions)
+      return {
+        width: AGENT_TOOLTIP_WIDTH,
+        height: overflow ? overflowTooltipHeight(overflow.length) : AGENT_TOOLTIP_SESSION_HEIGHT,
+      }
+    },
     /**
      * 会话数据要先到达提示窗才弹（提示窗是独立 webview，事件异步），
      * 否则会先弹一个空框、再填内容（且位置可能还在上一个目标那里）。
