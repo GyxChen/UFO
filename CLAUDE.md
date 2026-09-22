@@ -5,7 +5,7 @@ UI设计请使用:ui-ux-pro-max-skill
 和用户通过中文交流
 
 悬浮窗有三种形态:
-1. 方形(默认 45×45,未贴边;贴到四角时变成更大的方形)
+1. 方形(默认 45×45,未贴边;贴到四角时各模块竖向堆叠成更大的多行区块)
 2. 横条(上下贴边时,宽度放大)
 3. 竖条(左右贴边时,高度放大)
 
@@ -140,9 +140,9 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
 
 窗口尺寸的汇总规则（`moduleDemand` / `resolveWindowCells` 在 `src/lib/floating-modules.ts`，尺寸换算 `floatingWindowSize` 在 `src/lib/floating-layout.ts`，全是纯函数 + 单元测试）：
 
-- **总格子数 = 各启用模块需求之和**，夹在 `[DEFAULT_WINDOW_CELLS(4), 该形态上限]` 之间（上限来自配置 `max_cells_by_layout`）。
-- 宿主按需求比例用 grid 的 `fr` 分槽：**横条左右并排，竖条 / 方形 / 四角上下堆叠**。
-- 到顶（需求之和 > 上限）后窗口不再变大，各模块按比例等分收缩；模块要自行处理「分到的比需求的少」，Agent 状态灯退化成 `+N` 溢出格。
+- **总格子数 = 各启用模块需求之和**，夹在 `[1, ABS_MAX_CELLS(16)]` 之间（供各模块按比例分格子用）。**但窗口的像素网格不总是这个数**：边条按个数精确取长度；方形未贴边恒 1 格；**贴角让每个模块各占满一整行竖向堆叠**（`windowGrid('corner', demands)`：行数 = 各模块行数之和、列数 = 最宽模块列数）—— 所以 agent 在四角是 1×2 时，todo / weather 也各是 1×2，三模块整窗就是 3 行 × 2 列（3×2），而不是把需求总和 6 归档成 2×3 的方格。单模块（如只有 agent）仍按它自己的阶梯网格（1×1 / 1×2 / 2×2 / 3×3…）。窗口因此随需求之和变大 —— Agent 吃到 3×3 再叠几个同级组件，整窗会在四角长到「3+ 行 × 3 列」容下它们。**格子上限不再是外壳配置**：各模块在自己的 `module_settings[<id>]` 里声明（Agent 是 `max_cells`，滑块 `{1,2,3,4,6,9}` 封顶 3×3，只限本模块）。
+- 宿主用 grid 的 `fr` 分槽：**横条左右并排，竖条 / 方形 / 四角上下堆叠**；横条 / 竖条按需求（面积）分，四角逐个模块按**它自己占几行**分（`cellsGrid('corner', demand).rows`）。
+- 到顶（需求之和 > `ABS_MAX_CELLS`）后窗口不再变大，各模块按比例等分收缩；模块要自行处理「分到的比需求的少」，Agent 状态灯退化成 `+N` 溢出格。
 - `supportedLayouts` 不含当前形态的模块不挂载、也不参与汇总（等于自动让位）。
 - 想让模块在某形态下不占空间就用主窗口的开关关掉它，不要让 `demand` 返回 0（0 至少按 1 格算）。
 - ⚠️ 未贴边的方形固定「1 格」（尺寸与格子数无关），所以多组件时内容是**等比压缩**；只有贴角 / 贴边的窗口才按格子数放大。`FLOATING_BASE_CELL_PX` 与 tauri.conf.json 的初值必须同为 45 —— 那是**默认**一格，用户可在「悬浮窗设置」里改（见下条）。
@@ -161,7 +161,7 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
   变量缺失时回落 1（= 设计尺寸），与「没有槽位容器时 cq 单位退化、clamp 取到设计上限」的表现一致。
   ⚠️ 不乘倍率的两类：`@container` 里的 px 断点（那是**绝对可读性阈值**：槽位矮于 32/33px 就降级排版，与设计缩放无关）、以及信息卡（另一个固定尺寸的窗口，不参与格子缩放）。
   护栏：`src/components/floating/floating-module-scaling.spec.ts` 扫描所有模块样式，`clamp()` 的上限只要是 px 设计值就必须引用该变量。
-- **一格边长可调**（主窗「悬浮窗设置」页左列、组件列表下方的「格子大小」卡）：配置字段 `cell_px`（物理像素，32–96，默认 45）。它与 `max_cells_by_layout` 同级 —— 是**整个悬浮窗**的尺寸基准、同级组件共享，因此留在外壳（`FloatingModuleConfig.cell_px`，`#[serde(default = "default_cell_px")]`；⚠️ 加这个字段**不得**升 `SCHEMA_VERSION`）。前端读配置一律走 `configCellPx()` / `cellSizeOf()`（`floating-modules.ts` / `floating-layout.ts`），不要直接取字段。
+- **一格边长可调**（主窗「悬浮窗设置」页左列、组件列表下方的「格子大小」卡）：配置字段 `cell_px`（物理像素，32–96，默认 45）。它是**整个悬浮窗**的尺寸基准、同级组件共享，也是外壳仅剩的窗口级尺寸参数，因此留在外壳（`FloatingModuleConfig.cell_px`，`#[serde(default = "default_cell_px")]`；⚠️ 加这个字段**不得**升 `SCHEMA_VERSION`）。前端读配置一律走 `configCellPx()` / `cellSizeOf()`（`floating-modules.ts` / `floating-layout.ts`），不要直接取字段。
   - ⚠️ 滑块**拖动时只改本地值**（预览实时跟随），**松手（change）才落盘**：否则每动一像素就要写一次盘，并让真窗口重新吸附一次。
   - 悬浮窗侧 `baseSize` 取自 store（`FloatingWindow.vue`），配置事件到达后 `scheduleSnap()` 按新尺寸重算 → 贴边中也会就地更新。
   - ⚠️ 原生 range 会把越界值截到边界，所以「落盘前 clamp」这条防线主要挡程序化调用（0 会让窗口塌成一条线），由 `clampCellPx()` 与 Rust 侧 `validate()` 各管一半。
@@ -185,7 +185,7 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
   - 二级（`variant="chips"`，胶囊）= 当前组件自己的设置分区，列它自己的 `settings.sections`。
   - ⚠️ 「悬浮窗设置」**一页到底、没有二级**：它本身就是一块整体（列表 + 预览左右并排），再切一刀会把「改组件」和「看效果」拆开。二级只服务组件设置页。
   - ⚠️ 两级 tabbar 上下相邻，外观必须保持不同（下划线 vs 胶囊），否则看不出哪条是一级。组件名在屏幕上已由两级 tab 表达，组件页里那个 h1 用 `sr-only` 只留给读屏。
-- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **各形态格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 前四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「各形态格子上限」**口径是整个悬浮窗的**（`max_cells_by_layout`，同级组件共享，仍由外壳 store 持有），页面文案已写明。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页左列、组件列表下方的独立卡片**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
+- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **窗口格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 前四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「窗口格子上限」**只是本组件自己的配置**（`module_settings['agent-status'].max_cells`，滑块 1 / 2 / 3 / 4 / 6 / 9 封顶 3×3），只限制本模块大小、不改动其它组件；整窗仍按各组件需求之和（可超过 9）自动伸缩，页面文案已写明。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页左列、组件列表下方的独立卡片**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
 - 打开组件设置有两条路，走同一个事件：① 主窗组件列表行的齿轮；② 点悬浮窗上该组件的区域（槽位根节点的 `data-module-id` + 外壳 `moduleIdAt()` → `emitTo('main', OPEN_MODULE_SETTINGS_EVENT)`，点空白处传 null = 打开组件列表页）。打开后落到该组件**第一个分区**（`activeSections` 变化时重置），不会停在上次看的那一块。⚠️ 顺序必须是「先 showMainWindow 再 emitTo」：窗口还没打开时事件没人接。`pointercancel`（触摸取消）只清状态，**不当点击**，否则会莫名弹主窗。
 - 布局 mock 见 `reference/mock/floating-modules-index.html`（组件选择三套，采用第三套）；两级导航 mock 见 `reference/mock/settings-nav-index.html`（双层横条 / 左侧竖排 / 分段控件，采用第一套 A：二级用胶囊条）。
 
@@ -199,7 +199,7 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
 - **样式归属**：`src/assets/main.css` 只留窗口外壳 / 宿主 / 公共控件 / 公共信息卡行与分组（`.main-*` / `.floating-*` / `.ufo-*` / `.module-catalog*` / `.module-row*` / `.module-settings*` / `.shape-preview*` / `.general-cards` / `.tooltip-shell|row|section*`）；模块样式写在 `src/modules/<id>/<id>.css`，由模块定义 `import`。
   ⚠️ Tailwind v4 只给「入口 CSS」注入主题与工具类：独立 CSS 文件里用 `@apply` 必须先 `@reference "../../assets/main.css";`（在文件头），否则构建报 `Cannot apply unknown utility class`。该指令只提供编译上下文，不会重复输出入口样式。
 - 验收：`rg -n "agent-status|agentStatus" src/App.vue src/components/floating src/lib/floating-modules.ts src/lib/floating-module-context.ts` 应当无命中（模块自己的目录、模块的 spec 除外）。
-- **配置下放**（外壳配置只留 `modules[].enabled|order` + 窗口级尺寸参数 `max_cells_by_layout` / `cell_px`，其余字段全在各组件自己的 `module_settings[<id>]` 里）：
+- **配置下放**（外壳配置只留 `modules[].enabled|order` + 窗口级尺寸参数 `cell_px`，其余字段全在各组件自己的 `module_settings[<id>]` 里 —— 连格子上限也下放给各组件自己）：
   - 前端：外壳 store 只提供 `moduleSettings(id)` / `updateModuleSettings(id, patch)`（浅合并后整份落盘）；字段名 / 默认值 / 取值范围写在模块自己的 `src/modules/<id>/settings.ts` 里，读的时候各自夹取 —— 坏一个字段只影响它自己。
   - Rust：`FloatingModuleConfig.module_settings` 整块透传（`BTreeMap<String, Value>`）；模块在 `src-tauri/src/modules/agent_status/settings.rs` 里解析（`AgentStatusSettings::from_block`，逐字段宽松取值 + 夹取），并通过组合根（`lib.rs`）登记的两个钩子接入外壳：`adopt_legacy_fields`（认领旧版扁平字段）与 `config_hook()`（配置落盘后同步给运行时，改完即时生效）。
   - 旧配置迁移：外壳把顶层多出来的未知字段（`#[serde(flatten)] legacy`）原样交给各模块的认领钩子；有认领就把清理过的配置**写回一次**（不 bump revision、不广播）。⚠️ 只在文件里还没有该模块配置块时取旧值，绝不覆盖用户新改的设置。

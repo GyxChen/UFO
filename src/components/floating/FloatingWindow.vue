@@ -90,6 +90,18 @@ async function broadcastRuntime() {
   }
 }
 
+/**
+ * 取某形态下各模块的格子需求，供贴边算窗口尺寸用。
+ *
+ * 四角必须知道「有哪些模块、各要几格」才能按模块数分行（只给总数会退化成方格，
+ * 见 floating-layout 的 windowGrid）。快照里四种形态的需求都算好了，直接按目标形态取；
+ * 快照还没到（首帧）时返回空数组，snap 会退回按 `requestedCells` 单模块算。
+ */
+function demandsForLayout(layout: FloatingLayout): number[] {
+  const runtime = lastRuntime?.byLayout[layout]
+  return runtime ? Object.values(runtime.demands) : []
+}
+
 /** 某个模块上报悬停到了它的哪个对象（null 表示离开），由外壳转成提示窗事件。 */
 function onModuleHover(target: FloatingHoverTarget | null) {
   clearTimeout(showTimer)
@@ -337,7 +349,7 @@ async function snapWindow() {
       position: { x: monitor.workArea.position.x, y: monitor.workArea.position.y },
       size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
     },
-    { cells: requestedCells }
+    { cells: requestedCells, demandsFor: demandsForLayout }
   )
 
   if (result.position.x !== position.x || result.position.y !== position.y) {

@@ -490,9 +490,16 @@ html.is-tooltip-window #app {
   @apply my-0;
 }
 
-.module-settings__caps {
-  @apply mt-1 grid grid-cols-2 gap-2.5 border-t pt-3;
+/* 窗口格子上限：滑块 + 右侧取值一行（滑块吃满剩余宽度，取值固定不动）。 */
+.module-settings__cap-row {
+  @apply mt-1 flex items-center gap-3 border-t pt-4;
   border-color: var(--ufo-border);
+}
+
+.module-settings__cap-value {
+  @apply shrink-0 text-right text-[12px] font-semibold tabular-nums;
+  color: var(--ufo-text);
+  min-width: 5.5rem;
 }
 
 .module-settings__actions {

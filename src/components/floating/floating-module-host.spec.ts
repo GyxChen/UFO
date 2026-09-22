@@ -67,7 +67,6 @@ const config = (extraEnabled: boolean, cellPx?: number): FloatingModuleConfig =>
     { id: 'stub-a', enabled: true, order: 0 },
     { id: 'extra', enabled: extraEnabled, order: 1 },
   ],
-  max_cells_by_layout: { square: 8, corner: 8, horizontal: 8, vertical: 8 },
   ...(cellPx === undefined ? {} : { cell_px: cellPx }),
   module_settings: {},
 })
@@ -124,6 +123,14 @@ describe('FloatingModuleHost', () => {
     await vertical.vm.$nextTick()
     // 竖条 / 方形：按高度分槽，模块上下堆叠。
     expect(vertical.find('.floating-module-host').attributes('style')).toContain('grid-template-rows: 4fr 2fr')
+  })
+
+  it('splits corner slots by the rows each module needs', async () => {
+    const wrapper = mountHost('corner')
+    await wrapper.vm.$nextTick()
+    // 四角逐个模块各占满一整行，行高按它自己占几行：4 格 = 2×2 → 2 行，2 格 = 1×2 → 1 行。
+    // （若按原始需求面积分会是 4fr 2fr，只在各模块同宽时才对；这里锁「按行数」的正确口径。）
+    expect(wrapper.find('.floating-module-host').attributes('style')).toContain('grid-template-rows: 2fr 1fr')
   })
 
   it('skips modules that do not support the current shape', async () => {

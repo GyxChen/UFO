@@ -24,7 +24,6 @@ function backendConfig(block: Record<string, unknown> | null = {}): FloatingModu
     schema_version: 1,
     revision: 4,
     modules: [{ id: AGENT_STATUS_MODULE_ID, enabled: true, order: 0 }],
-    max_cells_by_layout: { square: 8, corner: 8, horizontal: 8, vertical: 8 },
     module_settings: {
       'other-module': { untouched: true },
       ...(block ? { [AGENT_STATUS_MODULE_ID]: { ...block } } : {}),
@@ -103,5 +102,18 @@ describe('GeneralSection', () => {
 
     const block = saved?.module_settings[AGENT_STATUS_MODULE_ID] as Record<string, unknown>
     expect(block?.completed_retention_ms).toBe(1_000)
+  })
+
+  it('saves the max-cells slider into its own config block', async () => {
+    const wrapper = await mountWith(backendConfig({}))
+    const input = wrapper.get<HTMLInputElement>('.base-slider__input')
+    // 滑块按档位下标驱动：拖到下标 2 = CELL_STEPS[2] = 3 格，松手落盘。
+    await input.setValue('2')
+    await input.trigger('change')
+    await flushPromises()
+
+    // 格子上限是本组件自己的配置，写进 module_settings['agent-status']。
+    const block = saved?.module_settings[AGENT_STATUS_MODULE_ID] as Record<string, unknown>
+    expect(block?.max_cells).toBe(3)
   })
 })

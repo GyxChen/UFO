@@ -77,56 +77,13 @@
   font-family: var(--font-sans);
 }
 
-/* 2. Corner：四角贴边放大方形；上下两行（图标+天气 / 温度+城市），每行约占半个槽位 */
-.weather-module--corner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-}
+/*
+ * 2. 贴角：四角贴边现在按阶梯取 1×2 宽条（与横条同尺寸），排版复用下面的横条分栏，
+ * 因此这里不再单独写上下两行 —— 见 `.weather-module--corner, .weather-module--horizontal`。
+ */
 
-.weather-module--corner .weather-top {
-  display: flex;
-  align-items: center;
-  gap: calc(3px * var(--floating-cell-scale, 1));
-}
-
-.weather-module--corner .weather-icon {
-  width: clamp(12px, 40cqh, calc(34px * var(--floating-cell-scale, 1)));
-  height: clamp(12px, 40cqh, calc(34px * var(--floating-cell-scale, 1)));
-  color: var(--ufo-accent);
-}
-
-.weather-module--corner .weather-text {
-  font-size: clamp(10px, 15cqh, calc(14px * var(--floating-cell-scale, 1)));
-  line-height: 1.1;
-  color: var(--ufo-muted);
-}
-
-.weather-module--corner .weather-bottom {
-  display: flex;
-  align-items: baseline;
-  gap: calc(4px * var(--floating-cell-scale, 1));
-}
-
-.weather-module--corner .weather-temp {
-  font-size: clamp(13px, 46cqh, calc(24px * var(--floating-cell-scale, 1)));
-  font-weight: 800;
-  line-height: 1.05;
-  color: var(--ufo-text);
-}
-
-.weather-module--corner .weather-loc {
-  font-size: clamp(9px, 13cqh, calc(12px * var(--floating-cell-scale, 1)));
-  color: var(--ufo-muted);
-  max-width: calc(60px * var(--floating-cell-scale, 1));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 3. Horizontal：上下贴边横条（左右两格并排，槽位高即列高） */
+/* 3. 横条 / 贴角：左右两格并排（槽位高即列高）；贴角恒 1×2，与横条共用这套分栏 */
+.weather-module--corner,
 .weather-module--horizontal {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -135,6 +92,7 @@
   align-items: center;
 }
 
+.weather-module--corner .weather-col-left,
 .weather-module--horizontal .weather-col-left {
   display: flex;
   flex-direction: column;
@@ -146,18 +104,21 @@
   gap: 1px;
 }
 
+.weather-module--corner .weather-col-left .weather-icon,
 .weather-module--horizontal .weather-col-left .weather-icon {
   width: clamp(12px, 52cqh, calc(30px * var(--floating-cell-scale, 1)));
   height: clamp(12px, 52cqh, calc(30px * var(--floating-cell-scale, 1)));
   color: var(--ufo-accent);
 }
 
+.weather-module--corner .weather-col-left .weather-text,
 .weather-module--horizontal .weather-col-left .weather-text {
   font-size: clamp(10px, 27cqh, calc(14px * var(--floating-cell-scale, 1)));
   line-height: 1.1;
   color: var(--ufo-muted);
 }
 
+.weather-module--corner .weather-col-right,
 .weather-module--horizontal .weather-col-right {
   display: flex;
   flex-direction: column;
@@ -168,12 +129,14 @@
   gap: 1px;
 }
 
+.weather-module--corner .weather-col-right .weather-temp,
 .weather-module--horizontal .weather-col-right .weather-temp {
   font-size: clamp(14px, 44cqh, calc(28px * var(--floating-cell-scale, 1)));
   font-weight: 700;
   line-height: 1.05;
 }
 
+.weather-module--corner .weather-col-right .weather-sub,
 .weather-module--horizontal .weather-col-right .weather-sub {
   font-size: clamp(9px, 25cqh, calc(12px * var(--floating-cell-scale, 1)));
   line-height: 1.1;

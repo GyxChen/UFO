@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import FloatingModuleSlot from './FloatingModuleSlot.vue'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import type { FloatingHoverTarget } from '@/lib/floating-module-context'
-import { FLOATING_BASE_CELL_PX, type FloatingLayout } from '@/lib/floating-layout'
+import { FLOATING_BASE_CELL_PX, ABS_MAX_CELLS, cellsGrid, type FloatingLayout } from '@/lib/floating-layout'
 import {
   allocatedCells,
   enabledModuleDefinitions,
@@ -56,13 +56,13 @@ const currentDemands = computed(() =>
 )
 /** 每个模块的空间权重（整数，至少 1 格），用于 grid 分槽。 */
 const weights = computed(() => moduleCellShares(currentDemands.value))
-/** 窗口格子数：所有模块需求之和，夹在默认格子数与该形态上限之间。 */
-const windowCells = computed(() => resolveWindowCells(currentDemands.value, modules.maxCellsFor(props.layoutMode)))
+/** 窗口格子数：所有模块需求之和，夹在 [1, 绝对上限 ABS_MAX_CELLS] 之间（各模块自行按配置上限需求）。 */
+const windowCells = computed(() => resolveWindowCells(currentDemands.value, ABS_MAX_CELLS))
 /** 每个模块实际分到的格子数，按权重切分窗口总数。 */
 const allocations = computed(() => weights.value.map((_, index) => allocatedCells(windowCells.value, weights.value, index)))
 /** 全部形态的运行时快照：给主窗口做组件徽标与三形态预览（含当前形态，便于列表标注）。 */
 const runtime = computed(() =>
-  runtimeSnapshot(props.layoutMode, modules.config, props.definitions, layout => modules.maxCellsFor(layout))
+  runtimeSnapshot(props.layoutMode, modules.config, props.definitions, () => ABS_MAX_CELLS)
 )
 
 /**
@@ -84,11 +84,21 @@ const cellVars = computed(() => ({
 }))
 
 /**
- * 分槽样式：按权重铺 fr 轨道。
+ * 分槽权重：按权重铺 fr 轨道。
  * 横条沿宽度分槽（模块左右并排）；竖条 / 方形 / 四角沿高度分槽（模块上下堆叠）。
+ *
+ * ⚠️ 四角逐个模块按**它自己占几行**分槽（`cellsGrid('corner', demand).rows`），而不是原始
+ * 需求（面积）：四角里每个模块各占满一整行，行高应正比于它要几行。需求 = 行数 × 列数，
+ * 只有一个模块更宽（列更多）时用需求才会把行高算胖（常见情形各模块同宽，两者等价）。
  */
+const slotShares = computed(() =>
+  props.layoutMode === 'corner'
+    ? currentDemands.value.map(demand => cellsGrid('corner', demand).rows)
+    : weights.value
+)
+
 const slotStyle = computed(() => {
-  const tracks = weights.value.map(weight => `${weight}fr`).join(' ')
+  const tracks = slotShares.value.map(share => `${share}fr`).join(' ')
   return props.layoutMode === 'horizontal' ? { gridTemplateColumns: tracks } : { gridTemplateRows: tracks }
 })
 

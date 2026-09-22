@@ -10,6 +10,7 @@ import { computed } from 'vue'
 import {
   FLOATING_BASE_CELL_PX,
   cellSizeOf,
+  cellsGrid,
   floatingWindowSize,
   type FloatingLayout,
 } from '@/lib/floating-layout'
@@ -72,16 +73,21 @@ const rendered = computed<RenderedGroup[]>(() => {
   return groups.map(group => {
     const runtime = snapshot?.byLayout[group.layout]
     const cells = runtime?.windowCells ?? 0
-    // 尺寸口径与真窗口一致：同一格边长 + 同一倍率，只是这里整体等比缩放到卡片里。
-    const size = floatingWindowSize(group.layout, Math.max(cells, 1), cell)
+    // 尺寸口径与真窗口一致：按各模块需求算（四角逐模块竖向堆叠），同一格边长 + 同一倍率，只是整体等比缩放到卡片里。
+    const demandValues = Object.values(runtime?.demands ?? {}).map(demand => Math.max(1, demand))
+    const size = floatingWindowSize(group.layout, demandValues.length ? demandValues : [Math.max(cells, 1)], cell)
     const scale = Math.min(1, MAX_WIDTH / size.width, MAX_HEIGHT / size.height)
     // 缩放后画出来的窗口尺寸；色块尺寸由它按权重切出来。
     const drawnWidth = size.width * scale
     const drawnHeight = size.height * scale
-    const entries = Object.entries(runtime?.demands ?? {}).map(([id, demand]) => ({
-      id,
-      weight: Math.max(1, demand),
-    }))
+    const entries = Object.entries(runtime?.demands ?? {}).map(([id, demand]) => {
+      const weight = Math.max(1, demand)
+      return {
+        id,
+        // 四角逐个模块竖向堆叠：色块高度按它占几行；横条 / 竖条按需求（并排宽度 / 堆叠高度）。
+        weight: group.layout === 'corner' ? cellsGrid('corner', weight).rows : weight,
+      }
+    })
     const totalWeight = entries.reduce((sum, entry) => sum + entry.weight, 0) || 1
     const blocks = entries.map(entry => {
       // 分槽方向与宿主一致：横条左右并排，方形 / 四角 / 竖条上下堆叠。

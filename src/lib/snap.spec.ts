@@ -158,22 +158,36 @@ describe('snapToWorkArea', () => {
     })
   })
 
-  it('expands corner squares by ceil(sqrt(cells))', () => {
-    // cells=5 → side=3 → 240×240；左下角 y = 1040 - 240 = 800。
+  it('expands corner windows onto the step ladder', () => {
+    // cells=5 → 归档到 6 = 2行×3列 → 240×160；左下角 y = 1040 - 160 = 880。
     expect(
       snapToWorkArea({ x: 10, y: 970 }, windowSize, baseSize, workArea, { cells: 5 }),
     ).toEqual({
-      position: { x: 0, y: 800 },
-      size: { width: 240, height: 240 },
+      position: { x: 0, y: 880 },
+      size: { width: 240, height: 160 },
       docked: { left: true, top: false, right: false, bottom: true },
     })
-    // cells=8 → side 仍为 3。
+    // cells=8 → 归档到 9 = 3×3 → 240×240；右上角 x = 1920 - 240 = 1680。
     expect(
       snapToWorkArea({ x: 1828, y: 10 }, windowSize, baseSize, workArea, { cells: 8 }),
     ).toEqual({
       position: { x: 1680, y: 0 },
       size: { width: 240, height: 240 },
       docked: { left: false, top: true, right: true, bottom: false },
+    })
+  })
+
+  it('sizes corner windows from per-module demands (full-width rows)', () => {
+    // 三个 1×2 模块在四角各占一整行 → 3 行 × 2 列 = 160×240（base 80）；左下角 y = 1040 - 240 = 800。
+    expect(
+      snapToWorkArea({ x: 10, y: 970 }, windowSize, baseSize, workArea, {
+        cells: 6,
+        demandsFor: () => [2, 2, 2],
+      }),
+    ).toEqual({
+      position: { x: 0, y: 800 },
+      size: { width: 160, height: 240 },
+      docked: { left: true, top: false, right: false, bottom: true },
     })
   })
 })

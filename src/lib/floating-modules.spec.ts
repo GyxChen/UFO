@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ABS_MAX_CELLS,
   ABS_MIN_CELLS,
-  DEFAULT_WINDOW_CELLS,
   FLOATING_BASE_CELL_PX,
   MIN_CELL_PX,
 } from './floating-layout'
@@ -10,7 +9,6 @@ import {
   activateModules,
   allocatedCells,
   configCellPx,
-  defaultMaxCellsByLayout,
   enabledModuleDefinitions,
   isModuleEnabled,
   moduleCellShares,
@@ -26,12 +24,6 @@ const config: FloatingModuleConfig = {
     { id: 'agent-status', enabled: true, order: 0 },
     { id: 'future-mod', enabled: false, order: 1 },
   ],
-  max_cells_by_layout: {
-    square: 8,
-    corner: 8,
-    horizontal: 8,
-    vertical: 8,
-  },
   module_settings: {},
 }
 
@@ -141,11 +133,12 @@ describe('floating window cell aggregation', () => {
     expect(resolveWindowCells([6], 8)).toBe(6)
   })
 
-  it('floors the window at the default capacity and caps it at the layout max', () => {
-    expect(resolveWindowCells([], 8)).toBe(DEFAULT_WINDOW_CELLS)
-    expect(resolveWindowCells([0], 8)).toBe(DEFAULT_WINDOW_CELLS)
-    expect(resolveWindowCells([4], 3)).toBe(ABS_MIN_CELLS)
-    expect(resolveWindowCells([8, 8], 8)).toBe(ABS_MAX_CELLS)
+  it('floors the window at one cell and caps it at the layout max', () => {
+    expect(resolveWindowCells([], 8)).toBe(ABS_MIN_CELLS)
+    expect(resolveWindowCells([0], 8)).toBe(ABS_MIN_CELLS)
+    // 需求超过上限时夹到上限（配置上限 3 → 3，不再被抬到旧默认容量）。
+    expect(resolveWindowCells([4], 3)).toBe(3)
+    expect(resolveWindowCells([9, 9], 16)).toBe(ABS_MAX_CELLS)
   })
 
   it('sums the demands of peer modules', () => {
@@ -155,8 +148,9 @@ describe('floating window cell aggregation', () => {
   })
 
   it('treats non-finite or negative demands as one cell', () => {
-    expect(resolveWindowCells([Number.NaN, 3], 8)).toBe(DEFAULT_WINDOW_CELLS)
-    expect(resolveWindowCells([-5, -5, -5, -5], 8)).toBe(DEFAULT_WINDOW_CELLS)
+    // NaN 与负数都按 1 格算：NaN + 3 = 4、四个 -5 = 4。
+    expect(resolveWindowCells([Number.NaN, 3], 8)).toBe(4)
+    expect(resolveWindowCells([-5, -5, -5, -5], 8)).toBe(4)
   })
 
   it('derives integer shares that match the demands', () => {
@@ -173,27 +167,6 @@ describe('floating window cell aggregation', () => {
     expect(allocatedCells(4, moduleCellShares([8, 8, 8]), 2)).toBe(1)
     // 没有任何权重信息时退回「整个窗口都给它」。
     expect(allocatedCells(5, [], 0)).toBe(5)
-  })
-
-  it('defaultMaxCellsByLayout clamps out-of-range values', () => {
-    expect(defaultMaxCellsByLayout(0)).toEqual({
-      square: ABS_MIN_CELLS,
-      corner: ABS_MIN_CELLS,
-      horizontal: ABS_MIN_CELLS,
-      vertical: ABS_MIN_CELLS,
-    })
-    expect(defaultMaxCellsByLayout(99)).toEqual({
-      square: ABS_MAX_CELLS,
-      corner: ABS_MAX_CELLS,
-      horizontal: ABS_MAX_CELLS,
-      vertical: ABS_MAX_CELLS,
-    })
-    expect(defaultMaxCellsByLayout()).toEqual({
-      square: ABS_MAX_CELLS,
-      corner: ABS_MAX_CELLS,
-      horizontal: ABS_MAX_CELLS,
-      vertical: ABS_MAX_CELLS,
-    })
   })
 })
 

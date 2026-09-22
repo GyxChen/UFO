@@ -231,9 +231,14 @@ const moduleApi = inject(floatingModuleKey, null)
 | layout | 触发条件 | 形状 | 备注 |
 |---|---|---|---|
 | `square` | 未贴边 | 1×1 格（默认 45×45） | 与格子数无关，恒定；一格的边长可配（见 11.1 的 `cell_px`） |
-| `corner` | 贴四角 | 正方形，边长 = `ceil(√cells)` 格 | 空间比 `square` 宽裕，可显示更多 |
+| `corner` | 贴四角 | 各模块**竖向堆叠**，每个占满一整行：行数 = 各模块行数之和、列数 = 最宽模块的列数（`windowGrid`） | 空间比 `square` 宽裕；**单模块**仍是它自己的阶梯网格 1×1…3×3，**多模块**时每个至少占满一整行 |
 | `horizontal` | 贴上下边 | 横条，宽 = cells × 1 格 | **高度只有 1 格**，纵向极其紧张 |
 | `vertical` | 贴左右边 | 竖条，高 = cells × 1 格 | **宽度只有 1 格**，横向极其紧张 |
+
+> **四角的多模块堆叠**（写 `demand` / 适配 `corner` 前必读）：四角里宿主把各模块**上下堆叠**，每个模块占满一整行，**窗宽由最宽的模块决定**，其余模块哪怕只要 1 格也会被拉到同一宽度。举例：agent 在四角是 1×2、todo / weather 也各是 1×2，三模块整窗就是 **3 行 × 2 列（3×2）** —— 而不是把「需求之和 6」归档成 2×3 的方格。因此：
+> - 你的模块在四角**横向会和最宽的同伴一样宽**（可能比你 `demand` 需要的更宽）→ 横向用 grid `1fr` / 省略号铺满，别写死宽度；
+> - 每个模块**至少占一整行**（行高 = 一格）；`demand` 想要 2×2 / 3×3 的多行块也支持（占满连续的几行）；
+> - 窗口形状**不是**「总数开平方」→ 算自己那块的行列一律用 `cellsGrid(layout, cellBudget)`，别自己推整窗。
 
 **必须做与必须不做**：
 
@@ -334,7 +339,8 @@ export function clockDemand(layout: FloatingLayout): number {
 - ❌ 绝对不要读 `allocatedCells` 或宿主给的任何运行时值 —— 那会形成回路（窗口大小 ← 需求 ← 分配 ← 窗口大小），表现为尺寸抖动或死循环。
 - 返回值：正整数格数；`NaN` / `Infinity` / 小数会被 `moduleCellWeight` 归一成「至少 1 格的整数」。
 - 省略 `demand` = 恒占 1 格，这是大多数小部件的正解。
-- 需求之和决定窗口大小：`resolveWindowCells(demands, maxCellsFor(layout))`，夹在 `[4, 该形态上限]`。
+- 需求之和决定各模块**分到多少格**：`resolveWindowCells(demands, ABS_MAX_CELLS)`，夹在 `[1, 16]`。
+- 但**窗口的像素形状**另算（`windowGrid` / `floatingWindowSize`）：边条按个数精确取长度、方形未贴边恒 1 格、**四角逐模块竖向堆叠**成「行数之和 × 最宽列数」（见 5.2）；只有**单模块**的四角才把需求归档到阶梯 `{1,2,3,4,6,9,12,16}`。所以别用「总数开平方」推整窗形状。
 - 需求变大只影响「窗口能多大」，**不保证**你拿到这么多（见 5.3）。
 
 ### 6.3 什么时候该多要格子
@@ -417,7 +423,7 @@ export function clockSettings(config: FloatingModuleConfig | null): ClockSetting
 - 可滚动容器必须带 `scrollbar-gutter: stable`，滚动条出现时不得挤占内容宽度。
 - 反馈**不得**用 `window.alert` / `window.confirm`（项目装了 `tauri-plugin-prevent-default`，原生对话框会被拦）。一律走 `role="status"` 行内提示；删除类操作走两步确认。
 - 主窗口 `.main-window` 是唯一滚动容器（外壳与 html/body 不滚）。
-- **窗口级参数放「悬浮窗设置」页，组件级参数放组件自己的页**：判据是「换个组件它还成不成立」。一格多少像素、各形态格子上限都属于前者（见 11.1 的 `cell_px` / `max_cells_by_layout`），页面文案要写明这是整个悬浮窗的设置。
+- **窗口级参数放「悬浮窗设置」页，组件级参数放组件自己的页**：判据是「换个组件它还成不成立」。一格多少像素（`cell_px`）是前者（整个悬浮窗的设置）；格子上限已下放给各组件自己（判据：换个组件它就不成立），放组件自己的设置页。
 - 滑块（`ui/BaseSlider.vue`）**拖动时只改本地值、松手（change）才落盘**：拖一次会连发几十个 input 事件，每个都写盘 + 触发一次真窗口重新吸附是不可接受的。配套规矩是「预览跟着本地值走」——用户拖的时候必须看得见结果，否则滑块就是个盲操控件。
 - ⚠️ 测试里注意：`@vue/test-utils` 的 `setValue()` 会连发 input + change（等于「拖到底并松手」）。只想模拟拖动就手动改 `element.value` 再 `trigger('input')`。
 
@@ -576,10 +582,9 @@ Tauri 的窗口尺寸是**物理像素**，CSS 是逻辑像素。高分屏（sca
   "schema_version": 1,                 // 外壳线协议版本；**不得随手升**
   "revision": 7,                       // 单调递增，用于丢弃迟到 / 乱序的旧配置
   "modules": [{ "id": "agent-status", "enabled": true, "order": 0 }],
-  "max_cells_by_layout": { "square": 8, "corner": 8, "horizontal": 8, "vertical": 8 },
-  "cell_px": 45,                       // 一格多少像素（32–96）：窗口级尺寸基准，同级组件共享
+  "cell_px": 45,                       // 一格多少像素（32–96）：外壳唯一保留的窗口级尺寸参数
   "module_settings": {                 // ★ 组件的家：键 = 组件 id，值 = 组件自己解释的对象
-    "agent-status": { "completed_retention_ms": 30000, "token_unit": "tokens" }
+    "agent-status": { "max_cells": 9, "completed_retention_ms": 30000, "token_unit": "tokens" }
   }
 }
 ```
@@ -587,9 +592,8 @@ Tauri 的窗口尺寸是**物理像素**，CSS 是逻辑像素。高分屏（sca
 | 字段 | 归属 | 说明 |
 |---|---|---|
 | `modules[].enabled` / `.order` | 外壳 | 仅这两项与具体组件无关，故留外壳 |
-| `max_cells_by_layout` | 外壳 | 整个悬浮窗的尺寸参数，同级组件共享 |
-| `cell_px` | 外壳 | 一格边长（像素，32–96，默认 45）：同样是窗口级基准，同级组件共享。`#[serde(default)]` —— 旧配置缺字段按默认值走，**不得**为它升 `schema_version`。前端读它一律走 `configCellPx()` / `cellSizeOf()`，别直接取字段 |
-| `module_settings[<id>]` | **组件** | 外壳只按 id 原样存取，**不解释**任何字段 |
+| `cell_px` | 外壳 | 一格边长（像素，32–96，默认 45）：外壳**唯一**保留的窗口级尺寸基准。`#[serde(default)]` —— 旧配置缺字段按默认值走，**不得**为它升 `schema_version`。前端读它一律走 `configCellPx()` / `cellSizeOf()`，别直接取字段 |
+| `module_settings[<id>]` | **组件** | 外壳只按 id 原样存取，**不解释**任何字段。格子上限也在这里（如 Agent 的 `max_cells`，滑块 `{1,2,3,4,6,9}` 封顶 3×3）—— 它只限该组件自己的大小，整窗仍按各组件需求之和自动伸缩 |
 
 ### 11.2 写入链路（Rust）
 
@@ -812,7 +816,7 @@ npm run check                      # cargo check（快速编译闸门）
 
 ### 15.2 三形态人工核对（必做）
 
-在真机上把悬浮窗依次摆成：未贴边（方形）/ 贴上下边（横条）/ 贴左右边（竖条）/ 贴四角（大方块），逐个确认：
+在真机上把悬浮窗依次摆成：未贴边（方形）/ 贴上下边（横条）/ 贴左右边（竖条）/ 贴四角（各模块竖向堆叠成多行区块），逐个确认：
 
 - [ ] 内容不被裁切、不溢出窗口
 - [ ] 文字省略号正常，没有把相邻元素挤变形
@@ -888,15 +892,15 @@ npm run check                      # cargo check（快速编译闸门）
 |---|---|---|
 | 形态枚举 | `square` / `corner` / `horizontal` / `vertical` | `src/lib/floating-layout.ts` |
 | 默认窗口格数 | `DEFAULT_WINDOW_CELLS = 4` | 等于 2×2 或 4×1 |
-| 格子上限范围 | `ABS_MIN_CELLS = 4` / `ABS_MAX_CELLS = 8` | 用户可配，后端也会 clamp |
+| 格子数范围 | `ABS_MIN_CELLS = 1` / `ABS_MAX_CELLS = 16` | 绝对范围；单模块自己的上限更小（Agent 封顶 9）|
 | 单格像素（默认） | `FLOATING_BASE_CELL_PX = 45` | 与 floating 窗口初值一致（外部另留 1px 描边 + 2px 内边距） |
 | 单格像素范围 | `MIN_CELL_PX = 32` / `MAX_CELL_PX = 96` | 用户可在「悬浮窗设置」的滑块里调；`clampCellPx()` 与 Rust `validate()` 各 clamp 一次 |
 | 单格像素换算 | `cellSizeOf(px)` / `configCellPx(config)` | 前者包成 `{ width, height }`，后者从配置取（缺字段回落默认） |
 | 槽位容器 | `.floating-module-slot`（size 容器，`container-name: floating-slot`） | 组件用 `@container floating-slot (...)` 与 `cqh` / `cqw` 按槽位自适应（见 5.5） |
-| 方形 / 四角 / 横条 / 竖条尺寸 | `floatingWindowSize(layout, cells)` | 主窗预览与贴边共用同一口径 |
+| 方形 / 四角 / 横条 / 竖条尺寸 | `floatingWindowSize(layout, demands)` / `windowGrid(layout, demands)` | 传**各模块需求数组**（非单个总数）：四角逐模块竖向堆叠成 N 行 × 最宽列数；主窗预览与贴边共用同一口径 |
 | 悬停延迟 | `SHOW_DELAY_MS = 250`（`FloatingWindow.vue`） | 到点才发 `tooltip-hover` |
 | 提示窗默认尺寸 | 300×260（`tauri.conf.json`） | 组件可用 `tooltip.size` 覆盖 |
 | 事件名 | `ufo-floating-runtime` / `-request` / `ufo-open-module-settings` / `tooltip-hover` / `tooltip-interaction` / `floating-module-config` | `src/lib/floating-bridge.ts`、`src/lib/tooltip.ts` |
 | 窗口 label | `floating` / `main` / `tooltip` | 与 capability 的 `windows` 数组对应 |
-| 配置键 | `modules[].enabled|order`、`max_cells_by_layout`、`cell_px`、`module_settings[<id>]` | 外壳只解释前四项 |
+| 配置键 | `modules[].enabled|order`、`cell_px`、`module_settings[<id>]` | 外壳只解释前三项 |
 | 注释要求 | 每个方法写功能；接口 / type 描述字段；关键代码写清在干什么 | AGENTS.md |

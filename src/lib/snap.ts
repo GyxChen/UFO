@@ -1,4 +1,4 @@
-import { DEFAULT_WINDOW_CELLS, floatingWindowSize, layoutFromDocked } from './floating-layout'
+import { DEFAULT_WINDOW_CELLS, floatingWindowSize, layoutFromDocked, type FloatingLayout } from './floating-layout'
 
 export interface PhysicalPoint {
   x: number
@@ -17,8 +17,16 @@ export interface WorkArea {
 
 export interface SnapOptions {
   threshold?: number
-  /** 当前申请的格子数；默认等于悬浮窗默认容量。 */
+  /**
+   * 兜底格子数：没有 `demandsFor` 时按「单模块要这么多格」算贴边尺寸。
+   * 默认等于悬浮窗默认容量。
+   */
   cells?: number
+  /**
+   * 按贴边后的形态取各模块的格子需求。给了就优先用它算尺寸 —— 四角必须知道
+   * 「有哪些模块、各要几格」才能按模块数分行（只给总数会退化成方格，见 windowGrid）。
+   */
+  demandsFor?: (layout: FloatingLayout) => readonly number[]
 }
 
 export interface DockedEdges {
@@ -38,7 +46,7 @@ export interface SnapResult {
  * 将窗口外框吸附到最近的工作区边缘，并依据吸附到的边缘与格子数调整窗口尺寸：
  * - 上下贴边时沿该边展开为横条（宽 = base × cells）；
  * - 左右贴边时沿该边展开为竖条（高 = base × cells）；
- * - 角落贴边时保持正方形（边长倍率 = ceil(sqrt(cells))）；
+ * - 角落贴边时各模块竖向堆叠成 N 行 × 最宽模块列数（见 floating-layout 的 windowGrid）；
  * - 未命中阈值时吸附到距离最近的单条边缘；
  * - 贴边时依据吸附到的边缘恢复对应的窗口尺寸。
  * 返回吸附后的位置、尺寸以及各边缘是否贴边。
@@ -48,8 +56,9 @@ export function snapToWorkArea(
   windowSize: PhysicalSize,
   baseSize: PhysicalSize,
   workArea: WorkArea,
-  { threshold = 24, cells = DEFAULT_WINDOW_CELLS }: SnapOptions = {},
+  options: SnapOptions = {},
 ): SnapResult {
+  const { threshold = 24 } = options
   // 工作区可位于副屏，因此坐标不能假定从 (0, 0) 开始。
   const areaLeft = workArea.position.x
   const areaTop = workArea.position.y
@@ -97,7 +106,7 @@ export function snapToWorkArea(
     docked[nearest.edge] = true
   }
 
-  const size = dockedSize(baseSize, docked, cells)
+  const size = dockedSize(baseSize, docked, options)
 
   // 贴边后尺寸变化，需重新锚定位置使窗口仍紧贴对应边缘；
   // 未贴边的坐标轴也要依据新尺寸重新限制，避免展开后越出工作区。
@@ -124,10 +133,16 @@ export function snapToWorkArea(
 /**
  * 贴边后的窗口尺寸。
  * 口径统一在 `floatingWindowSize`（同一处也供主窗口的三形态预览使用）：
- * 角 / 方形按边长倍率、上下贴边横条、左右贴边竖条。
+ * 贴角按各模块需求竖向堆叠、方形 1 格、上下贴边横条、左右贴边竖条。
+ *
+ * 尺寸按**贴边后的形态**取对应的模块需求算（`demandsFor`）：四角要按模块数分行，
+ * 只有拿到该形态的需求才知道。没有 `demandsFor` 时退回按单个 `cells`（单模块）算。
  */
-function dockedSize(base: PhysicalSize, docked: DockedEdges, cells: number): PhysicalSize {
-  return floatingWindowSize(layoutFromDocked(docked), cells, {
+function dockedSize(base: PhysicalSize, docked: DockedEdges, options: SnapOptions): PhysicalSize {
+  const layout = layoutFromDocked(docked)
+  const demands = options.demandsFor?.(layout)
+  const cells = demands && demands.length > 0 ? demands : [options.cells ?? DEFAULT_WINDOW_CELLS]
+  return floatingWindowSize(layout, cells, {
     width: base.width,
     height: base.height,
   })

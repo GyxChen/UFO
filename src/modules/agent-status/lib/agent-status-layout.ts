@@ -1,33 +1,56 @@
-import { ABS_MAX_CELLS, DEFAULT_WINDOW_CELLS, cellsGrid, clampCells, type FloatingLayout } from '@/lib/floating-layout'
+import { ABS_MAX_CELLS, CELL_STEPS, cellsGrid, clampCells, snapToStep, type FloatingLayout } from '@/lib/floating-layout'
 
 /**
  * Agent 状态灯模块自己的布局模型：
- * 「会话数 + 形态」→ 上报给宿主的格子需求，以及把会话切成可见灯 + `+N` 溢出格。
- * 与模块无关的形态 / 格子换算在 `floating-layout`。
+ * 「形态 + 会话数」→ 上报给宿主的格子需求（容量），以及把会话切成可见灯 + `+N` 溢出格。
+ * 与模块无关的形态 / 格子换算（阶梯档位、网格行列）在 `floating-layout`。
  */
 
+/** 形态的地板：贴角最少 1×2（2 格，用户要的「最少 1×2」）；方形 / 边条可到 1 格。 */
+function layoutFloor(layout: FloatingLayout): number {
+  return layout === 'corner' ? 2 : 1
+}
+
 /**
- * 模块的格子需求：会话数不超过默认容量时保持默认尺寸；
- * 超过后按会话数放大，夹在 [默认, 该形态上限] 之间。
+ * 该形态的有效格子上限：把配置上限**向下**夹到最近的阶梯档位，封顶 9、且不低于形态地板。
+ *
+ * 这样窗口尺寸永远是合法档位（贴角才是 1×2…3×3 的网格）：配置里写 7 / 8 也归一到 6 / 9，
+ * 不会出现「8 格」这种没有对应形状的值把贴角撑成奇怪的比例。
  */
-export function windowCellsForSessions(sessionCount: number, layoutMax: number): number {
-  const max = clampCells(layoutMax, DEFAULT_WINDOW_CELLS, ABS_MAX_CELLS)
-  if (sessionCount <= DEFAULT_WINDOW_CELLS) return DEFAULT_WINDOW_CELLS
-  return clampCells(sessionCount, DEFAULT_WINDOW_CELLS, max)
+export function effectiveLayoutMax(layout: FloatingLayout, layoutMax: number): number {
+  const capped = clampCells(layoutMax, 1, ABS_MAX_CELLS)
+  let step = 1
+  for (const candidate of CELL_STEPS) {
+    if (candidate <= capped) step = candidate
+  }
+  return Math.max(step, layoutFloor(layout))
+}
+
+/**
+ * Agent 状态灯的格子需求（容量）：按形态把会话数归一到阶梯档位。
+ * - 边条（横条 / 竖条）：按会话个数**精确**取长度（用户要「实际显示按个数」），封顶有效上限；
+ * - 贴角：向上夹到阶梯档位，最少 1×2（2 格）；
+ * - 方形：向上夹到阶梯档位，可到 1×1。
+ *
+ * 纯函数：只读会话数与配置上限，**不读宿主分配了多少格**（读 `allocatedCells` 会形成尺寸回路）。
+ */
+export function agentStatusCapacity(layout: FloatingLayout, sessionCount: number, layoutMax: number): number {
+  const max = effectiveLayoutMax(layout, layoutMax)
+  const count = Number.isFinite(sessionCount) ? Math.max(0, Math.floor(sessionCount)) : 0
+  if (layout === 'horizontal' || layout === 'vertical') {
+    return clampCells(count, 1, max)
+  }
+  // 方形 / 贴角：先夹到 [地板, 上限]，再向上归一到阶梯档位（结果必 ≤ 上限，见 effectiveLayoutMax）。
+  return snapToStep(clampCells(count, layoutFloor(layout), max))
 }
 
 /**
  * 当前形态下分到的格子能放下几盏灯（含溢出格位）。
- * - 边条：一格一盏，等于分到的格子数；
- * - 方形/四角：等于网格 side²（5 格就是 3×3），溢出格能占满最后一格不会空着。
+ * 统一按网格行列乘积算：边条 = cells，方形 / 贴角 = 档位的 rows×cols。
  */
 export function indicatorCapacity(layout: FloatingLayout, cells: number = ABS_MAX_CELLS): number {
-  const budget = clampCells(cells, 1, ABS_MAX_CELLS)
-  if (layout === 'horizontal' || layout === 'vertical') {
-    return budget
-  }
-  const grid = cellsGrid(layout, budget)
-  return grid.cols * grid.rows
+  const grid = cellsGrid(layout, cells)
+  return grid.rows * grid.cols
 }
 
 /**
@@ -36,7 +59,7 @@ export function indicatorCapacity(layout: FloatingLayout, cells: number = ABS_MA
 export function partitionIndicatorSessions<T>(
   sessions: readonly T[],
   layout: FloatingLayout,
-  cells: number = DEFAULT_WINDOW_CELLS
+  cells: number = ABS_MAX_CELLS
 ): { visible: T[]; overflow: number } {
   const capacity = indicatorCapacity(layout, cells)
   if (sessions.length <= capacity) {

@@ -10,15 +10,13 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
 const SCHEMA_VERSION: u16 = 1;
-const MIN_CELLS: u8 = 4;
-const MAX_CELLS: u8 = 8;
 
 /// 一格边长的默认值（物理像素）：与 `tauri.conf.json` 里 floating 窗口的初值一致。
 /// 窗口启动瞬间就是这个尺寸，配置读出来之后再按 `cell_px` 重新吸附。
 const DEFAULT_CELL_PX: u16 = 45;
 /// 一格边长的可选下限（物理像素）：再小灯点与图标就糊成一团了。
 const MIN_CELL_PX: u16 = 32;
-/// 一格边长的可选上限（物理像素）：8 格的横条按它算最长 768px，再大就撑满半屏。
+/// 一格边长的可选上限（物理像素）：9 格的横条按它算最长 864px，再大就撑满半屏。
 const MAX_CELL_PX: u16 = 96;
 
 /// 缺省格边长（`#[serde(default = ...)]` 用）：旧配置文件里没有 `cell_px` 时回落它。
@@ -36,40 +34,6 @@ pub struct FloatingModuleEntry {
     pub id: String,
     pub enabled: bool,
     pub order: u16,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct MaxCellsByLayout {
-    pub square: u8,
-    pub corner: u8,
-    pub horizontal: u8,
-    pub vertical: u8,
-}
-
-impl MaxCellsByLayout {
-    fn filled(value: u8) -> Self {
-        let cells = value.clamp(MIN_CELLS, MAX_CELLS);
-        Self {
-            square: cells,
-            corner: cells,
-            horizontal: cells,
-            vertical: cells,
-        }
-    }
-
-    fn clamp_each(mut self) -> Self {
-        self.square = self.square.clamp(MIN_CELLS, MAX_CELLS);
-        self.corner = self.corner.clamp(MIN_CELLS, MAX_CELLS);
-        self.horizontal = self.horizontal.clamp(MIN_CELLS, MAX_CELLS);
-        self.vertical = self.vertical.clamp(MIN_CELLS, MAX_CELLS);
-        self
-    }
-}
-
-impl Default for MaxCellsByLayout {
-    fn default() -> Self {
-        Self::filled(MAX_CELLS)
-    }
 }
 
 /// 所有组件的配置块：键 = 组件 id，值 = 该组件自己解释的 JSON 对象。
@@ -101,9 +65,7 @@ pub struct FloatingModuleConfig {
     pub revision: u64,
     /// 组件的启用状态与排序（仅此两项与具体组件无关，故留在外壳）。
     pub modules: Vec<FloatingModuleEntry>,
-    /// 各形态的格子上限：那是**整个悬浮窗**的尺寸参数，同级组件共享，故留在外壳。
-    pub max_cells_by_layout: MaxCellsByLayout,
-    /// 一格的边长（物理像素）：同样**整个悬浮窗**的尺寸基准，同级组件共享，故留在外壳。
+    /// 一格的边长（物理像素）：**整个悬浮窗**的尺寸基准，同级组件共享，故留在外壳。
     ///
     /// `serde(default)` 是为了旧的配置文件 —— 缺字段时按 `DEFAULT_CELL_PX` 走，
     /// 因此**不得**为它递增 `SCHEMA_VERSION`。
@@ -114,17 +76,13 @@ pub struct FloatingModuleConfig {
     pub module_settings: ModuleSettingsMap,
 }
 
-/// 加载期过渡形态：接受旧的 `max_visible_sessions` 与旧的顶层组件字段，
-/// 写出时两者都不再保留（组件字段收进 `module_settings`）。
+/// 加载期过渡形态：接受旧的顶层组件字段，写出时收进 `module_settings`。
+/// （窗口格子数等尺寸参数现已下放到各组件自己的配置块，外壳不再持有。）
 #[derive(Debug, Deserialize)]
 struct FloatingModuleConfigWire {
     schema_version: u16,
     revision: u64,
     modules: Vec<FloatingModuleEntry>,
-    #[serde(default)]
-    max_cells_by_layout: Option<MaxCellsByLayout>,
-    #[serde(default)]
-    max_visible_sessions: Option<u8>,
     /// 一格边长；缺省（旧配置）时在 `into_config` 里补成默认值。
     #[serde(default)]
     cell_px: Option<u16>,
@@ -142,10 +100,6 @@ impl FloatingModuleConfigWire {
     ///
     /// 返回值第二项 = 是否有旧字段被认领，调用方据此决定要不要把清理后的配置写回磁盘。
     fn into_config(self, migrations: &[ModuleSettingsMigration]) -> (FloatingModuleConfig, bool) {
-        let max_cells_by_layout = match self.max_cells_by_layout {
-            Some(cells) => cells.clamp_each(),
-            None => MaxCellsByLayout::filled(self.max_visible_sessions.unwrap_or(MAX_CELLS)),
-        };
         let cell_px = clamp_cell_px(self.cell_px.unwrap_or(DEFAULT_CELL_PX));
         let mut module_settings = self.module_settings;
         let mut adopted = false;
@@ -158,7 +112,6 @@ impl FloatingModuleConfigWire {
                 schema_version: self.schema_version,
                 revision: self.revision,
                 modules: self.modules,
-                max_cells_by_layout,
                 cell_px,
                 module_settings,
             },
@@ -175,7 +128,6 @@ impl Default for FloatingModuleConfig {
             schema_version: SCHEMA_VERSION,
             revision: 1,
             modules: Vec::new(),
-            max_cells_by_layout: MaxCellsByLayout::default(),
             cell_px: DEFAULT_CELL_PX,
             module_settings: ModuleSettingsMap::new(),
         }
@@ -188,7 +140,6 @@ impl FloatingModuleConfig {
         if self.schema_version != SCHEMA_VERSION {
             return Err("unsupported module config schema".to_string());
         }
-        self.max_cells_by_layout = self.max_cells_by_layout.clamp_each();
         self.cell_px = clamp_cell_px(self.cell_px);
         for module in &self.modules {
             if module.id.len() > 64 || module.id.contains(['/', '\\']) {
@@ -324,12 +275,6 @@ mod tests {
     }
 
     #[test]
-    fn default_max_cells_are_eight() {
-        let config = FloatingModuleConfig::default();
-        assert_eq!(config.max_cells_by_layout, MaxCellsByLayout::filled(MAX_CELLS));
-    }
-
-    #[test]
     fn default_cell_size_matches_the_window_initial_size() {
         // 默认格边长就是 tauri.conf.json 里 floating 的 45×45 初值。
         let config = FloatingModuleConfig::default();
@@ -370,64 +315,6 @@ mod tests {
         let wire: FloatingModuleConfigWire = serde_json::from_str(&json).unwrap();
         let (restored, _) = wire.into_config(&[]);
         assert_eq!(restored.cell_px, 64);
-    }
-
-    #[test]
-    fn migrates_legacy_max_visible_sessions() {
-        let json = r#"{
-            "schema_version": 1,
-            "revision": 2,
-            "modules": [{"id":"stub","enabled":true,"order":0}],
-            "max_visible_sessions": 5
-        }"#;
-        let wire: FloatingModuleConfigWire = serde_json::from_str(json).unwrap();
-        let (config, _) = wire.into_config(&[]);
-        let config = config.validate().unwrap();
-        assert_eq!(config.max_cells_by_layout, MaxCellsByLayout::filled(5));
-    }
-
-    #[test]
-    fn prefers_max_cells_by_layout_over_legacy_field() {
-        let json = r#"{
-            "schema_version": 1,
-            "revision": 2,
-            "modules": [{"id":"stub","enabled":true,"order":0}],
-            "max_visible_sessions": 5,
-            "max_cells_by_layout": {
-                "square": 4,
-                "corner": 6,
-                "horizontal": 8,
-                "vertical": 7
-            }
-        }"#;
-        let wire: FloatingModuleConfigWire = serde_json::from_str(json).unwrap();
-        let (config, _) = wire.into_config(&[]);
-        let config = config.validate().unwrap();
-        assert_eq!(
-            config.max_cells_by_layout,
-            MaxCellsByLayout {
-                square: 4,
-                corner: 6,
-                horizontal: 8,
-                vertical: 7,
-            }
-        );
-    }
-
-    #[test]
-    fn validate_clamps_max_cells_by_layout() {
-        let mut config = FloatingModuleConfig::default();
-        config.max_cells_by_layout = MaxCellsByLayout {
-            square: 0,
-            corner: 255,
-            horizontal: 3,
-            vertical: 6,
-        };
-        let validated = config.validate().unwrap();
-        assert_eq!(validated.max_cells_by_layout.square, MIN_CELLS);
-        assert_eq!(validated.max_cells_by_layout.corner, MAX_CELLS);
-        assert_eq!(validated.max_cells_by_layout.horizontal, MIN_CELLS);
-        assert_eq!(validated.max_cells_by_layout.vertical, 6);
     }
 
     #[test]
@@ -545,6 +432,6 @@ mod tests {
         let config = state.snapshot();
         assert_eq!(config.schema_version, SCHEMA_VERSION);
         assert!(config.modules.is_empty());
-        assert_eq!(config.max_cells_by_layout, MaxCellsByLayout::default());
+        assert_eq!(config.cell_px, DEFAULT_CELL_PX);
     }
 }

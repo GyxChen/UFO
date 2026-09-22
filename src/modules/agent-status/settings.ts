@@ -7,6 +7,7 @@
  * Rust 侧的对应实现是 `src-tauri/src/modules/agent_status/settings.rs`，两边口径必须一致。
  */
 import { invoke } from '@tauri-apps/api/core'
+import { ABS_MIN_CELLS } from '@/lib/floating-layout'
 import type { FloatingModuleConfig } from '@/lib/floating-modules'
 
 /** 本组件在外壳配置里的键（`module_settings` 的键，也是注册表里的模块 id）。 */
@@ -41,6 +42,15 @@ export const DEFAULT_RUNNING_TIMEOUT_SECONDS = 60
 export const MIN_RUNNING_TIMEOUT_SECONDS = 60
 export const MAX_RUNNING_TIMEOUT_SECONDS = 60 * 60
 
+/**
+ * 本模块可选的格子上限档位（主窗口「窗口格子」滑块用）：单模块最多 3×3 = 9。
+ * ⚠️ 整窗还能因同级组件叠加而长到更大（见 `@/lib/floating-layout` 的 `CELL_STEPS`，到 4×4 = 16），
+ * 但那些更大档位是给「一个模块吃满 3×3 再叠加别的组件」的整窗预留的，不暴露给本模块的滑块。
+ */
+export const AGENT_MAX_CELL_STEPS: readonly number[] = [1, 2, 3, 4, 6, 9]
+/** 本模块格子上限的最大值：3×3 = 9。 */
+export const MAX_AGENT_CELLS = 9
+
 /** 本组件自己解释的配置（时间单位与后端一致，都是毫秒）。 */
 export interface AgentStatusSettings {
   /** 一轮执行完成后绿灯保留多久（毫秒）。 */
@@ -51,6 +61,11 @@ export interface AgentStatusSettings {
   token_unit: TokenUnit
   /** 选中的代理解析器 id；`none` = 不解析。 */
   proxy_resolver: string
+  /**
+   * 本模块最多长到几格（主窗口「窗口格子」滑块选的档位 {1,2,3,4,6,9}，封顶 3×3 = 9）。
+   * ⚠️ 只限制**本模块**的需求上限，不影响其它组件 —— 窗口仍按各组件需求之和（可超过 9）自动伸缩。
+   */
+  max_cells: number
 }
 
 /** 缺配置时的默认值（与 Rust `AgentStatusSettings::default` 一致）。 */
@@ -59,10 +74,17 @@ export const DEFAULT_AGENT_STATUS_SETTINGS: AgentStatusSettings = {
   running_timeout_ms: DEFAULT_RUNNING_TIMEOUT_SECONDS * 1000,
   token_unit: DEFAULT_TOKEN_UNIT,
   proxy_resolver: NONE_PROXY_RESOLVER,
+  max_cells: MAX_AGENT_CELLS,
 }
 
 /** 把任意输入夹进 [min, max] 的整数毫秒；非有限值回落 `fallback`。 */
 function clampMs(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+/** 把任意输入夹进 [min, max] 的整数；非有限值回落 `fallback`（格子数这类通用整数用）。 */
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, Math.round(value)))
 }
@@ -92,6 +114,7 @@ export function agentStatusSettings(config: FloatingModuleConfig | null): AgentS
     ),
     token_unit: raw.token_unit === 'm_tokens' ? 'm_tokens' : DEFAULT_TOKEN_UNIT,
     proxy_resolver: proxyResolver || NONE_PROXY_RESOLVER,
+    max_cells: clampInt(raw.max_cells, ABS_MIN_CELLS, MAX_AGENT_CELLS, defaults.max_cells),
   }
 }
 

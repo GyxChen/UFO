@@ -12,7 +12,6 @@ describe('weatherSettings', () => {
       schema_version: 1,
       revision: 1,
       modules: [],
-      max_cells_by_layout: { square: 4, corner: 4, horizontal: 4, vertical: 4 },
       module_settings: {
         weather: {
           has_key: true,
@@ -39,7 +38,6 @@ describe('weatherSettings', () => {
       schema_version: 1,
       revision: 1,
       modules: [],
-      max_cells_by_layout: { square: 4, corner: 4, horizontal: 4, vertical: 4 },
       module_settings: {
         weather: {
           refresh_interval_min: 120,

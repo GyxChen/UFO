@@ -9,17 +9,18 @@
  * 左卡的字段是本组件自己的配置（`../settings` 读写外层的 `module_settings['agent-status']`，字段名不经过外壳）；
  * 右卡的格子上限是**整个悬浮窗**的参数，同级组件共享，因此仍由外壳 store 持有。
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import type { FloatingLayout } from '@/lib/floating-layout'
-import type { MaxCellsByLayout } from '@/lib/floating-modules'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSegmentedControl from '@/components/ui/BaseSegmentedControl.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
+import BaseSlider from '@/components/ui/BaseSlider.vue'
 import SettingsField from '@/components/ui/SettingsField.vue'
 import {
+  AGENT_MAX_CELL_STEPS,
   AGENT_STATUS_MODULE_ID,
+  MAX_AGENT_CELLS,
   MAX_RETENTION_SECONDS,
   MAX_RUNNING_TIMEOUT_SECONDS,
   MIN_RETENTION_SECONDS,
@@ -40,7 +41,6 @@ const settings = computed(() => agentStatusSettings(modules.config))
 
 const retentionInput = ref(toSeconds(settings.value.completed_retention_ms))
 const runningTimeoutInput = ref(toSeconds(settings.value.running_timeout_ms))
-const maxCellsInput = reactive<MaxCellsByLayout>({ ...modules.maxCellsByLayout })
 const tokenUnitInput = ref<TokenUnit>(settings.value.token_unit)
 const proxyResolverInput = ref(settings.value.proxy_resolver)
 
@@ -66,13 +66,26 @@ const proxyResolverOptions = computed(() =>
   resolvers.value.map(option => ({ value: option.id, label: option.label }))
 )
 
-/** 各形态格子上限的输入项（顺序固定：方形 / 四角 / 横条 / 竖条）。 */
-const layoutLabels: { key: FloatingLayout; label: string }[] = [
-  { key: 'square', label: '方形上限' },
-  { key: 'corner', label: '四角上限' },
-  { key: 'horizontal', label: '横条上限' },
-  { key: 'vertical', label: '竖条上限' },
-]
+/**
+ * 窗口格子上限：滑块按「档位下标」0..5 驱动，映射到本模块的阶梯 `AGENT_MAX_CELL_STEPS` = 1,2,3,4,6,9。
+ * 配置里存的是格子数，但可能是迁移来的非档位值（如 8）—— 下标取「不大于它的最大档位」，
+ * 与生效上限（`effectiveLayoutMax` 向下归档）对齐，滑块因此永远落在合法档位上。
+ */
+const maxCellsIndex = ref(indexForCells(settings.value.max_cells))
+const currentMaxCells = computed(() => AGENT_MAX_CELL_STEPS[maxCellsIndex.value] ?? MAX_AGENT_CELLS)
+
+/** 贴角网格标注：档位 → 行×列，放在取值旁帮用户理解这个数撑多大。 */
+const cornerShapes: Record<number, string> = { 1: '1×1', 2: '1×2', 3: '1×3', 4: '2×2', 6: '2×3', 9: '3×3' }
+const currentCornerShape = computed(() => cornerShapes[currentMaxCells.value] ?? '')
+
+/** 取某个格子数对应的滑块下标（不大于它的最大档位；越界夹到两端）。 */
+function indexForCells(value: number): number {
+  let index = 0
+  for (let i = 0; i < AGENT_MAX_CELL_STEPS.length; i += 1) {
+    if ((AGENT_MAX_CELL_STEPS[i] ?? 0) <= value) index = i
+  }
+  return index
+}
 
 // 配置变化（别的窗口改了 / 重连后拿到配置）时同步回输入框，避免显示过期值。
 watch(
@@ -82,10 +95,10 @@ watch(
     runningTimeoutInput.value = toSeconds(value.running_timeout_ms)
     tokenUnitInput.value = value.token_unit
     proxyResolverInput.value = value.proxy_resolver
+    maxCellsIndex.value = indexForCells(value.max_cells)
   },
   { immediate: true }
 )
-watch(() => modules.maxCellsByLayout, value => { Object.assign(maxCellsInput, value) }, { immediate: true, deep: true })
 
 /** 更新完成灯保留时长（输入是秒，配置里存毫秒）。 */
 async function updateRetention() {
@@ -109,12 +122,17 @@ async function updateRunningTimeout() {
   }
 }
 
-/** 更新指定形态的格子上限；失败时把四个输入框都拉回 store 里的值。 */
-async function updateMaxCells(layout: FloatingLayout) {
+/** 滑块松手后落盘：把档位下标映射回格子数，写进本组件自己的配置块；失败 / 没变时退回已知值。 */
+async function updateMaxCells() {
+  const next = currentMaxCells.value
+  if (next === settings.value.max_cells) {
+    maxCellsIndex.value = indexForCells(settings.value.max_cells)
+    return
+  }
   try {
-    await modules.updateMaxCellsByLayout({ [layout]: maxCellsInput[layout] })
+    await modules.updateModuleSettings(AGENT_STATUS_MODULE_ID, { max_cells: next })
   } catch {
-    Object.assign(maxCellsInput, modules.maxCellsByLayout)
+    maxCellsIndex.value = indexForCells(settings.value.max_cells)
   }
 }
 
@@ -138,7 +156,7 @@ async function updateProxyResolver() {
 
 /** 把输入框恢复成当前配置值（放弃未提交的编辑）。 */
 function resetInputs() {
-  Object.assign(maxCellsInput, modules.maxCellsByLayout)
+  maxCellsIndex.value = indexForCells(settings.value.max_cells)
   retentionInput.value = toSeconds(settings.value.completed_retention_ms)
   runningTimeoutInput.value = toSeconds(settings.value.running_timeout_ms)
   tokenUnitInput.value = settings.value.token_unit
@@ -224,32 +242,31 @@ async function saveTimeouts() {
     <section class="ufo-card module-settings" aria-labelledby="agent-status-cells-title">
       <div class="ufo-card__header">
         <h2 id="agent-status-cells-title" class="ufo-card__title">窗口格子</h2>
-        <span class="ufo-card__hint">4 – 8 格</span>
+        <span class="ufo-card__hint">最大 {{ currentMaxCells }} 格</span>
       </div>
 
       <p class="ufo-card__hint">
-        状态灯越多窗口越大，这里限制各形态最多长到几格；超出的会话会收进最后一格的 +N。
-        上限是整个悬浮窗的（同级组件共享），不只影响状态灯。
+        窗口按会话数在阶梯 1 / 2 / 3 / 4 / 6 / 9 里自动伸缩：横条、竖条按个数精确显示，贴角对应 1×1…3×3（最少 1×2）。
+        这里设的是本模块的上限，超出的会话会收进最后一格的 +N；只影响状态灯，不改动其它组件。
       </p>
 
-      <div class="module-settings__caps" aria-label="各形态格子上限">
-        <SettingsField
-          v-for="item in layoutLabels"
-          :key="item.key"
-          :label="item.label"
-          :label-for="`max-cells-${item.key}`"
-        >
-          <BaseInput
-            v-model.number="maxCellsInput[item.key]"
-            :id="`max-cells-${item.key}`"
-            type="number"
-            min="4"
-            max="8"
-            step="1"
-            @change="updateMaxCells(item.key)"
+      <SettingsField label="最大格子数" label-id="max-cells-label">
+        <div class="module-settings__cap-row">
+          <BaseSlider
+            v-model="maxCellsIndex"
+            class="flex-1"
+            :min="0"
+            :max="AGENT_MAX_CELL_STEPS.length - 1"
+            :step="1"
+            aria-labelledby="max-cells-label"
+            :aria-value-text="`${currentMaxCells} 格`"
+            @change="updateMaxCells"
           />
-        </SettingsField>
-      </div>
+          <span class="module-settings__cap-value">
+            {{ currentMaxCells }} 格<span v-if="currentCornerShape"> · 贴角 {{ currentCornerShape }}</span>
+          </span>
+        </div>
+      </SettingsField>
     </section>
   </div>
 

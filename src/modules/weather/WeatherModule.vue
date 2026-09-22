@@ -64,22 +64,8 @@ function handlePointerLeave(): void {
       <span class="weather-temp">{{ Math.round(snapshot.temp) }}°</span>
     </template>
 
-    <!-- 2. 四角形态 (corner): 放大方形，图文更饱满 -->
-    <template v-else-if="props.layoutMode === 'corner'">
-      <div class="weather-top">
-        <component :is="weatherIcon" class="weather-icon" aria-hidden="true" />
-        <span class="weather-text">{{ snapshot.text }}</span>
-      </div>
-      <div class="weather-bottom">
-        <span class="weather-temp">{{ Math.round(snapshot.temp) }}°C</span>
-        <span class="weather-loc">
-          {{ snapshot.location_name.split('-').pop() }}
-        </span>
-      </div>
-    </template>
-
-    <!-- 3. 横条形态 (horizontal): 左右两格分栏 -->
-    <template v-else-if="props.layoutMode === 'horizontal'">
+    <!-- 贴角 / 横条：都是 1×2 宽条（贴角现在按阶梯恒为 1×2，与横条同尺寸），左右两格分栏 -->
+    <template v-else-if="props.layoutMode === 'corner' || props.layoutMode === 'horizontal'">
       <div class="weather-col-left">
         <component :is="weatherIcon" class="weather-icon" aria-hidden="true" />
         <span class="weather-text">{{ snapshot.text }}</span>

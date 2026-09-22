@@ -19,7 +19,6 @@ const config: FloatingModuleConfig = {
   schema_version: 1,
   revision: 5,
   modules: [{ id: 'agent-status', enabled: true, order: 0 }],
-  max_cells_by_layout: { square: 8, corner: 8, horizontal: 8, vertical: 8 },
   // 本组件自己的配置块（外壳只按 id 存，不解释内容）。
   module_settings: { 'agent-status': { completed_retention_ms: 30_000, running_timeout_ms: 60_000 } },
 }

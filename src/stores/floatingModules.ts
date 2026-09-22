@@ -1,17 +1,14 @@
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { defineStore } from 'pinia'
-import { ABS_MAX_CELLS, ABS_MIN_CELLS, clampCellPx } from '@/lib/floating-layout'
+import { clampCellPx } from '@/lib/floating-layout'
 import { retryOnStartupRace } from '@/lib/startup-retry'
 import {
   applyModuleOrder,
   configCellPx,
-  defaultMaxCellsByLayout,
   isModuleEnabled,
-  type FloatingLayout,
   type FloatingModuleConfig,
   type FloatingRuntimeSnapshot,
-  type MaxCellsByLayout,
 } from '@/lib/floating-modules'
 import {
   FLOATING_RUNTIME_EVENT,
@@ -41,13 +38,8 @@ const fallbackConfig: FloatingModuleConfig = {
   // 兜底配置不列任何模块：启用状态一律回落到定义里的 defaultEnabled，
   // 外壳不点名具体模块（后端配置到达后立刻被 applyConfig 覆盖）。
   modules: [],
-  max_cells_by_layout: defaultMaxCellsByLayout(),
   // 也不预置任何组件配置块：组件读不到自己的键就回落自己的默认值。
   module_settings: {},
-}
-
-function clampLayoutMax(value: number): number {
-  return Math.min(Math.max(Math.floor(value), ABS_MIN_CELLS), ABS_MAX_CELLS)
 }
 
 export const useFloatingModulesStore = defineStore('floating-modules', {
@@ -69,7 +61,6 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
       state =>
       (id: string, defaultEnabled = false): boolean =>
         isModuleEnabled(state.config, id, defaultEnabled),
-    maxCellsByLayout: (state): MaxCellsByLayout => state.config?.max_cells_by_layout ?? defaultMaxCellsByLayout(),
     /** 配置里的一格边长（物理像素）；没配过回落默认 45（见 `configCellPx`）。 */
     cellPx: (state): number => configCellPx(state.config),
     /**
@@ -89,10 +80,6 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
   },
 
   actions: {
-    maxCellsFor(layout: FloatingLayout): number {
-      return this.maxCellsByLayout[layout] ?? ABS_MAX_CELLS
-    },
-
     /** 记录悬浮窗广播的运行时快照（主窗口预览 / 徽标用）。 */
     applyRuntime(snapshot: FloatingRuntimeSnapshot) {
       this.runtime = snapshot
@@ -196,24 +183,6 @@ export const useFloatingModulesStore = defineStore('floating-modules', {
         )
       } catch (error) {
         console.warn(`failed to update module settings for ${id}`, error)
-        throw error
-      }
-    },
-
-    async updateMaxCellsByLayout(partial: Partial<MaxCellsByLayout>) {
-      const current = this.config ?? fallbackConfig
-      const next: MaxCellsByLayout = {
-        ...current.max_cells_by_layout,
-        ...Object.fromEntries(Object.entries(partial).map(([key, value]) => [key, clampLayoutMax(value as number)])),
-      } as MaxCellsByLayout
-      try {
-        this.applyConfig(
-          await invoke<FloatingModuleConfig>('set_floating_module_config', {
-            config: { ...current, max_cells_by_layout: next },
-          })
-        )
-      } catch (error) {
-        console.warn('failed to update max cells by layout', error)
         throw error
       }
     },

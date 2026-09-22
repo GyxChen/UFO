@@ -23,7 +23,6 @@ function backendConfig(): FloatingModuleConfig {
     schema_version: 1,
     revision: 7,
     modules: [{ id: 'stub-module', enabled: true, order: 0 }],
-    max_cells_by_layout: { square: 8, corner: 8, horizontal: 8, vertical: 8 },
     module_settings: {},
   }
 }

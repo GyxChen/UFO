@@ -17,7 +17,6 @@ function configWith(block: unknown): FloatingModuleConfig {
     schema_version: 1,
     revision: 1,
     modules: [],
-    max_cells_by_layout: { square: 8, corner: 8, horizontal: 8, vertical: 8 },
     module_settings: { [AGENT_STATUS_MODULE_ID]: block },
   }
 }
@@ -37,6 +36,7 @@ describe('agentStatusSettings', () => {
           running_timeout_ms: 120_000,
           token_unit: 'm_tokens',
           proxy_resolver: 'cc-switch',
+          max_cells: 6,
         })
       )
     ).toEqual({
@@ -44,6 +44,7 @@ describe('agentStatusSettings', () => {
       running_timeout_ms: 120_000,
       token_unit: 'm_tokens',
       proxy_resolver: 'cc-switch',
+      max_cells: 6,
     })
   })
 

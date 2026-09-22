@@ -3,7 +3,6 @@ import type { FloatingHoverTarget } from '@/lib/floating-module-context'
 import {
   ABS_MAX_CELLS,
   ABS_MIN_CELLS,
-  DEFAULT_WINDOW_CELLS,
   FLOATING_BASE_CELL_PX,
   clampCellPx,
   clampCells,
@@ -162,20 +161,10 @@ export function activateModules(definitions: readonly FloatingModuleDefinition[]
 /** 四种形态的固定顺序；遍历形态（预览 / 汇总）时用它，避免各处各写一遍。 */
 export const FLOATING_LAYOUTS: readonly FloatingLayout[] = ['square', 'corner', 'horizontal', 'vertical']
 
-/** 各贴边形态的格子上限（4..=8，用户可配）。 */
-export interface MaxCellsByLayout {
-  square: number
-  corner: number
-  horizontal: number
-  vertical: number
-}
-
 export interface FloatingModuleConfig {
   schema_version: number
   revision: number
   modules: FloatingModuleConfigEntry[]
-  /** 各形态的格子上限；那是整个悬浮窗的尺寸参数，同级组件共享。 */
-  max_cells_by_layout: MaxCellsByLayout
   /**
    * 一格的边长（物理像素）：整个悬浮窗的尺寸基准，同级组件共享，因此由外壳解释。
    *
@@ -192,20 +181,9 @@ export interface FloatingModuleConfig {
   module_settings: Record<string, unknown>
 }
 
-/** 四形态同值的格子上限；非法取值夹到 [ABS_MIN_CELLS, ABS_MAX_CELLS]。 */
-export function defaultMaxCellsByLayout(value: number = ABS_MAX_CELLS): MaxCellsByLayout {
-  const cells = clampCells(value, ABS_MIN_CELLS, ABS_MAX_CELLS)
-  return {
-    square: cells,
-    corner: cells,
-    horizontal: cells,
-    vertical: cells,
-  }
-}
-
 /**
  * 配置里的一格边长（物理像素）；没配过或取值非法时回落到 `FLOATING_BASE_CELL_PX`。
- * 与 `defaultMaxCellsByLayout` 同一条口径：外壳只在这里把配置翻译成能用的数。
+ * 外壳只在这里把配置翻译成能用的数。
  */
 export function configCellPx(config: FloatingModuleConfig | null): number {
   return clampCellPx(config?.cell_px ?? FLOATING_BASE_CELL_PX)
@@ -225,13 +203,14 @@ export function moduleDemand(definition: FloatingModuleDefinition, layout: Float
  * 汇总各模块的格子需求 → 悬浮窗应采用的格子数。
  *
  * 各模块同级共享同一个窗口，所以需求相加：横条按宽度、竖条按高度、方形/四角按网格面积。
- * 结果夹在 [默认格子数, 该形态上限]；到顶后窗口不再变大，各模块按需求比例等分收缩
+ * 结果夹在 [1, 该形态上限]；到顶后窗口不再变大，各模块按需求比例等分收缩
  * （模块要自行处理「分到的比需求的少」，如退化成「+N」溢出格）。
  */
 export function resolveWindowCells(demands: readonly number[], layoutMax: number): number {
   const max = clampCells(layoutMax, ABS_MIN_CELLS, ABS_MAX_CELLS)
   const total = demands.reduce((sum, demand) => sum + moduleCellWeight(demand), 0)
-  return clampCells(total, DEFAULT_WINDOW_CELLS, max)
+  // 地板用 ABS_MIN_CELLS(1) 而非默认容量：边条要能按会话个数缩到 1 格（用户要「按个数」）。
+  return clampCells(total, ABS_MIN_CELLS, max)
 }
 
 /** 各模块的空间权重（与需求等比的整数），供宿主用 grid 的 fr 单位分槽。 */

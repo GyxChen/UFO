@@ -7,7 +7,6 @@ function configWith(block: Record<string, unknown>) {
     schema_version: 1,
     revision: 1,
     modules: [],
-    max_cells_by_layout: { square: 4, corner: 4, horizontal: 4, vertical: 4 },
     module_settings: { todo: block },
   }
 }

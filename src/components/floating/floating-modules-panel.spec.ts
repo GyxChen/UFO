@@ -29,7 +29,6 @@ function backendConfig(cellPx?: number): FloatingModuleConfig {
     schema_version: 1,
     revision: 6,
     modules: [{ id: 'stub-module', enabled: true, order: 0 }],
-    max_cells_by_layout: { square: 6, corner: 6, horizontal: 8, vertical: 8 },
     ...(cellPx === undefined ? {} : { cell_px: cellPx }),
     module_settings: { 'other-module': { untouched: true } },
   }
@@ -114,7 +113,6 @@ describe('FloatingModulesPanel · 格子大小', () => {
     await flushPromises()
 
     expect(saved?.cell_px).toBe(64)
-    expect(saved?.max_cells_by_layout).toEqual({ square: 6, corner: 6, horizontal: 8, vertical: 8 })
     expect(saved?.module_settings['other-module']).toEqual({ untouched: true })
     expect(saved?.modules).toEqual([{ id: 'stub-module', enabled: true, order: 0 }])
   })
