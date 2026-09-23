@@ -4,6 +4,7 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import { FLOATING_MODULE_DEFINITIONS } from './modules'
 import { activateModules } from './lib/floating-modules'
 import { useFloatingModulesStore } from './stores/floatingModules'
+import { useThemeStore } from './stores/theme'
 import FloatingWindow from './components/floating/FloatingWindow.vue'
 import MainWindow from './components/MainWindow.vue'
 import TooltipWindow from './components/TooltipWindow.vue'
@@ -20,6 +21,8 @@ const isFloatingWindow = windowLabel === 'floating'
 const isTooltipWindow = windowLabel === 'tooltip'
 // 悬浮窗配置（组件开关 / 上限）是窗口级数据，三个窗口都读，属于外壳自己的 store。
 const floatingModules = useFloatingModulesStore()
+// 界面主题同样是窗口级数据：三个窗口都要跟同一份取值（见 stores/theme.ts）。
+const theme = useThemeStore()
 
 // 原生透明窗口要求 html/body/#app 也透明；按窗口类型打标记给 CSS 用。
 if (isFloatingWindow) {
@@ -35,6 +38,8 @@ let stopModules: (() => void) | undefined
 
 onMounted(() => {
   void floatingModules.start()
+  // 主题：首帧已由 main.ts 的 hydrate() 落地，这里只挂上跟随其它窗口的广播。
+  void theme.start()
   // 模块自己决定要订阅什么（提示窗可能要用其中某几路数据），外壳不参与。
   stopModules = activateModules(FLOATING_MODULE_DEFINITIONS)
 })
@@ -43,6 +48,7 @@ onBeforeUnmount(() => {
   stopModules?.()
   stopModules = undefined
   floatingModules.stop()
+  theme.stop()
 })
 </script>
 

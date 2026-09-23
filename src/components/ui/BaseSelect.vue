@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
 }
 
 .base-select__trigger:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.24);
+  border-color: var(--ufo-border-strong);
   background: color-mix(in srgb, var(--ufo-input) 96%, white 4%);
 }
 
@@ -323,7 +323,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--ufo-overlay-raised);
   color: var(--ufo-muted);
   transition:
     background-color 150ms ease-out,
@@ -339,7 +339,7 @@ onBeforeUnmount(() => {
 .base-select__trigger:hover .base-select__chevron,
 .base-select--open .base-select__chevron {
   background: var(--ufo-accent-soft);
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
 }
 
 .base-select--open .base-select__chevron {
@@ -392,12 +392,12 @@ onBeforeUnmount(() => {
 
 .base-select__option:hover,
 .base-select__option--active {
-  background: rgba(255, 255, 255, 0.055);
+  background: var(--ufo-overlay-raised);
 }
 
 .base-select__option--selected {
   background: var(--ufo-accent-soft);
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
   font-weight: 600;
 }
 

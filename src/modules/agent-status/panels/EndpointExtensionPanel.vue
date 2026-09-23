@@ -138,7 +138,7 @@ function onAdd() {
             @click="onRemove(profile)"
           >
             <span v-if="pendingRemoval === profile.id" class="ep-list__remove-text">确认</span>
-            <img v-else :src="closeIcon" alt="" aria-hidden="true" />
+            <img v-else :src="closeIcon" alt="" class="ufo-mono-icon" aria-hidden="true" />
           </button>
         </li>
       </ul>

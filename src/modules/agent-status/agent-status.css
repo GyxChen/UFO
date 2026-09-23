@@ -226,7 +226,7 @@
   aspect-ratio: 1;
   border-radius: 50%;
   background: color-mix(in srgb, var(--ufo-input) 94%, transparent);
-  border: calc(1px * var(--floating-cell-scale, 1)) solid rgba(255, 255, 255, 0.14);
+  border: calc(1px * var(--floating-cell-scale, 1)) solid var(--ufo-border-strong);
   box-shadow: inset 0 calc(1px * var(--floating-cell-scale, 1)) 0 rgba(255, 255, 255, 0.1);
 }
 
@@ -367,7 +367,7 @@
   @apply flex shrink-0 items-center justify-center rounded-full border-0 p-0;
   width: 22px;
   aspect-ratio: 1;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--ufo-overlay-raised);
   cursor: pointer;
   transition:
     background-color 150ms ease-out,
@@ -473,7 +473,7 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 /*
@@ -503,15 +503,15 @@
 }
 
 .tooltip-overflow-chip--green {
-  color: var(--ufo-status-green);
+  color: var(--ufo-status-green-text);
 }
 
 .tooltip-overflow-chip--yellow {
-  color: var(--ufo-status-yellow);
+  color: var(--ufo-status-yellow-text);
 }
 
 .tooltip-overflow-chip--red {
-  color: var(--ufo-status-red);
+  color: var(--ufo-status-red-text);
 }
 
 /* 阶段标签定宽：「执行中 / 等待操作 / 状态未知」长度不一，不定宽右侧提问的起点会参差。 */
@@ -521,15 +521,15 @@
 }
 
 .tooltip-overflow-row__phase--green {
-  color: var(--ufo-status-green);
+  color: var(--ufo-status-green-text);
 }
 
 .tooltip-overflow-row__phase--yellow {
-  color: var(--ufo-status-yellow);
+  color: var(--ufo-status-yellow-text);
 }
 
 .tooltip-overflow-row__phase--red {
-  color: var(--ufo-status-red);
+  color: var(--ufo-status-red-text);
 }
 
 /* 提问摘要：占满剩余宽度，一行省略号，完整原文走 title。 */
@@ -593,7 +593,7 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 /* 头部与底部表单/提示不参与压缩：只有列表在固定高度内滚动。 */
@@ -607,7 +607,7 @@
   @apply grid gap-1.5;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 .ep-list__item {
@@ -625,7 +625,7 @@
 
 .ep-list__row:hover {
   border-color: var(--ufo-border-strong);
-  background: #383838;
+  background: var(--ufo-overlay-raised);
 }
 
 .ep-list__row--active {
@@ -642,7 +642,7 @@
 .ep-list__tag {
   @apply shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold;
   background: var(--ufo-accent-soft);
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
 }
 
 .ep-list__row:focus-visible {
@@ -680,12 +680,12 @@
 }
 
 .ep-list__remove:hover {
-  background: rgba(248, 113, 113, 0.14);
+  background: var(--ufo-danger-soft);
 }
 
 .ep-list__remove--armed {
   width: 3rem;
-  background: rgba(248, 113, 113, 0.2);
+  background: color-mix(in srgb, var(--ufo-danger) 20%, transparent);
   border-color: color-mix(in srgb, var(--ufo-danger) 55%, transparent);
   color: var(--ufo-danger);
   font-weight: 600;
@@ -822,15 +822,15 @@
 }
 
 .flow-editor__preview-value.is-green {
-  color: var(--ufo-status-green);
+  color: var(--ufo-status-green-text);
 }
 
 .flow-editor__preview-value.is-yellow {
-  color: var(--ufo-status-yellow);
+  color: var(--ufo-status-yellow-text);
 }
 
 .flow-editor__preview-value.is-red {
-  color: var(--ufo-status-red);
+  color: var(--ufo-status-red-text);
 }
 
 .flow-editor__preview-value.is-muted {
@@ -994,7 +994,7 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 /* 列表可滚动：行数上限 200，不封顶会把右侧详情挤下去。 */
@@ -1003,7 +1003,7 @@
   @apply grid gap-1.5;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 .sr-list__item {
@@ -1121,13 +1121,13 @@
   color: var(--ufo-text);
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 /* 存活会话的提醒：说清「清除后该行还会回来」，避免被当成 bug。 */
 .sr-detail__note {
   @apply m-0 text-[11px] leading-relaxed;
-  color: var(--ufo-status-yellow);
+  color: var(--ufo-status-yellow-text);
 }
 
 .sr-detail__placeholder {

@@ -177,7 +177,14 @@ async function dismissSession() {
     <div class="tooltip-overflow-list">
       <div v-for="item in hiddenSessions" :key="item.key" class="tooltip-row tooltip-overflow-row">
         <span class="tooltip-dot" :class="`tooltip-dot--${colorForSession(item)}`" aria-hidden="true" />
-        <img :src="iconFor(item)" :alt="item.provider" class="tooltip-provider-icon" aria-hidden="true" />
+        <!-- Codex 的图标是纯白单色，浅色主题下要反相；Claude 的橙不套。 -->
+        <img
+          :src="iconFor(item)"
+          :alt="item.provider"
+          class="tooltip-provider-icon"
+          :class="{ 'ufo-mono-icon': item.provider === 'codex' }"
+          aria-hidden="true"
+        />
         <span
           class="tooltip-overflow-row__phase"
           :class="`tooltip-overflow-row__phase--${colorForSession(item)}`"
@@ -198,7 +205,13 @@ async function dismissSession() {
   <template v-else-if="session">
     <div class="tooltip-row tooltip-row--head">
       <span class="tooltip-dot" :class="`tooltip-dot--${statusColor}`" aria-hidden="true" />
-      <img :src="providerIcon" :alt="providerLabel" class="tooltip-provider-icon" aria-hidden="true" />
+      <img
+        :src="providerIcon"
+        :alt="providerLabel"
+        class="tooltip-provider-icon"
+        :class="{ 'ufo-mono-icon': session.provider === 'codex' }"
+        aria-hidden="true"
+      />
       <span class="tooltip-row__value">{{ providerLabel }}</span>
       <button
         class="tooltip-close"
@@ -208,7 +221,7 @@ async function dismissSession() {
         @pointerup.stop
         @click.stop.prevent="void dismissSession()"
       >
-        <img src="@/assets/close.svg" alt="" aria-hidden="true" />
+        <img src="@/assets/close.svg" alt="" class="ufo-mono-icon" aria-hidden="true" />
       </button>
       <!--
         「正在等你操作」的原因（Codex 的审批理由）：塞进 head 行而不是单开一行 ——

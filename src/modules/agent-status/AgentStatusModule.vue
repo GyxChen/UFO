@@ -93,10 +93,12 @@ function labelFor(session: SessionSnapshot) {
     >
       <span class="agent-status-module__dot" aria-hidden="true" />
       <span class="agent-status-module__identity" aria-hidden="true">
+        <!-- Codex 的图标是纯白单色，浅色主题下要反相；Claude 的橙反相会变青蓝，不套。 -->
         <img
           :src="session.provider === 'claude' ? claudeIcon : codexIcon"
           :alt="session.provider"
           class="agent-status-module__icon"
+          :class="{ 'ufo-mono-icon': session.provider === 'codex' }"
         />
       </span>
     </span>
@@ -135,7 +137,12 @@ function labelFor(session: SessionSnapshot) {
     -->
     <div v-if="isEmpty" class="agent-status-module__idle">
       <img :src="claudeIcon" alt="" class="agent-status-module__idle-icon" aria-hidden="true" />
-      <img :src="codexIcon" alt="" class="agent-status-module__idle-icon" aria-hidden="true" />
+      <img
+        :src="codexIcon"
+        alt=""
+        class="agent-status-module__idle-icon ufo-mono-icon"
+        aria-hidden="true"
+      />
       <span class="sr-only">当前没有 CLI 会话在运行</span>
     </div>
   </div>

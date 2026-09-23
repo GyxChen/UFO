@@ -140,7 +140,7 @@ const buttonClass = computed(() => [
 }
 
 .base-button--ghost:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.24);
+  border-color: var(--ufo-border-strong);
   background: color-mix(in srgb, var(--ufo-surface-2) 88%, white 4%);
 }
 

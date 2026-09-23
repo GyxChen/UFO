@@ -143,15 +143,15 @@
 
 /* 三档语义色：高 = 红 / 中 = 黄 / 低 = 蓝。只改 `color`，数字（继承）与色条（currentColor）同源同色 */
 .todo-module__cell--red {
-  color: var(--ufo-status-red);
+  color: var(--ufo-status-red-text);
 }
 
 .todo-module__cell--yellow {
-  color: var(--ufo-status-yellow);
+  color: var(--ufo-status-yellow-text);
 }
 
 .todo-module__cell--blue {
-  color: var(--ufo-status-blue);
+  color: var(--ufo-status-blue-text);
 }
 
 /* 数据未到：三组转中性灰（数字本来是空串，只剩色条），一眼区别于「三档都是 0 个」 */
@@ -265,7 +265,7 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 /* 分组不被压扁：高度不够时整块滚动，而不是把每行挤成一条线 */
@@ -365,7 +365,7 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 /* 新增任务卡：横跨两列（表单是一整行，挤进半列会换行得很难看） */
@@ -393,7 +393,7 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 .todo-status__group {
@@ -414,7 +414,7 @@
 }
 
 .todo-status__group-title > span {
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
   font-variant-numeric: tabular-nums;
 }
 
@@ -601,25 +601,25 @@
 }
 
 .todo-status__meta--yellow {
-  color: var(--ufo-status-yellow);
+  color: var(--ufo-status-yellow-text);
 }
 
 .todo-status__priority--red {
-  color: var(--ufo-status-red);
+  color: var(--ufo-status-red-text);
 }
 
 .todo-status__priority--yellow {
-  color: var(--ufo-status-yellow);
+  color: var(--ufo-status-yellow-text);
 }
 
 .todo-status__priority--blue {
-  color: var(--ufo-status-blue);
+  color: var(--ufo-status-blue-text);
 }
 
 /* 操作反馈文案：紧跟在「刷新」旁边，用语义色。 */
 .todo-status__action-msg {
   margin-left: 6px;
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -634,7 +634,7 @@
 /* 「全部顺延」按钮里的条数：跟着按钮字号走，用强调色把数字挑出来 */
 .todo-status__btn-count {
   margin-left: 5px;
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
   font-variant-numeric: tabular-nums;
 }
 

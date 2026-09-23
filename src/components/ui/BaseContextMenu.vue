@@ -399,7 +399,7 @@ function onPanelKeydown(event: KeyboardEvent): void {
 /* 悬浮与键盘高亮共用一个视觉态：鼠标和键盘因此看不出是两套实现 */
 .base-context-menu__item:hover:not(:disabled),
 .base-context-menu__item--active {
-  background: rgba(255, 255, 255, 0.055);
+  background: var(--ufo-overlay-raised);
 }
 
 /* 焦点环画在内侧：菜单贴着光标弹出，外描边会被视口边缘切掉 */

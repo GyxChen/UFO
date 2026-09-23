@@ -71,7 +71,7 @@ function onChange(event: Event) {
   inset: 0;
   border: 1px solid var(--ufo-border-strong);
   border-radius: 999px;
-  background: #404040;
+  background: var(--ufo-switch-track);
   box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.28);
   transition:
     background-color 160ms ease-out,
@@ -86,7 +86,7 @@ function onChange(event: Event) {
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  background: #f4f4f5;
+  background: var(--ufo-control-thumb);
   box-shadow:
     0 2px 5px rgba(0, 0, 0, 0.34),
     inset 0 -1px 0 rgba(0, 0, 0, 0.12);
@@ -106,7 +106,7 @@ function onChange(event: Event) {
 }
 
 .base-switch__input:hover + .base-switch__track {
-  border-color: rgba(255, 255, 255, 0.24);
+  border-color: var(--ufo-border-strong);
 }
 
 .base-switch__input:focus-visible + .base-switch__track {

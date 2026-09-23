@@ -154,10 +154,12 @@ function onClearAll() {
             @click="selectedKey = record.key"
           >
             <span class="sr-list__line">
+              <!-- Codex 的图标是纯白单色，浅色主题下要反相；Claude 的橙不套。 -->
               <img
                 :src="record.provider === 'claude' ? claudeIcon : codexIcon"
                 :alt="providerLabel(record.provider)"
                 class="sr-list__icon"
+                :class="{ 'ufo-mono-icon': record.provider === 'codex' }"
               />
               <span v-if="liveKeys.has(record.key)" class="sr-list__live" aria-hidden="true" />
               <span class="sr-list__id">{{ record.session_id.slice(0, 8) }}</span>
@@ -177,7 +179,7 @@ function onClearAll() {
             @click="onRemove(record)"
           >
             <span v-if="pendingRemoval === record.key" class="ep-list__remove-text">确认</span>
-            <img v-else :src="closeIcon" alt="" aria-hidden="true" />
+            <img v-else :src="closeIcon" alt="" class="ufo-mono-icon" aria-hidden="true" />
           </button>
         </li>
       </ul>

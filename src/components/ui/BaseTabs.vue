@@ -2,18 +2,37 @@
 /**
  * 通用 tab 条：主窗口的一级（下划线）与二级（胶囊）共用同一套键盘导航与 ARIA 关联。
  *
- * 两种外观刻意做得不一样（`.main-tabs--chips`）：两级 tabbar 上下相邻，
+ * 两种外观刻意做得不一样（见 `.main-tabs--chips`）：两级 tabbar 上下相邻，
  * 长得一样会让人分不清哪条是一级。
+ *
+ * 结构分三层（`.main-tabs` 条 / `.main-tabs__list` 标签页清单 / `.main-tabs__actions` 右端动作）：
+ * ⚠️ 右端动作由 **slot** 提供，刻意放在 `role="tablist"` **之外** ——
+ * tablist 的子项只能是 tab，混进普通按钮会让读屏的「共 N 个标签页、当前第 M 个」
+ * 计数与方向键漫游都不准。动作按钮因此也不参与下面的 roving tabindex。
  *
  * id 约定（`aria-controls` 要指得到面板）：按钮 = `${idPrefix}-tab-${key}`，
  * 面板 = `${idPrefix}-panel-${key}`，调用方按同一规则给面板加 id。
  */
 import { nextTick, ref } from 'vue'
 
+/** 一个标签页：`key` 既是选中值，也是面板 id 的后缀。 */
+interface BaseTab {
+  /** tab 唯一 key */
+  key: string
+  /** tab 上的文字；与 `icon` 二选一或并用，都没有时只留读屏名称 */
+  label?: string
+  /** 单色图标地址（`<img>` 用）；给了就渲染在文字前面，或单独占一格 */
+  icon?: string
+  /** 该 tab 的读屏名称；没有可见文字时必须给 */
+  ariaLabel?: string
+  /** 是否靠右对齐（工具类 tab）；加在第一个靠右的 tab 上即可把后面的一起推到右端 */
+  end?: boolean
+}
+
 withDefaults(
   defineProps<{
     /** tab 清单；key 既是选中值，也是面板 id 的后缀 */
-    tabs: { key: string; label: string }[]
+    tabs: BaseTab[]
     /** 当前选中的 key（v-model） */
     modelValue: string
     /** 外观：`underline` = 一级下划线，`chips` = 二级胶囊 */
@@ -47,7 +66,7 @@ function select(key: string, current: string) {
  * tablist 键盘导航：←/→ 在 tab 间循环，Home/End 跳到首尾。
  * 只有选中项能被 Tab 到达，因此方向键是唯一的横向移动方式（WAI-ARIA Tabs 模式）。
  */
-function onKeydown(event: KeyboardEvent, index: number, tabs: { key: string }[]) {
+function onKeydown(event: KeyboardEvent, index: number, tabs: BaseTab[]) {
   let next: number | null = null
   if (event.key === 'ArrowRight') next = (index + 1) % tabs.length
   else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length
@@ -61,28 +80,32 @@ function onKeydown(event: KeyboardEvent, index: number, tabs: { key: string }[])
 </script>
 
 <template>
-  <nav
-    class="main-tabs"
-    :class="{ 'main-tabs--chips': variant === 'chips' }"
-    role="tablist"
-    :aria-label="ariaLabel"
-  >
-    <button
-      v-for="(tab, index) in tabs"
-      :key="tab.key"
-      :ref="el => setTabRef(el, index)"
-      type="button"
-      role="tab"
-      class="main-tabs__tab"
-      :class="{ 'main-tabs__tab--active': modelValue === tab.key }"
-      :aria-selected="modelValue === tab.key"
-      :aria-controls="`${idPrefix}-panel-${tab.key}`"
-      :id="`${idPrefix}-tab-${tab.key}`"
-      :tabindex="modelValue === tab.key ? 0 : -1"
-      @click="select(tab.key, modelValue)"
-      @keydown="onKeydown($event, index, tabs)"
-    >
-      {{ tab.label }}
-    </button>
-  </nav>
+  <div class="main-tabs" :class="{ 'main-tabs--chips': variant === 'chips' }">
+    <nav class="main-tabs__list" role="tablist" :aria-label="ariaLabel">
+      <button
+        v-for="(tab, index) in tabs"
+        :key="tab.key"
+        :ref="el => setTabRef(el, index)"
+        type="button"
+        role="tab"
+        class="main-tabs__tab"
+        :class="{ 'main-tabs__tab--active': modelValue === tab.key, 'main-tabs__tab--icon': !!tab.icon, 'main-tabs__tab--end': tab.end }"
+        :aria-selected="modelValue === tab.key"
+        :aria-label="tab.ariaLabel"
+        :aria-controls="`${idPrefix}-panel-${tab.key}`"
+        :id="`${idPrefix}-tab-${tab.key}`"
+        :tabindex="modelValue === tab.key ? 0 : -1"
+        @click="select(tab.key, modelValue)"
+        @keydown="onKeydown($event, index, tabs)"
+      >
+        <img v-if="tab.icon" :src="tab.icon" alt="" class="main-tabs__tab-icon ufo-mono-icon" aria-hidden="true" />
+        <span v-if="tab.label">{{ tab.label }}</span>
+      </button>
+    </nav>
+
+    <!-- 右端动作（主题切换等）：不属于 tablist，也不参与方向键漫游。 -->
+    <div v-if="$slots.actions" class="main-tabs__actions">
+      <slot name="actions" />
+    </div>
+  </div>
 </template>

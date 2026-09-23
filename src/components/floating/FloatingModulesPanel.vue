@@ -194,7 +194,7 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
               :title="`${definition.label}的设置`"
               @click="emit('open-settings', definition.id)"
             >
-              <img :src="gearIcon" alt="" aria-hidden="true" />
+              <img :src="gearIcon" alt="" class="ufo-mono-icon" aria-hidden="true" />
             </button>
 
             <BaseSwitch

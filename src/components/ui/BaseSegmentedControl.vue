@@ -96,7 +96,7 @@ function onChange(option: SegmentedOption, event: Event) {
 }
 
 .base-segmented__option:hover {
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--ufo-overlay-raised);
   color: var(--ufo-text);
 }
 
@@ -110,7 +110,7 @@ function onChange(option: SegmentedOption, event: Event) {
 
 .base-segmented__option--selected {
   background: var(--ufo-accent-soft);
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
   font-weight: 600;
   box-shadow:
     inset 0 0 0 1px rgba(52, 211, 153, 0.22),

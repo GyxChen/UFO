@@ -3,7 +3,8 @@
  * 主窗口：两级导航 + 内容区。
  *
  * 一级 tab = 「悬浮窗设置」（悬浮窗整体：组件列表 + 三形态预览）+
- * 每个声明了设置页的组件各一页；二级 tab = 该组件自己的设置分区（切法由组件定义，外壳不参与）。
+ * 每个声明了设置页的组件各一页 + 右端的工具页（「关于」）；二级 tab = 该组件自己的设置分区
+ * （切法由组件定义，外壳不参与）。
  *
  * ⚠️ 「悬浮窗设置」是**一页到底**，没有二级：它本身就是一块整体（列表 + 预览并排），
  * 再切一刀反而把「改组件」和「看效果」拆开了。二级只服务组件设置页。
@@ -16,34 +17,53 @@
  * 页面清单完全由模块注册表推出，新增组件不用改这个文件。
  * 打开某组件设置有两条路：组件列表行上的齿轮，或直接点悬浮窗里的那个组件
  * （外壳发 `OPEN_MODULE_SETTINGS_EVENT` 过来）。
+ *
+ * 一级 tabbar 右端另有两个工具位，**语义不同、所在容器也不同**：
+ * - 「关于」（齿轮图标）= 一个**标签页**，进 tablist，因此参与方向键漫游；
+ * - 主题切换 = 一个**动作**（切深浅色，没有对应页面），走 `BaseTabs` 的 `#actions` 插槽，
+ *   刻意留在 tablist 之外。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import FloatingModulesPanel from './floating/FloatingModulesPanel.vue'
+import AboutPanel from './AboutPanel.vue'
 import BaseTabs from './ui/BaseTabs.vue'
 import { OPEN_MODULE_SETTINGS_EVENT, type OpenModuleSettingsPayload } from '@/lib/floating-bridge'
 import { hasModuleSettings, type FloatingModuleSection } from '@/lib/floating-modules'
 import { hideMainWindow, startCurrentWindowDrag } from '@/lib/window'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import { useThemeStore } from '@/stores/theme'
 import closeIcon from '@/assets/close.svg'
+import gearIcon from '@/assets/gear.svg'
+import moonIcon from '@/assets/moon.svg'
+import sunIcon from '@/assets/sun.svg'
 
 /** 悬浮窗设置页的 tab key；用固定串而不是模块 id，免得将来某个组件真叫这个名字。 */
 const MODULES_TAB = 'floating-window'
+/** 「关于」页的 tab key（同上，用固定串）。 */
+const ABOUT_TAB = 'about'
 
-/** 一个一级页面：悬浮窗设置，或某个组件的设置页。 */
+/** 一个一级页面：悬浮窗设置、某个组件的设置页，或工具页（关于）。 */
 interface MainTab {
   /** tab 唯一 key（组件页 = 模块 id） */
   key: string
-  /** tabbar 上的文字 */
+  /** tabbar 上的文字；工具页只有图标时为空串 */
   label: string
+  /** 单色图标地址；给了就渲染在文字前，或单独占一格（工具页） */
+  icon?: string
+  /** 没有可见文字时必须给的读屏名称 */
+  ariaLabel?: string
+  /** 是否靠右（工具页），与左侧的内容 tab 视觉分区 */
+  end?: boolean
   /** 该页的二级分区；空数组 = 这页没有二级 tabbar */
   sections: FloatingModuleSection[]
 }
 
 const modules = useFloatingModulesStore()
+const theme = useThemeStore()
 
-/** 一级页面清单：悬浮窗设置 + 每个有设置页的组件一页（顺序 = 注册表顺序）。 */
+/** 一级页面清单：悬浮窗设置 + 每个有设置页的组件一页（顺序 = 注册表顺序）+ 右端的「关于」。 */
 const tabs = computed<MainTab[]>(() => [
   { key: MODULES_TAB, label: '悬浮窗设置', sections: [] },
   ...FLOATING_MODULE_DEFINITIONS.filter(hasModuleSettings).map(definition => ({
@@ -51,7 +71,20 @@ const tabs = computed<MainTab[]>(() => [
     label: definition.label,
     sections: definition.settings?.sections ?? [],
   })),
+  // 工具页：只有齿轮图标，靠右对齐。
+  { key: ABOUT_TAB, label: '', icon: gearIcon, ariaLabel: '关于', end: true, sections: [] },
 ])
+
+/** 交给 `BaseTabs` 的精简清单（它只认 key / label / icon / 无障碍名 / 是否靠右）。 */
+const tabItems = computed(() =>
+  tabs.value.map(tab => ({
+    key: tab.key,
+    label: tab.label,
+    icon: tab.icon,
+    ariaLabel: tab.ariaLabel,
+    end: tab.end,
+  }))
+)
 
 const activeTab = ref<string>(MODULES_TAB)
 /** 当前一级页的分区列表。 */
@@ -65,8 +98,17 @@ const activeSection = computed(
     activeSections.value[0] ??
     null
 )
-/** 一级 tab 的文字，用作组件页里那个（视觉隐藏的）h1。 */
-const activeTabLabel = computed(() => tabs.value.find(tab => tab.key === activeTab.value)?.label ?? '')
+/**
+ * 一级 tab 的名称，用作各页那个（视觉隐藏的）h1。
+ * 工具页没有可见文字，退回它的读屏名称，免得 h1 变空串。
+ */
+const activeTabLabel = computed(() => {
+  const tab = tabs.value.find(item => item.key === activeTab.value)
+  return tab?.label || tab?.ariaLabel || ''
+})
+
+/** 主题按钮的文案：按**要切到**的主题说，而不是当前主题（当前主题已由图标本身表达）。 */
+const themeActionLabel = computed(() => (theme.isDark ? '切换到浅色主题' : '切换到深色主题'))
 
 // 换一级页就回到该页第一个分区：组件设置页每次都从默认分区开始，不会停在上次看的那一页。
 watch(
@@ -140,17 +182,30 @@ onBeforeUnmount(() => {
         @click.stop="onCloseMain"
         @pointerdown.stop
       >
-        <img :src="closeIcon" alt="" class="main-titlebar__close-icon" aria-hidden="true" />
+        <img :src="closeIcon" alt="" class="main-titlebar__close-icon ufo-mono-icon" aria-hidden="true" />
       </button>
     </header>
 
-    <!-- 一级：悬浮窗设置 / 各组件设置页（下划线，见 .main-tabs 默认样式）。 -->
-    <BaseTabs
-      v-model="activeTab"
-      id-prefix="main"
-      aria-label="主窗口分区"
-      :tabs="tabs.map(tab => ({ key: tab.key, label: tab.label }))"
-    />
+    <!-- 一级：悬浮窗设置 / 各组件设置页 / 关于（下划线，见 .main-tabs 默认样式）。 -->
+    <BaseTabs v-model="activeTab" id-prefix="main" aria-label="主窗口分区" :tabs="tabItems">
+      <!-- 右端动作：切换深浅色。月亮 = 当前是深色，太阳 = 当前是浅色（点击切到另一个）。 -->
+      <template #actions>
+        <button
+          type="button"
+          class="main-tabs__action"
+          :aria-label="themeActionLabel"
+          :title="themeActionLabel"
+          @click="theme.toggle()"
+        >
+          <img
+            :src="theme.isDark ? moonIcon : sunIcon"
+            alt=""
+            class="main-tabs__action-icon ufo-mono-icon"
+            aria-hidden="true"
+          />
+        </button>
+      </template>
+    </BaseTabs>
 
     <!-- 二级：当前组件自己的设置分区（胶囊，只在该组件给了多个分区时出现）。 -->
     <BaseTabs
@@ -171,6 +226,19 @@ onBeforeUnmount(() => {
       :aria-labelledby="`main-tab-${MODULES_TAB}`"
     >
       <FloatingModulesPanel @open-settings="openModuleSettings" />
+    </main>
+
+    <!-- 关于：目前只有版本号，没有二级分区，也不需要 fill（内容短，滚整页即可）。 -->
+    <main
+      v-else-if="activeTab === ABOUT_TAB"
+      class="main-window main-window--stack"
+      role="tabpanel"
+      tabindex="0"
+      :id="`main-panel-${ABOUT_TAB}`"
+      :aria-labelledby="`main-tab-${ABOUT_TAB}`"
+    >
+      <h1 class="sr-only">{{ activeTabLabel }}</h1>
+      <AboutPanel />
     </main>
 
     <main

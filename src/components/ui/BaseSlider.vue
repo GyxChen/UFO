@@ -175,7 +175,7 @@ function onChange(event: Event) {
   border: 0;
   border-radius: 999px;
   appearance: none;
-  background: #f4f4f5;
+  background: var(--ufo-control-thumb);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.42);
 }
 
@@ -184,12 +184,12 @@ function onChange(event: Event) {
   height: var(--base-slider-thumb-size);
   border: 0;
   border-radius: 999px;
-  background: #f4f4f5;
+  background: var(--ufo-control-thumb);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.42);
 }
 
 .base-slider__input:hover:not(:disabled)::-webkit-slider-thumb {
-  background: #ffffff;
+  background: var(--ufo-control-thumb-hover);
 }
 
 .base-slider__input:focus-visible::-webkit-slider-thumb {

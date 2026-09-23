@@ -211,9 +211,11 @@ describe('模块样式 · 滴答待办数字与色条', () => {
   it('gives each priority bucket its own color and nothing else', () => {
     const css = todoCss()
 
-    expect(decl(ruleBody(css, '.todo-module__cell--red'), 'color')).toBe('var(--ufo-status-red)')
-    expect(decl(ruleBody(css, '.todo-module__cell--yellow'), 'color')).toBe('var(--ufo-status-yellow)')
-    expect(decl(ruleBody(css, '.todo-module__cell--blue'), 'color')).toBe('var(--ufo-status-blue)')
+    // 取 `-text` 档而不是填充档：这里同时决定**数字的颜色**与色条（`currentColor`），
+    // 要的是「浅色主题下也读得清」的那个取值（填充档的鲜艳黄 / 蓝在白底上读不出来）。
+    expect(decl(ruleBody(css, '.todo-module__cell--red'), 'color')).toBe('var(--ufo-status-red-text)')
+    expect(decl(ruleBody(css, '.todo-module__cell--yellow'), 'color')).toBe('var(--ufo-status-yellow-text)')
+    expect(decl(ruleBody(css, '.todo-module__cell--blue'), 'color')).toBe('var(--ufo-status-blue-text)')
 
     // 三档只许改颜色：改尺寸会让三根色条长短不一，改字号会让三组数字大小参差。
     for (const tone of ['red', 'yellow', 'blue']) {

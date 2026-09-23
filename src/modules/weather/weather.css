@@ -50,7 +50,7 @@
 }
 
 .weather-module--empty:hover {
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
 }
 
 /* 1. Square：未贴边整窗只有 1 格（45px 见方，扣掉描边与外壳内边距后 39px），图标 + 温度上下顶满 */
@@ -66,7 +66,7 @@
 .weather-module--constrained .weather-icon {
   width: clamp(12px, 55cqh, calc(24px * var(--floating-cell-scale, 1)));
   height: clamp(12px, 55cqh, calc(24px * var(--floating-cell-scale, 1)));
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
 }
 
 .weather-module--square .weather-temp,
@@ -108,7 +108,7 @@
 .weather-module--horizontal .weather-col-left .weather-icon {
   width: clamp(12px, 52cqh, calc(30px * var(--floating-cell-scale, 1)));
   height: clamp(12px, 52cqh, calc(30px * var(--floating-cell-scale, 1)));
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
 }
 
 .weather-module--corner .weather-col-left .weather-text,
@@ -167,7 +167,7 @@
 .weather-module--vertical .weather-row-top .weather-icon {
   width: clamp(12px, 21cqh, calc(34px * var(--floating-cell-scale, 1)));
   height: clamp(12px, 21cqh, calc(34px * var(--floating-cell-scale, 1)));
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
 }
 
 .weather-module--vertical .weather-row-top .weather-text {
@@ -254,7 +254,7 @@
 .weather-tooltip__icon {
   width: 16px;
   height: 16px;
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
   flex-shrink: 0;
 }
 
@@ -283,7 +283,7 @@
 .weather-tooltip__hourly-icon {
   width: 14px;
   height: 14px;
-  color: var(--ufo-accent);
+  color: var(--ufo-accent-text);
   margin: 2px 0;
 }
 
