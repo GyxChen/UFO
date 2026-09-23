@@ -80,8 +80,8 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
 
     // 徽章是绝对定位叠在灯点上，不再排回灯点旁边。
     expect(decl(badge, 'position')).toBe('absolute')
-    // 有实色背景（token），才能从彩色灯点上"抠"出来。
-    expect(decl(badge, 'background')).toMatch(/var\(--ufo-/)
+    // 有实色背景（主题 token），才能从彩色灯点上"抠"出来。
+    expect(decl(badge, 'background')).toBe('var(--agent-status-badge-bg)')
     // 徽章不溢出格子：右边距 + 宽度 ≤ 100%。
     const right = Number.parseFloat(decl(badge, 'right'))
     const width = Number.parseFloat(decl(badge, 'width'))
@@ -95,6 +95,44 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
     expect(decl(icon, 'height')).toBe('100%')
     // `object-contain` 是 @apply 进去的工具类，读原文而不是读声明。
     expect(icon).toContain('object-contain')
+  })
+
+  it('switches lamp chrome tokens between dark and light themes', () => {
+    const css = agentStatusCss()
+    const base = ruleBody(css, '.agent-status-module')
+    const light = ruleBody(css, ":root[data-theme='light'] .agent-status-module")
+
+    // Default dark theme keeps the current glass-on-dark edge treatment.
+    expect(base, 'must declare status-lamp theme variables').not.toBe('')
+    expect(decl(base, '--agent-status-badge-bg')).toBe('var(--ufo-bg-main)')
+    expect(decl(base, '--agent-status-dot-ring')).toBe('rgba(255, 255, 255, 0.4)')
+    expect(decl(base, '--agent-status-ring-shadow')).toBe('rgba(0, 0, 0, 0.45)')
+
+    // Light theme only swaps chrome tokens; sizes and layout stay untouched.
+    expect(light, 'light theme must override agent status chrome').not.toBe('')
+    expect(decl(light, '--agent-status-badge-bg')).toBe('var(--ufo-surface)')
+    expect(decl(light, '--agent-status-badge-border')).toBe('var(--ufo-border-strong)')
+    expect(decl(light, '--agent-status-dot-ring')).toBe('var(--ufo-border-strong)')
+    expect(decl(light, '--agent-status-ring-shadow')).toContain('var(--ufo-text)')
+    expect(decl(light, '--agent-status-overflow-core-bg')).toBe('var(--ufo-surface)')
+    expect(decl(light, '--agent-status-overflow-core-inset')).toContain('var(--ufo-text)')
+    expect(decl(light, '--agent-status-idle-icon-opacity')).toBe('0.56')
+    expect(light).not.toContain('width:')
+    expect(light).not.toContain('height:')
+
+    // Concrete elements consume the theme variables instead of hard-coded dark-theme assumptions.
+    const badge = ruleBody(css, '.agent-status-module__identity')
+    expect(decl(badge, 'background')).toBe('var(--agent-status-badge-bg)')
+    expect(decl(badge, 'border')).toContain('var(--agent-status-badge-border)')
+    expect(decl(ruleBody(css, '.agent-status-module__dot'), 'border-color')).toBe('var(--agent-status-dot-ring)')
+    expect(decl(ruleBody(css, '.agent-status-module__ring'), 'filter')).toContain('var(--agent-status-ring-shadow)')
+
+    const core = ruleBody(css, '.agent-status-module__overflow-core')
+    expect(decl(core, 'background')).toBe('var(--agent-status-overflow-core-bg)')
+    expect(decl(core, 'box-shadow')).toContain('var(--agent-status-overflow-core-inset)')
+    expect(decl(ruleBody(css, '.agent-status-module__idle-icon'), 'opacity')).toBe(
+      'var(--agent-status-idle-icon-opacity)'
+    )
   })
 
   it('amplifies the completion flash and keeps a reduced-motion fallback', () => {
@@ -193,7 +231,7 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
     expect(decl(icon, 'height')).toBe('var(--agent-idle-icon-h)')
     // 只给高、宽交给资源比例：两个 logo 的 viewBox 不是同一个宽高比，写死宽会压扁其中一个。
     expect(decl(icon, 'width')).toBe('auto')
-    expect(decl(icon, 'opacity')).toBe('0.38')
+    expect(decl(icon, 'opacity')).toBe('var(--agent-status-idle-icon-opacity)')
     expect(decl(icon, 'filter')).toBe('grayscale(1)')
   })
 

@@ -28,6 +28,18 @@
  * 因此全还给状态灯 —— 横条（上下贴边，纵向最紧）收益最明显。
  */
 .agent-status-module {
+  /*
+   * 状态灯外壳的主题差异集中在这里：
+   * 默认值服务深色毛玻璃，浅色主题只覆盖这些变量，不碰三形态尺寸。
+   */
+  --agent-status-badge-bg: var(--ufo-bg-main);
+  --agent-status-badge-border: rgba(0, 0, 0, 0.28);
+  --agent-status-dot-ring: rgba(255, 255, 255, 0.4);
+  --agent-status-ring-shadow: rgba(0, 0, 0, 0.45);
+  --agent-status-overflow-core-bg: color-mix(in srgb, var(--ufo-input) 94%, transparent);
+  --agent-status-overflow-core-inset: rgba(255, 255, 255, 0.1);
+  --agent-status-idle-icon-opacity: 0.38;
+
   @apply grid h-full w-full content-center justify-items-center gap-px overflow-hidden p-0;
   /* 网格列行由组件按形态与格子数内联设置，适配方形 / 横条 / 竖条。 */
 }
@@ -55,8 +67,8 @@
      （那两个角压在灯点上，看着像贴了个方片）。这里把圆当裁剪盒。 */
   overflow: hidden;
   /* 深色底让 Claude（橙）/ Codex（白）图标在任意灯色上都读得清；描边把徽章边缘压清楚。 */
-  background: var(--ufo-bg-main);
-  border: calc(1px * var(--floating-cell-scale, 1)) solid rgba(0, 0, 0, 0.28);
+  background: var(--agent-status-badge-bg);
+  border: calc(1px * var(--floating-cell-scale, 1)) solid var(--agent-status-badge-border);
 }
 
 .agent-status-module__icon {
@@ -74,10 +86,11 @@
  * 已废弃，图标改为右下角徽章（见 __identity）。
  */
 .agent-status-module__dot {
-  @apply block shrink-0 rounded-full border border-white/40;
+  @apply block shrink-0 rounded-full border;
   height: 80%;
   width: auto;
   aspect-ratio: 1;
+  border-color: var(--agent-status-dot-ring);
   /* 描边与下面的光晕都按格子倍数加粗：否则格子调大后灯点变大、描边仍是一条细线，比例就散了。 */
   border-width: calc(1px * var(--floating-cell-scale, 1));
 }
@@ -196,7 +209,8 @@
 .agent-status-module__ring {
   transform: translate(-50%, -50%);
   filter: drop-shadow(
-    0 calc(1px * var(--floating-cell-scale, 1)) calc(2px * var(--floating-cell-scale, 1)) rgba(0, 0, 0, 0.45)
+    0 calc(1px * var(--floating-cell-scale, 1)) calc(2px * var(--floating-cell-scale, 1))
+      var(--agent-status-ring-shadow)
   );
 }
 
@@ -225,9 +239,9 @@
   width: 55%;
   aspect-ratio: 1;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--ufo-input) 94%, transparent);
+  background: var(--agent-status-overflow-core-bg);
   border: calc(1px * var(--floating-cell-scale, 1)) solid var(--ufo-border-strong);
-  box-shadow: inset 0 calc(1px * var(--floating-cell-scale, 1)) 0 rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 calc(1px * var(--floating-cell-scale, 1)) 0 var(--agent-status-overflow-core-inset);
 }
 
 /*
@@ -279,9 +293,19 @@
   height: var(--agent-idle-icon-h);
   width: auto;
   flex: 0 0 auto;
-  opacity: 0.38;
+  opacity: var(--agent-status-idle-icon-opacity);
   /* 去色：两个品牌色都很重，38% 下并排会互相抢眼；要保留品牌色就把这条删掉并提到 0.42 左右。 */
   filter: grayscale(1);
+}
+
+:root[data-theme='light'] .agent-status-module {
+  --agent-status-badge-bg: var(--ufo-surface);
+  --agent-status-badge-border: var(--ufo-border-strong);
+  --agent-status-dot-ring: var(--ufo-border-strong);
+  --agent-status-ring-shadow: color-mix(in srgb, var(--ufo-text) 30%, transparent);
+  --agent-status-overflow-core-bg: var(--ufo-surface);
+  --agent-status-overflow-core-inset: color-mix(in srgb, var(--ufo-text) 10%, transparent);
+  --agent-status-idle-icon-opacity: 0.56;
 }
 
 /*
