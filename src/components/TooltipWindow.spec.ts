@@ -1,0 +1,265 @@
+// @vitest-environment happy-dom
+
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
+import TooltipWindow from './TooltipWindow.vue'
+import { TOOLTIP_HOVER_EVENT, type TooltipHoverPayload } from '@/lib/tooltip'
+
+/** 由测试修改的信息卡就绪状态；mock 里会换成一个 Vue ref 以便触发 computed。 */
+const testState = vi.hoisted(() => ({
+  hasContent: null as null | { value: boolean },
+}))
+
+/** Tauri API mock：组件测试只验证窗口调用顺序，不碰真实 IPC。 */
+const tauri = vi.hoisted(() => {
+  class MockPhysicalPosition {
+    constructor(
+      public x: number,
+      public y: number
+    ) {}
+  }
+
+  class MockPhysicalSize {
+    constructor(
+      public width: number,
+      public height: number
+    ) {}
+  }
+
+  const listeners = new Map<string, (event: { payload: unknown }) => void>()
+  const currentWindow = {
+    outerSize: vi.fn(async () => new MockPhysicalSize(300, 260)),
+    setSize: vi.fn(async () => undefined),
+    setPosition: vi.fn(async () => undefined),
+    show: vi.fn(async () => undefined),
+    hide: vi.fn(async () => undefined),
+  }
+
+  return {
+    listeners,
+    currentWindow,
+    monitorFromPoint: vi.fn(),
+    listen: vi.fn(async (event: string, handler: (event: { payload: unknown }) => void) => {
+      listeners.set(event, handler)
+      return () => listeners.delete(event)
+    }),
+    emitTo: vi.fn(async () => undefined),
+    invoke: vi.fn(async () => undefined),
+    PhysicalPosition: MockPhysicalPosition,
+    PhysicalSize: MockPhysicalSize,
+  }
+})
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => tauri.currentWindow,
+  monitorFromPoint: tauri.monitorFromPoint,
+  PhysicalPosition: tauri.PhysicalPosition,
+  PhysicalSize: tauri.PhysicalSize,
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  emitTo: tauri.emitTo,
+  listen: tauri.listen,
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: tauri.invoke,
+}))
+
+vi.mock('@/modules', async () => {
+  const { defineComponent, h, ref } = await import('vue')
+  const hasContent = ref(true)
+  testState.hasContent = hasContent
+  const TooltipStub = defineComponent({
+    name: 'TooltipStub',
+    props: { target: { type: Object, required: true } },
+    setup(props) {
+      return () => h('div', { class: 'tooltip-stub' }, String((props.target as { key?: string }).key ?? ''))
+    },
+  })
+
+  return {
+    FLOATING_MODULE_DEFINITIONS: [
+      {
+        id: 'test-module',
+        label: 'Test module',
+        description: '',
+        version: 1,
+        defaultEnabled: false,
+        supportedLayouts: ['square'],
+        component: TooltipStub,
+        tooltip: {
+          component: TooltipStub,
+          hasContent: (target: unknown) => hasContent.value && Boolean(target),
+        },
+      },
+    ],
+  }
+})
+
+enableAutoUnmount(afterEach)
+
+const workAreaMonitor = {
+  workArea: {
+    position: { x: 0, y: 0 },
+    size: { width: 1920, height: 1040 },
+  },
+}
+
+/** 造一个可由测试手动完成的 Promise。 */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+/** 造一条 hover 事件 payload；隐藏事件按契约不带目标。 */
+function hoverPayload(sequence: number, visible: boolean, key = 'session-a'): TooltipHoverPayload {
+  return {
+    sequence,
+    visible,
+    target: visible ? { moduleId: 'test-module', key } : null,
+    anchor: { x: 400, y: 400, width: 45, height: 45 },
+    docked: { left: false, top: false, right: false, bottom: false },
+  }
+}
+
+/** 把测试 payload 送进组件注册的 Tauri 事件处理器。 */
+function emitHover(payload: TooltipHoverPayload) {
+  const handler = tauri.listeners.get(TOOLTIP_HOVER_EVENT)
+  expect(handler).toBeDefined()
+  handler?.({ payload })
+}
+
+/** 挂载提示窗并等 onMounted 的默认尺寸与事件监听就绪。 */
+async function mountTooltip() {
+  const wrapper = mount(TooltipWindow)
+  await flushPromises()
+  return wrapper
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  tauri.listeners.clear()
+  testState.hasContent!.value = true
+
+  tauri.monitorFromPoint.mockResolvedValue(workAreaMonitor)
+  tauri.currentWindow.outerSize.mockResolvedValue(new tauri.PhysicalSize(300, 260))
+  tauri.currentWindow.setSize.mockResolvedValue(undefined)
+  tauri.currentWindow.setPosition.mockResolvedValue(undefined)
+  tauri.currentWindow.show.mockResolvedValue(undefined)
+  tauri.currentWindow.hide.mockResolvedValue(undefined)
+  tauri.emitTo.mockResolvedValue(undefined)
+  tauri.invoke.mockResolvedValue(undefined)
+})
+
+describe('TooltipWindow transitions', () => {
+  it('aborts a pending show when hide arrives before the monitor lookup resolves', async () => {
+    const monitor = deferred<typeof workAreaMonitor>()
+    tauri.monitorFromPoint.mockImplementationOnce(() => monitor.promise)
+
+    await mountTooltip()
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+
+    emitHover(hoverPayload(2, false))
+    await nextTick()
+    monitor.resolve(workAreaMonitor)
+    await flushPromises()
+
+    // 旧 show 已经失去请求代次，不能在 hide 后又把空内容窗口唤醒。
+    expect(tauri.currentWindow.show).not.toHaveBeenCalled()
+    expect(tauri.currentWindow.hide).toHaveBeenCalledTimes(1)
+    expect(tauri.invoke).toHaveBeenCalledWith('set_tooltip_interactive', { interactive: false })
+  })
+
+  it('drops show A when show B arrives before A commits', async () => {
+    const monitor = deferred<typeof workAreaMonitor>()
+    tauri.monitorFromPoint.mockImplementationOnce(() => monitor.promise)
+
+    await mountTooltip()
+    emitHover(hoverPayload(1, true, 'a'))
+    await flushPromises()
+
+    emitHover(hoverPayload(2, true, 'b'))
+    await nextTick()
+    monitor.resolve(workAreaMonitor)
+    await flushPromises()
+
+    // A 停在 monitorFromPoint，恢复后应直接放弃；只有 B 能完成 setPosition/show。
+    expect(tauri.currentWindow.setPosition).toHaveBeenCalledTimes(1)
+    expect(tauri.currentWindow.show).toHaveBeenCalledTimes(1)
+    expect(tauri.invoke).toHaveBeenCalledWith('set_tooltip_interactive', { interactive: true })
+  })
+
+  it('commits a show only after positioning and interaction are ready', async () => {
+    await mountTooltip()
+
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+
+    // show 必须排在 set_tooltip_interactive(true) 与 setPosition 之后，避免在旧位置或点穿状态下闪现。
+    const interactiveOrder = tauri.invoke.mock.invocationCallOrder[0]!
+    const positionOrder = tauri.currentWindow.setPosition.mock.invocationCallOrder[0]!
+    const showOrder = tauri.currentWindow.show.mock.invocationCallOrder[0]!
+    expect(showOrder).toBeGreaterThan(interactiveOrder)
+    expect(showOrder).toBeGreaterThan(positionOrder)
+  })
+
+  it('ignores late hover events whose sequence is not newer', async () => {
+    await mountTooltip()
+
+    emitHover(hoverPayload(2, true))
+    await flushPromises()
+    emitHover(hoverPayload(3, false))
+    await flushPromises()
+
+    // sequence=2 的重复 show 是迟到事件，不能在 newer hide 之后重新显示。
+    emitHover(hoverPayload(2, true))
+    await flushPromises()
+    expect(tauri.currentWindow.show).toHaveBeenCalledTimes(1)
+    expect(tauri.currentWindow.hide).toHaveBeenCalledTimes(1)
+
+    emitHover(hoverPayload(4, true))
+    await flushPromises()
+
+    // sequence=3 的重复 hide 同样过期，不能把 newer show 关掉。
+    emitHover(hoverPayload(3, false))
+    await flushPromises()
+    expect(tauri.currentWindow.show).toHaveBeenCalledTimes(2)
+    expect(tauri.currentWindow.hide).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps processing the transition queue after repeated show/hide changes', async () => {
+    await mountTooltip()
+
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    emitHover(hoverPayload(2, false))
+    await flushPromises()
+    emitHover(hoverPayload(3, true))
+    await flushPromises()
+    emitHover(hoverPayload(4, false))
+    await flushPromises()
+
+    expect(tauri.currentWindow.show).toHaveBeenCalledTimes(2)
+    expect(tauri.currentWindow.hide).toHaveBeenCalledTimes(2)
+  })
+
+  it('presents when content becomes ready after a visible hover event', async () => {
+    await mountTooltip()
+
+    testState.hasContent!.value = false
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    expect(tauri.currentWindow.show).not.toHaveBeenCalled()
+
+    // 模块数据晚到且没有新的 hover 事件时，displayKey 仍要触发一次 present。
+    testState.hasContent!.value = true
+    await flushPromises()
+    expect(tauri.currentWindow.show).toHaveBeenCalledTimes(1)
+  })
+})

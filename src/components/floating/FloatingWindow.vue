@@ -57,6 +57,8 @@ const hoverTarget = ref<FloatingHoverTarget | null>(null)
 const tooltipHovered = ref(false)
 let showTimer: ReturnType<typeof setTimeout> | undefined
 let hideTimer: ReturnType<typeof setTimeout> | undefined
+// 提示窗请求序号：每次发送 hover 状态都递增，提示窗用它丢弃跨窗口迟到事件。
+let tooltipHoverSequence = 0
 
 function setWindowCells(cells: number) {
   const next = Math.min(Math.max(Math.floor(cells), ABS_MIN_CELLS), ABS_MAX_CELLS)
@@ -143,6 +145,7 @@ function onTooltipInteraction(hovered: boolean) {
 
 async function emitHover(visible: boolean) {
   const payload: TooltipHoverPayload = {
+    sequence: ++tooltipHoverSequence,
     visible,
     target: visible ? hoverTarget.value : null,
     anchor: lastRect ?? { x: 0, y: 0, width: 0, height: 0 },

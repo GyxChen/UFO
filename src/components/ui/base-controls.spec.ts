@@ -2,6 +2,7 @@
 
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { defineComponent, ref } from 'vue'
 import BaseButton from './BaseButton.vue'
 import BaseInput from './BaseInput.vue'
 import BaseLoadingOverlay from './BaseLoadingOverlay.vue'
@@ -97,18 +98,28 @@ describe('BaseSlider', () => {
   })
 
   it('renders ticks at each value, highlighting the current one', async () => {
-    const wrapper = mount(BaseSlider, {
-      props: {
-        modelValue: 1,
-        min: 0,
-        max: 2,
-        ticks: [
-          { value: 0, label: '1×1' },
-          { value: 1, label: '1×2' },
-          { value: 2, label: '2×2' },
-        ],
+    // 拖动时组件只 emit 新值，真实用法由父级写回 modelValue；这里用宿主组件复现这条链。
+    const Harness = defineComponent({
+      components: { BaseSlider },
+      setup() {
+        const value = ref(1)
+        return { value }
       },
+      template: `
+        <BaseSlider
+          v-model="value"
+          :min="0"
+          :max="2"
+          :ticks="[
+            { value: 0, label: '1×1' },
+            { value: 1, label: '1×2' },
+            { value: 2, label: '2×2' }
+          ]"
+        />
+      `,
     })
+
+    const wrapper = mount(Harness)
 
     // 每档一枚刻度，标注照传；刻度行整体 aria-hidden（读屏走 aria-valuetext）。
     const ticks = wrapper.findAll('.base-slider__tick')

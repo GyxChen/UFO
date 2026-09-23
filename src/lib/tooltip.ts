@@ -19,6 +19,8 @@ export interface TooltipAnchor {
 
 /** 悬浮窗发给提示窗的悬停状态；所有坐标均为物理像素。 */
 export interface TooltipHoverPayload {
+  /** 单调递增的悬停请求序号；提示窗据此丢弃迟到事件。 */
+  sequence: number
   /** 是否应显示提示窗。 */
   visible: boolean
   /** 悬停目标（哪个模块的哪个对象）；null 表示未指向具体对象。 */
