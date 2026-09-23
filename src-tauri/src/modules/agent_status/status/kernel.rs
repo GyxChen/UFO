@@ -13,6 +13,16 @@ use super::model::{
 
 pub struct StatusRegistry {
     sessions: HashMap<String, SessionSnapshot>,
+    /// 各会话的内核私有状态机状态。
+    ///
+    /// 它比对外契约 `SessionPhase` 多出「后台子代理运行中」等中间态，
+    /// 不参与序列化，也不进 `SessionSnapshot`：对外仍只投影为五种阶段。
+    state: HashMap<String, SessionState>,
+    /// 各会话当前仍在运行的子代理集合（`agent_id` 全集）。
+    ///
+    /// 用集合而不是布尔值，是为了支持并行子代理：先结束一个不代表后台已经空闲，
+    /// 必须等最后一个活跃子代理结束才退出「后台运行」。
+    subagents: HashMap<String, HashSet<String>>,
     /// 各会话累计的 token；由 monitor 的 TokenTracker 写入。
     /// 它不是事件派生字段，所以在 snapshot() 时合并进 SessionSnapshot。
     token_totals: HashMap<String, TokenTotals>,
@@ -31,6 +41,8 @@ impl StatusRegistry {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            state: HashMap::new(),
+            subagents: HashMap::new(),
             token_totals: HashMap::new(),
             seen_events: HashSet::new(),
             revision: 0,
@@ -75,6 +87,8 @@ impl StatusRegistry {
     /// Manually removes one visible session light from the runtime registry.
     pub fn dismiss_session(&mut self, key: &str) -> bool {
         let removed = self.sessions.remove(key).is_some();
+        self.state.remove(key);
+        self.subagents.remove(key);
         self.token_totals.remove(key);
         if removed {
             self.revision = self.revision.saturating_add(1);
@@ -118,7 +132,8 @@ impl StatusRegistry {
         let now = event.received_at_ms;
         let key = session_key(event.provider, &event.session_id);
 
-        // Extract previous session data before any mutable borrow.
+        // 先把上一版快照的数据整块取出来：后面要多处查询 / 更新 self，
+        // 不能在借用 self.sessions 的同时再去碰别的字段。
         let (
             previous_phase,
             previous_started_at,
@@ -156,33 +171,74 @@ impl StatusRegistry {
             None => (None, None, None, None, None, None, None),
         };
 
-        // ── 子代理事件守卫 ──
-        // 子代理(subagent)的事件与主会话**共用同一个 `session_id`**（实测确认），只靠
-        // `agent_id` 区分。若让它们参与灯色迁移，主线程 Waiting（等用户作答/授权）会被
-        // 仍在后台跑的子代理事件顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是
-        // 绿色」。因此对**已存活**的会话：只刷新 last_seen_at_ms（保住存活判定，避免长子代理
-        // 把主线程灯判超时清掉），阶段 / is_flashing / remove_at / completed_at / error_code
-        // 全部原样保留，整块早返回（不能再走下面的建档路径 —— 否则 flash_deadline 会按
-        // 子代理事件重算成 None，抹掉 Completed 的移除计时与 Waiting+Stop 的落黄计时）。
-        // 会话**尚不存在**（UFO 中途启动）时正常建档，落到 Running，保证灯能出现。
+        // 上一版状态机状态：老会话从对外阶段回推，新会话从未知起步。
+        let previous_state = self
+            .state
+            .get(&key)
+            .copied()
+            .or_else(|| previous_phase.map(SessionState::from_phase))
+            .unwrap_or(SessionState::Unknown);
+
+        // ── 子代理事件：驱动「后台运行」语义 ──
+        // 子代理与主会话**共用同一个 `session_id`**（实测确认），只靠 `agent_id` 区分。
+        // 主线程 `Stop` 落黄后，子代理仍在跑时灯要保持绿色；最后一个子代理结束才落黄。
+        // 但「等用户操作」（权限 / 提问）优先级更高：那种情形下子代理事件不得把黄灯顶回绿。
+        let mut previous_state = previous_state;
+        // 中途启动兜底：内存里从没见过该会话时，一条子代理活动事件也要能建出灯。
+        // 它只是给归约函数一个「就像主线程在跑」的起点，灯本身仍记为后台运行。
+        let bootstrap = previous_phase.is_none()
+            && event.agent_id.is_some()
+            && event.kind == AgentEventKind::Running;
+        if bootstrap {
+            previous_state = SessionState::Running;
+        }
+        let mut subagent_set = self.subagents.remove(&key).unwrap_or_default();
+        let lead = event.agent_id.as_ref().map(|id| id.as_str());
         if event.agent_id.is_some() {
-            if let Some(previous) = self.sessions.get_mut(&key) {
-                previous.last_seen_at_ms = now;
-                return false;
+            // 已结束 / 已失败：子代理事件只刷新存活时间，不动任何计时（Completed 的移除
+            // 计时、Error 的错误码都必须原样保留），也不污染子代理集合。
+            if matches!(
+                previous_state,
+                SessionState::Completed | SessionState::Failed
+            ) {
+                if let Some(previous) = self.sessions.get_mut(&key) {
+                    previous.last_seen_at_ms = now;
+                }
+                self.subagents.insert(key, subagent_set);
+                // 状态未被驱动，但存活时间已推进，需要对外刷新一次。
+                self.revision = self.revision.saturating_add(1);
+                return true;
+            }
+            if matches!(
+                event.kind,
+                AgentEventKind::SubagentStarted | AgentEventKind::Running
+            ) {
+                // 外层已按 agent_id 分流；这里把子代理生命周期与运行事件都记入集合，
+                // 避免只收到工具事件、没有 SubagentStart 时漏判后台仍在运行。
+                if let Some(id) = lead {
+                    subagent_set.insert(id.to_string());
+                }
+            }
+            // 子代理结束：把它从活跃集合里移除；集合清空即代表后台工作全部收尾。
+            if event.kind == AgentEventKind::SubagentStopped {
+                if let Some(id) = lead {
+                    subagent_set.remove(id);
+                }
             }
         }
 
-        // 红灯不粘：事件映射出的阶段即最终阶段。
-        // 任何能转灯的事件（TurnFinished→黄、SessionFinished→绿闪、Running→绿等）都允许把
-        // 红灯带走；唯一例外是 Unknown —— 无法识别的事件不构成转灯信号，保持原红灯。
-        let (mapped_phase, flash_waiting) = light_for_kind(event.kind);
-        let phase = if previous_phase == Some(SessionPhase::Error)
-            && event.kind == AgentEventKind::Unknown
-        {
-            SessionPhase::Error
-        } else {
-            mapped_phase
-        };
+        // 状态机归约：把「主线程事件」与「子代理事件」统一成下一次内部状态。
+        let (session_state, flash_waiting) = reduce_state(previous_state, &event, &subagent_set);
+        // 红灯不粘，但 End 事件不清空仍然存活的子代理集合：主线程收尾不代表后台工作已经结束。
+        if matches!(
+            session_state,
+            SessionState::Completed | SessionState::Failed
+        ) {
+            subagent_set.clear();
+        }
+
+        // 同样地，外部只有五种阶段：Completed / Failed 不能被投影成后台运行。
+        let phase = session_state.to_phase();
 
         // When a new run starts (Running phase), clear old Waiting sessions
         // for the same provider. This implements "completed state stays until next run".
@@ -209,7 +265,7 @@ impl StatusRegistry {
             .unwrap_or(now);
         // TurnFinished（一轮执行完成）→ Waiting 但先绿闪，retention 后落成黄常亮；
         // SessionFinished → Completed，绿闪后移除；其它 Waiting 直接黄灯不闪。
-        // 「是否绿闪」由 kind 决定，见 light_for_kind。
+        // 「是否绿闪」由 kind 决定，见 reduce_state。
         let flash_deadline = if retention_ms > 0
             && (phase == SessionPhase::Completed
                 || (phase == SessionPhase::Waiting && flash_waiting))
@@ -238,6 +294,15 @@ impl StatusRegistry {
                 None => seed.tokens,
             };
             self.token_totals.insert(key.clone(), floored);
+        }
+
+        // 收尾前落库状态机与活跃子代理集合：非法 / 去重事件在更早的守卫里已经返回，
+        // 走到这里说明事件确实生效，可以安全覆盖运行时镜像。
+        self.state.insert(key.clone(), session_state);
+        if subagent_set.is_empty() {
+            self.subagents.remove(&key);
+        } else {
+            self.subagents.insert(key.clone(), subagent_set);
         }
 
         self.sessions.insert(
@@ -364,6 +429,10 @@ impl StatusRegistry {
         // 会话消失后同步丢弃其 token 记录，避免长期运行下无限增长。
         let live: HashSet<String> = self.sessions.keys().cloned().collect();
         self.token_totals.retain(|key, _| live.contains(key));
+        // 私有运行时镜像（状态机 / 活跃子代理）同理：会话一旦被清理，
+        // 对应记录必须一起丢，否则长期运行会越积越多。
+        self.state.retain(|key, _| live.contains(key));
+        self.subagents.retain(|key, _| live.contains(key));
 
         let changed = flash_settled || before != self.sessions.len();
         if changed {
@@ -442,26 +511,137 @@ const DEFAULT_RUNNING_TIMEOUT_MS: i64 = 60 * 1000;
 /// when the next run starts, but this prevents leaks if no run ever starts.
 const WAITING_TIMEOUT_MS: i64 = 30 * 60 * 1000; // 30 minutes
 
-/// 事件种类 → 灯态 + 是否「先闪烁的等待」。内核唯一的转灯策略表，不含平台词汇。
+/// 内核私有状态机的状态。
+///
+/// 它比对外契约 [`SessionPhase`] 多一层：把「绿灯」拆成「主线程正在跑」与
+/// 「主线程已停、子代理仍在后台跑」。后者也要绿，但语义不同 —— 子代理全部结束
+/// 后要立刻落回黄灯，而不是再走一次 Stop 的绿闪。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionState {
+    /// 主线程正在执行（工具调用 / 生成中）。
+    Running,
+    /// 主线程一轮结束、等下一条 prompt；此时黄灯（Stop 之后先绿闪再落成它）。
+    WaitingForPrompt,
+    /// 正在等用户操作（权限弹窗 / elicitation）；黄灯且不闪。
+    WaitingForUser,
+    /// 主线程已停，但仍有子代理在后台跑；对外仍表现为绿常亮。
+    BackgroundRunning,
+    /// 会话确认结束，绿闪后移除。
+    Completed,
+    /// 本轮或会话出错，红灯。
+    Failed,
+    /// 无法识别 / 冷启动，保守状态：不主动转灯。
+    Unknown,
+}
+
+impl SessionState {
+    /// 从对外快照阶段回推内部状态。
+    ///
+    /// 只有内存里缺少私有状态（例如进程重启后从存档恢复）时才会用到；
+    /// 回推不出「后台运行」这一中间态，因此退化为对应的对外语义。
+    fn from_phase(phase: SessionPhase) -> Self {
+        match phase {
+            SessionPhase::Running => Self::Running,
+            SessionPhase::Waiting => Self::WaitingForPrompt,
+            SessionPhase::Completed => Self::Completed,
+            SessionPhase::Error => Self::Failed,
+            SessionPhase::Unknown => Self::Unknown,
+        }
+    }
+
+    /// 投影成对外契约阶段：后台运行也算「正在执行」。
+    fn to_phase(self) -> SessionPhase {
+        match self {
+            Self::Running | Self::BackgroundRunning => SessionPhase::Running,
+            Self::WaitingForPrompt | Self::WaitingForUser => SessionPhase::Waiting,
+            Self::Completed => SessionPhase::Completed,
+            Self::Failed => SessionPhase::Error,
+            Self::Unknown => SessionPhase::Unknown,
+        }
+    }
+
+}
+
+/// 状态机归约：把「上一状态 + 本次事件」映射为「下一状态 + 是否先绿闪的等待」。
 ///
 /// 灯色语义：
-/// - Running → 绿常亮（正在执行）
-/// - Waiting → 黄灯（等待用户操作，对话未结束）
-///   - 其中 TurnFinished 会额外先绿闪，retention 后落成黄常亮（见 apply_event / cleanup）
-/// - Error → 红灯（接口/不可抗力错误）
+/// - Running / BackgroundRunning → 绿常亮（正在执行）
+/// - WaitingForPrompt / WaitingForUser → 黄灯（等待用户操作，对话未结束）
+///   - 其中主线程 TurnFinished 会额外先绿闪，retention 后落成黄常亮
+/// - Failed → 红灯（接口/不可抗力错误）
 /// - Completed → 绿闪后移除（对话已完成，非错误结束）
-fn light_for_kind(kind: AgentEventKind) -> (SessionPhase, bool) {
-    match kind {
-        AgentEventKind::Running => (SessionPhase::Running, false),
-        // 一轮回复结束，等下一条 prompt：先绿闪再落黄。
-        AgentEventKind::TurnFinished => (SessionPhase::Waiting, true),
-        // 权限弹窗 / elicitation：直接黄，不闪。
-        AgentEventKind::WaitingForUser => (SessionPhase::Waiting, false),
-        // 对话结束：绿闪后移除（移除计时由 apply_event 里的 flash_deadline 负责）。
-        AgentEventKind::SessionFinished => (SessionPhase::Completed, false),
-        AgentEventKind::Failed => (SessionPhase::Error, false),
-        AgentEventKind::Unknown => (SessionPhase::Unknown, false),
-    }
+///
+/// 关键优先级：**等待用户操作 > 子代理后台运行 > 空闲等待**。
+/// 主线程已经弹出权限框 / 提问时，后台子代理事件不得把黄灯顶回绿。
+fn reduce_state(
+    previous: SessionState,
+    event: &AgentEvent,
+    subagents: &HashSet<String>,
+) -> (SessionState, bool) {
+    let from_subagent = event.agent_id.is_some();
+    let next = match event.kind {
+        AgentEventKind::Running => {
+            // 子代理的活动事件只在「主线程已停、等 prompt」时把它拉回后台运行；
+            // 等待用户操作（黄灯不闪）优先级更高，不能被子代理顶回绿。
+            if from_subagent {
+                match previous {
+                    SessionState::WaitingForPrompt => SessionState::BackgroundRunning,
+                    other => other,
+                }
+            } else {
+                SessionState::Running
+            }
+        }
+        AgentEventKind::TurnFinished => {
+            // 主线程已经 Stop，但子代理仍在后台跑时不属于「等 prompt」，
+            // 否则 Stop 的绿闪结束后会错误落黄。
+            match previous {
+                SessionState::WaitingForUser => SessionState::WaitingForUser,
+                _ if subagents.is_empty() => SessionState::WaitingForPrompt,
+                _ => SessionState::BackgroundRunning,
+            }
+        }
+        AgentEventKind::WaitingForUser => SessionState::WaitingForUser,
+        AgentEventKind::SessionFinished => SessionState::Completed,
+        AgentEventKind::SubagentStarted => match previous {
+            // 主线程仍在跑时由主线程状态占优；等待用户操作时黄灯优先。
+            SessionState::Running => SessionState::Running,
+            SessionState::WaitingForUser => SessionState::WaitingForUser,
+            SessionState::Completed => SessionState::Completed,
+            SessionState::Failed => SessionState::Failed,
+            SessionState::WaitingForPrompt
+            | SessionState::BackgroundRunning
+            | SessionState::Unknown => SessionState::BackgroundRunning,
+        },
+        AgentEventKind::SubagentStopped => {
+            match previous {
+                // 主线程仍在跑 / 正在等用户操作时，子代理结束不改变当前语义。
+                SessionState::Running => SessionState::Running,
+                SessionState::WaitingForUser => SessionState::WaitingForUser,
+                SessionState::Completed => SessionState::Completed,
+                SessionState::Failed => SessionState::Failed,
+                // 仍有其它并行子代理 → 保持后台运行；
+                // 最后一个结束 → 落回等 prompt（黄灯）。
+                SessionState::BackgroundRunning => {
+                    if subagents.is_empty() {
+                        SessionState::WaitingForPrompt
+                    } else {
+                        SessionState::BackgroundRunning
+                    }
+                }
+                // 没有后台运行的已知状态时，不退化成「等 prompt」。
+                SessionState::WaitingForPrompt | SessionState::Unknown => previous,
+            }
+        }
+        AgentEventKind::Failed => SessionState::Failed,
+        AgentEventKind::Unknown => previous,
+    };
+    // 只有主线程「一轮顺利结束且后台没有子代理」才绿闪；
+    // 子代理收尾与权限等待都不闪。
+    let flash_waiting = !from_subagent
+        && event.kind == AgentEventKind::TurnFinished
+        && matches!(next, SessionState::WaitingForPrompt);
+    (next, flash_waiting)
 }
 
 #[cfg(test)]
@@ -1007,9 +1187,9 @@ mod tests {
         assert_eq!(registry.snapshot(200).sessions.len(), 2);
     }
 
-    // ── 子代理事件守卫 ──
+    // ── 子代理状态机 ──
     // 子代理事件与主会话共用 session_id，只靠 agent_id 区分。这批用例锁定
-    // 「子代理事件不得改变已存活会话的灯色」这一契约。
+    // 「主线程停下后子代理仍算后台运行」以及「等用户操作优先于后台运行」两条契约。
 
     #[test]
     fn subagent_events_do_not_override_waiting() {
@@ -1025,7 +1205,7 @@ mod tests {
         );
 
         // 后台子代理仍在跑：它的工具事件与主会话共用 session_id。
-        // 修复前这些事件会把 Waiting 顶回 Running（灯一直绿）。
+        // 等用户作答/授权优先于「后台运行」：此时事件不得把黄灯顶回绿。
         registry.apply_event(
             subagent_event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
             30_000,
@@ -1043,29 +1223,158 @@ mod tests {
         assert_eq!(session.phase, SessionPhase::Waiting, "子代理事件不得把黄灯顶回绿");
         assert!(!session.is_flashing);
         assert_eq!(session.remove_at_ms, None);
+
+        // 子代理结束也不能覆盖「等用户操作」：仍是黄灯。
+        registry.apply_event(
+            subagent_event("5", Provider::Claude, "one", AgentEventKind::SubagentStopped, 500),
+            30_000,
+        );
+        assert_eq!(
+            registry.snapshot(500).sessions[0].phase,
+            SessionPhase::Waiting
+        );
     }
 
     #[test]
-    fn subagent_events_do_not_settle_stop_flash_early() {
+    fn subagent_start_does_not_override_waiting_for_user() {
         let mut registry = StatusRegistry::new();
-        // Stop：Waiting + 绿闪，retention 后落黄常亮。
-        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::TurnFinished, 100), 30_000);
-        let remove_at = registry.snapshot(100).sessions[0].remove_at_ms;
-        assert_eq!(remove_at, Some(30_100));
-
-        // 子代理事件不得抹掉绿闪计时（若只改 phase 而重算 flash_deadline 就会丢）。
         registry.apply_event(
-            subagent_event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
+            event("1", Provider::Claude, "one", AgentEventKind::WaitingForUser, 100),
+            30_000,
+        );
+
+        // 等用户操作时即使子代理开始，也必须保持黄灯。
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::SubagentStarted, 200),
             30_000,
         );
         let session = &registry.snapshot(200).sessions[0];
         assert_eq!(session.phase, SessionPhase::Waiting);
-        assert!(session.is_flashing, "绿闪不得被子代理事件关掉");
-        assert_eq!(session.remove_at_ms, remove_at, "落黄计时不得被重算");
+        assert!(!session.is_flashing);
+        assert_eq!(session.remove_at_ms, None);
 
-        // 到点仍正常落成黄常亮。
-        assert!(registry.cleanup(30_100, DEFAULT_RUNNING_TIMEOUT_MS, |_| Some(true)));
-        assert!(!registry.snapshot(30_100).sessions[0].is_flashing);
+        // 即便随后收到主线程 Stop，等待用户操作的优先级仍然更高。
+        registry.apply_event(
+            event("3", Provider::Claude, "one", AgentEventKind::TurnFinished, 300),
+            30_000,
+        );
+        let session = &registry.snapshot(300).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Waiting);
+        assert!(!session.is_flashing);
+        assert_eq!(session.remove_at_ms, None);
+    }
+
+    #[test]
+    fn subagent_stop_does_not_override_running_main_thread() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 100),
+            30_000,
+        );
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::SubagentStarted, 200),
+            30_000,
+        );
+
+        // 主线程仍在执行时，某个子代理结束不能把灯误落成黄灯。
+        registry.apply_event(
+            subagent_event("3", Provider::Claude, "one", AgentEventKind::SubagentStopped, 300),
+            30_000,
+        );
+        let session = &registry.snapshot(300).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Running);
+        assert!(!session.is_flashing);
+        assert_eq!(session.remove_at_ms, None);
+    }
+
+    #[test]
+    fn turn_finished_keeps_green_when_subagent_already_active() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", AgentEventKind::Running, 100),
+            30_000,
+        );
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::Running, 200),
+            30_000,
+        );
+
+        // 如果只收到子代理工具事件、主线程后 Stop，Stop 也不能被当成「等 prompt」而落黄。
+        registry.apply_event(
+            event("3", Provider::Claude, "one", AgentEventKind::TurnFinished, 300),
+            30_000,
+        );
+        let session = &registry.snapshot(300).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Running);
+        assert!(!session.is_flashing);
+        assert_eq!(session.remove_at_ms, None);
+    }
+
+    #[test]
+    fn subagent_start_does_not_resurrect_failed_session() {
+        let mut registry = StatusRegistry::new();
+        registry.apply_event(
+            event("1", Provider::Claude, "one", AgentEventKind::Failed, 100),
+            30_000,
+        );
+
+        // 红灯不能被迟到的子代理生命周期事件顶回绿灯。
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::SubagentStarted, 200),
+            30_000,
+        );
+        let session = &registry.snapshot(200).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Error);
+        assert_eq!(session.last_seen_at_ms, 200);
+    }
+
+    #[test]
+    fn stop_then_subagent_start_keeps_the_light_green() {
+        let mut registry = StatusRegistry::new();
+        // Stop：一轮结束，先绿闪、等待落黄。
+        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::TurnFinished, 100), 30_000);
+        assert_eq!(registry.snapshot(100).sessions[0].remove_at_ms, Some(30_100));
+
+        // 主线程 Stop 后子代理开始：后台仍在干活 → 回到绿常亮，并清掉 Stop 的落黄计时。
+        registry.apply_event(
+            subagent_event("2", Provider::Claude, "one", AgentEventKind::SubagentStarted, 200),
+            30_000,
+        );
+        let session = &registry.snapshot(200).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Running, "子代理在跑时灯应保持绿色");
+        assert!(!session.is_flashing);
+        assert_eq!(session.remove_at_ms, None, "后台运行期间不该保留落黄计时");
+    }
+
+    #[test]
+    fn last_subagent_stop_lands_on_waiting_without_flash() {
+        let mut registry = StatusRegistry::new();
+        // 主线程已 Stop（绿闪等待落黄），两个子代理并行在后台跑。
+        registry.apply_event(event("1", Provider::Claude, "one", AgentEventKind::TurnFinished, 100), 30_000);
+        let mut first = subagent_event("2", Provider::Claude, "one", AgentEventKind::SubagentStarted, 200);
+        first.agent_id = Some("agent-1".to_string());
+        registry.apply_event(first, 30_000);
+        let mut second = subagent_event("3", Provider::Claude, "one", AgentEventKind::SubagentStarted, 300);
+        second.agent_id = Some("agent-2".to_string());
+        registry.apply_event(second, 30_000);
+
+        // 只结束一个：仍有后台工作 → 继续绿。
+        let mut stop_first = subagent_event("4", Provider::Claude, "one", AgentEventKind::SubagentStopped, 400);
+        stop_first.agent_id = Some("agent-1".to_string());
+        registry.apply_event(stop_first, 30_000);
+        let session = &registry.snapshot(400).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Running);
+        assert!(!session.is_flashing);
+        assert_eq!(session.remove_at_ms, None);
+
+        // 最后一个结束：立即落黄，且不重新绿闪、不留移除计时。
+        let mut stop_second = subagent_event("5", Provider::Claude, "one", AgentEventKind::SubagentStopped, 500);
+        stop_second.agent_id = Some("agent-2".to_string());
+        registry.apply_event(stop_second, 30_000);
+        let session = &registry.snapshot(500).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Waiting);
+        assert!(!session.is_flashing, "最后一个子代理结束不应再绿闪");
+        assert_eq!(session.remove_at_ms, None);
     }
 
     #[test]

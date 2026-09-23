@@ -831,12 +831,17 @@ base_url = "http://not-this/v1"
         ];
         for (value, phase, flashing) in cases {
             let record = classify_rollout_line(&line(value.clone())).expect("认得出");
-            // 内核的 kind → 灯态策略表（与 kernel::light_for_kind 同一口径）。
+            // 内核的 kind → 灯态策略表（与 kernel::reduce_state 同一口径）。
             let (got_phase, got_flash) = match record.kind.expect("有灯态") {
                 AgentEventKind::Running => (SessionPhase::Running, false),
                 AgentEventKind::TurnFinished => (SessionPhase::Waiting, true),
                 AgentEventKind::WaitingForUser => (SessionPhase::Waiting, false),
                 AgentEventKind::SessionFinished => (SessionPhase::Completed, false),
+                // Codex 侧暂无子代理事件；这里仅补齐穷尽匹配，真到了内核会走
+                // 后台运行状态机，同样投影为绿常亮。
+                AgentEventKind::SubagentStarted | AgentEventKind::SubagentStopped => {
+                    (SessionPhase::Running, false)
+                }
                 AgentEventKind::Failed => (SessionPhase::Error, false),
                 AgentEventKind::Unknown => (SessionPhase::Unknown, false),
             };

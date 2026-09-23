@@ -87,13 +87,19 @@ fn classify(event_name: &str, notification_type: Option<&str>) -> AgentEventKind
         // ── 正在执行（绿常亮） ──
         "session_start" | "session_started" | "setup" | "user_prompt_submit"
         | "user_prompt_expansion" | "pre_tool_use" | "post_tool_use" | "post_tool_use_failure"
-        | "post_tool_batch" | "subagent_start" | "subagent_stop" | "task_created"
+        | "post_tool_batch" | "task_created"
         | "message_display" | "pre_compact" | "post_compact" | "pre_model_switch"
         | "post_model_switch" | "elicit_result" | "elicitation_result"
         | "instructions_loaded" | "config_change" | "cwd_changed" | "directory_added"
         | "file_changed" | "worktree_create" | "worktree_remove"
         // 非「等人操作」信号，保持执行链路语义
         | "permission_denied" | "task_completed" | "teammate_idle" => AgentEventKind::Running,
+
+        // ── 子代理生命周期 ──
+        // 子代理与主会话共用 session_id；内核按 agent_id 维护活跃集合，
+        // 从而支持 Plan 模式下主线程 Stop 后仍有后台子代理运行。
+        "subagent_start" => AgentEventKind::SubagentStarted,
+        "subagent_stop" => AgentEventKind::SubagentStopped,
 
         // ── 等待用户操作 ──
         // Stop：一轮回复结束，等下一条 prompt → 内核先绿闪再落黄

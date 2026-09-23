@@ -59,9 +59,16 @@ pub enum AgentEventKind {
     WaitingForUser,
     /// 会话确认结束（Claude / Codex 的 `SessionEnd`）→ 绿闪后移除。
     SessionFinished,
+    /// 子代理开始执行；与主会话共用 `session_id`，靠 `agent_id` 区分。
+    ///
+    /// 它不直接等于主线程正在执行：主线程可能已经 `Stop`、正在等用户输入，
+    /// 而 Plan / Agent 子对话仍在后台跑。内核用该语义维护活跃子代理集合。
+    SubagentStarted,
+    /// 子代理结束；只有最后一个活跃子代理结束时，后台运行态才会退出。
+    SubagentStopped,
     /// 本轮或会话出错 → 红灯。
     Failed,
-    /// 无法识别；内核保守处理（不构成转灯信号，见 `kernel::light_for_kind`）。
+    /// 无法识别；内核保守处理（不构成转灯信号，见 `kernel::reduce_state`）。
     #[default]
     Unknown,
 }
