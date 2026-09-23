@@ -40,7 +40,7 @@
   color-scheme: dark;
 
   /* —— 表面 —— */
-  --ufo-bg: rgba(61, 61, 61, 0.8);
+  --ufo-bg: rgba(61, 61, 61, 0.95);
   /* 主窗实色，不做透明合成 / backdrop-filter */
   --ufo-bg-main: #3d3d3d;
   --ufo-surface: #2a2a2a;
@@ -151,7 +151,7 @@
   color-scheme: light;
 
   /* —— 表面：浅灰底 + 白卡，靠明度差分层次，不做纯白一片 —— */
-  --ufo-bg: rgba(245, 245, 245, 0.8);
+  --ufo-bg: rgba(245, 245, 245, 0.90);
   --ufo-bg-main: #f4f4f5;
   --ufo-surface: #ffffff;
   --ufo-surface-2: #f0f0f1;
