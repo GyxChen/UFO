@@ -680,6 +680,37 @@
       pointer-events: none;
     }
 
+    .edge-event {
+      cursor: pointer;
+      outline: none;
+    }
+
+    .edge-event .edge-event-bg {
+      fill: #252525;
+      stroke: rgba(255, 255, 255, 0.18);
+      stroke-width: 1;
+      transition: fill 150ms ease, stroke 150ms ease, stroke-width 150ms ease;
+    }
+
+    .edge-event .edge-event-name {
+      fill: #d7d7d7;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      pointer-events: none;
+    }
+
+    .edge-event:hover .edge-event-bg,
+    .edge-event:focus-visible .edge-event-bg {
+      fill: #343434;
+      stroke: var(--green);
+      stroke-width: 2;
+    }
+
+    .edge-event:focus-visible .edge-event-bg {
+      filter: drop-shadow(0 0 5px rgba(52, 211, 153, 0.45));
+    }
+
     .edge-group.is-dim {
       opacity: 0.13;
     }
@@ -693,6 +724,27 @@
     }
 
     .edge-group.is-active .edge-label {
+      fill: var(--text);
+    }
+
+    .edge-group.is-active .edge-event-bg {
+      fill: #333333;
+      stroke-width: 1.8;
+    }
+
+    .edge-group.green.is-active .edge-event-bg {
+      stroke: var(--green);
+    }
+
+    .edge-group.yellow.is-active .edge-event-bg {
+      stroke: var(--yellow);
+    }
+
+    .edge-group.red.is-active .edge-event-bg {
+      stroke: var(--red);
+    }
+
+    .edge-group.is-active .edge-event-name {
       fill: var(--text);
     }
 
@@ -750,6 +802,61 @@
       padding: 0 16px 16px;
       color: var(--muted);
       font-size: 12px;
+    }
+
+    .event-tooltip {
+      position: fixed;
+      z-index: 80;
+      width: min(340px, calc(100vw - 24px));
+      max-height: min(420px, calc(100vh - 24px));
+      width: min(340px, calc(100dvw - 24px));
+      max-height: min(420px, calc(100dvh - 24px));
+      overflow: hidden;
+      padding: 13px 14px;
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      background: rgba(31, 31, 31, 0.98);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+      color: #dedede;
+      pointer-events: none;
+    }
+
+    .event-tooltip[hidden] {
+      display: none;
+    }
+
+    .event-tooltip h3 {
+      margin: 0 0 8px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 14px;
+    }
+
+    .event-tooltip dl {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+    }
+
+    .event-tooltip dt {
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .event-tooltip dd {
+      margin: 1px 0 0;
+      color: #c9c9c9;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .event-tooltip.is-danger dt {
+      color: var(--red);
+    }
+
+    .event-tooltip.is-warning dt {
+      color: var(--yellow);
     }
 
     .legend-item {
@@ -1472,7 +1579,7 @@
       <div class="section-head">
         <div>
           <h2>状态流向图</h2>
-          <p>点击下方状态或事件，可高亮相关路径。关闭 JavaScript 时，四层子图仍完整可见；所有边线只走横竖轨道，不跨层缠绕。</p>
+          <p>点击下方状态或事件，可高亮相关路径；悬停、键盘聚焦或点击边上的事件名，可查看该事件说明。关闭 JavaScript 时，事件名与四层子图仍完整可见。</p>
         </div>
       </div>
       <div class="panel">
@@ -1523,27 +1630,45 @@
 
               <g class="edge-group green" data-edge data-event="Running" data-state="Unknown Running">
                 <path class="edge" d="M200 142 H300" marker-end="url(#arrow-green)"></path>
-                <text class="edge-label" x="218" y="128">主线程 Running</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="218" y="118" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="225" y="132">Running</text>
+                </g>
               </g>
               <g class="edge-group green" data-edge data-event="TurnFinished" data-state="Running WaitingForPrompt">
                 <path class="edge" d="M460 142 H570" marker-end="url(#arrow-green)"></path>
-                <text class="edge-label" x="478" y="128">无子代理：落黄</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 TurnFinished：查看说明" aria-describedby="event-tooltip" data-tooltip-event="TurnFinished">
+                  <rect class="edge-event-bg" x="473" y="118" width="94" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="480" y="132">TurnFinished</text>
+                </g>
               </g>
               <g class="edge-group green" data-edge data-event="Running" data-state="WaitingForPrompt Running">
-                <path class="edge" d="M570 168 V202 H340 V192" marker-end="url(#arrow-green)"></path>
-                <text class="edge-label" x="432" y="220">Running 重入</text>
+                <path class="edge" d="M570 168 V214 H340 V192" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="466" y="190" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="473" y="204">Running</text>
+                </g>
               </g>
               <g class="edge-group green" data-edge data-event="SessionFinished" data-state="Running Completed">
                 <path class="edge" d="M420 192 V228 H980 V179" marker-end="url(#arrow-green)"></path>
-                <text class="edge-label" x="650" y="246">SessionFinished</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SessionFinished：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SessionFinished">
+                  <rect class="edge-event-bg" x="620" y="206" width="112" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="627" y="220">SessionFinished</text>
+                </g>
               </g>
               <g class="edge-group green" data-edge data-event="SessionFinished" data-state="WaitingForPrompt Completed">
                 <path class="edge" d="M750 142 H900" marker-end="url(#arrow-green)"></path>
-                <text class="edge-label" x="785" y="128">SessionFinished</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SessionFinished：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SessionFinished">
+                  <rect class="edge-event-bg" x="775" y="112" width="112" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="782" y="126">SessionFinished</text>
+                </g>
               </g>
               <g class="edge-group blocked" data-edge data-event="Unknown" data-state="Unknown">
                 <path class="edge" d="M90 105 V78 H160 V105" marker-end="url(#arrow)"></path>
-                <text class="edge-label" x="68" y="68">Unknown：保持原状态</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Unknown：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Unknown">
+                  <rect class="edge-event-bg" x="72" y="56" width="62" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="79" y="70">Unknown</text>
+                </g>
               </g>
 
               <g class="node unknown" data-graph-node="Unknown">
@@ -1575,60 +1700,86 @@
               <h3>2. 子代理分叉</h3>
               <p>子代理只把主线程推到后台态；黄灯优先覆盖绿色活动。</p>
             </div>
-            <svg viewBox="0 0 1180 330" role="img" aria-labelledby="subagent-graph-title subagent-graph-desc">
+            <svg viewBox="0 0 1180 400" role="img" aria-labelledby="subagent-graph-title subagent-graph-desc">
               <title id="subagent-graph-title">子代理后台状态流向图</title>
               <desc id="subagent-graph-desc">SubagentStarted 进入 BackgroundRunning，最后一个 SubagentStopped 回到 WaitingForPrompt；WaitingForUser 保持最高优先级。</desc>
-              <rect class="lane-frame" x="12" y="12" width="1156" height="306" rx="14"></rect>
+              <rect class="lane-frame" x="12" y="12" width="1156" height="376" rx="14"></rect>
               <text class="lane-title" x="28" y="38">SubagentStarted - BackgroundRunning - SubagentStopped</text>
               <text class="lane-note" x="28" y="56">上层只表达后台分支，下层单列 WaitingForUser 覆盖规则。</text>
 
               <g class="edge-group green" data-edge data-event="SubagentStarted Running" data-state="Running BackgroundRunning">
-                <path class="edge" d="M210 170 H310" marker-end="url(#arrow-green)"></path>
-                <text class="edge-label" x="220" y="156">子代理开始</text>
+                <path class="edge" d="M210 230 H310" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStarted：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStarted">
+                  <rect class="edge-event-bg" x="218" y="152" width="122" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="225" y="166">SubagentStarted</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="346" y="152" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="353" y="166">Running</text>
+                </g>
               </g>
               <g class="edge-group yellow" data-edge data-event="SubagentStopped" data-state="BackgroundRunning WaitingForPrompt">
-                <path class="edge" d="M510 170 H620" marker-end="url(#arrow-yellow)"></path>
-                <text class="edge-label" x="520" y="156">最后子代理结束</text>
+                <path class="edge" d="M510 230 H620" marker-end="url(#arrow-yellow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStopped：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStopped">
+                  <rect class="edge-event-bg" x="518" y="152" width="126" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="525" y="166">SubagentStopped</text>
+                </g>
               </g>
               <g class="edge-group green" data-edge data-event="SubagentStarted Running" data-state="WaitingForPrompt BackgroundRunning">
-                <path class="edge" d="M710 210 V270 H410 V225" marker-end="url(#arrow-green)"></path>
-                <text class="edge-label" x="510" y="288">新的子代理：回到后台绿</text>
+                <path class="edge" d="M710 270 V335 H410 V285" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStarted：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStarted">
+                  <rect class="edge-event-bg" x="490" y="310" width="122" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="497" y="324">SubagentStarted</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="618" y="310" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="625" y="324">Running</text>
+                </g>
               </g>
               <g class="edge-group yellow" data-edge data-event="WaitingForUser" data-state="BackgroundRunning WaitingForUser">
-                <path class="edge" d="M410 115 V72 H1010 V120" marker-end="url(#arrow-yellow)"></path>
-                <text class="edge-label" x="650" y="60">后台遇到等待：只允许黄</text>
+                <path class="edge" d="M410 175 V92 H1010 V180" marker-end="url(#arrow-yellow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 WaitingForUser：查看说明" aria-describedby="event-tooltip" data-tooltip-event="WaitingForUser">
+                  <rect class="edge-event-bg" x="616" y="68" width="114" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="623" y="82">WaitingForUser</text>
+                </g>
               </g>
               <g class="edge-group yellow" data-edge data-event="WaitingForUser" data-state="WaitingForPrompt WaitingForUser">
-                <path class="edge" d="M760 210 V250 H900 V220" marker-end="url(#arrow-yellow)"></path>
-                <text class="edge-label" x="780" y="242">等待操作</text>
+                <path class="edge" d="M710 270 V320 H900 V280" marker-end="url(#arrow-yellow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 WaitingForUser：查看说明" aria-describedby="event-tooltip" data-tooltip-event="WaitingForUser">
+                  <rect class="edge-event-bg" x="772" y="296" width="114" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="779" y="310">WaitingForUser</text>
+                </g>
               </g>
               <g class="edge-group yellow" data-edge data-event="WaitingForUser" data-state="Running WaitingForUser">
-                <path class="edge" d="M130 220 V292 H1010 V220" marker-end="url(#arrow-yellow)"></path>
-                <text class="edge-label" x="560" y="310">任何人机交互等待：立即压过运行态</text>
+                <path class="edge" d="M130 280 V370 H1010 V280" marker-end="url(#arrow-yellow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 WaitingForUser：查看说明" aria-describedby="event-tooltip" data-tooltip-event="WaitingForUser">
+                  <rect class="edge-event-bg" x="518" y="344" width="114" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="525" y="358">WaitingForUser</text>
+                </g>
               </g>
 
               <g class="node running" data-graph-node="Running">
-                <rect x="50" y="120" width="160" height="100" rx="10"></rect>
-                <text class="node-title" x="130" y="154" text-anchor="middle">Running</text>
-                <text class="node-sub" x="130" y="177" text-anchor="middle">主线程活动</text>
-                <text class="node-sub" x="130" y="195" text-anchor="middle">可同时有子代理</text>
+                <rect x="50" y="180" width="160" height="100" rx="10"></rect>
+                <text class="node-title" x="130" y="214" text-anchor="middle">Running</text>
+                <text class="node-sub" x="130" y="237" text-anchor="middle">主线程活动</text>
+                <text class="node-sub" x="130" y="255" text-anchor="middle">可同时有子代理</text>
               </g>
               <g class="node running" data-graph-node="BackgroundRunning">
-                <rect x="310" y="115" width="200" height="110" rx="10"></rect>
-                <text class="node-title" x="410" y="149" text-anchor="middle">BackgroundRunning</text>
-                <text class="node-sub" x="410" y="172" text-anchor="middle">主线程已停</text>
-                <text class="node-sub" x="410" y="190" text-anchor="middle">活跃子代理非空，对外绿灯</text>
+                <rect x="310" y="175" width="200" height="110" rx="10"></rect>
+                <text class="node-title" x="410" y="209" text-anchor="middle">BackgroundRunning</text>
+                <text class="node-sub" x="410" y="232" text-anchor="middle">主线程已停</text>
+                <text class="node-sub" x="410" y="250" text-anchor="middle">活跃子代理非空，对外绿灯</text>
               </g>
               <g class="node waiting" data-graph-node="WaitingForPrompt">
-                <rect x="620" y="130" width="180" height="80" rx="10"></rect>
-                <text class="node-title" x="710" y="160" text-anchor="middle">WaitingForPrompt</text>
-                <text class="node-sub" x="710" y="182" text-anchor="middle">空闲等待，不重新绿闪</text>
+                <rect x="620" y="190" width="180" height="80" rx="10"></rect>
+                <text class="node-title" x="710" y="220" text-anchor="middle">WaitingForPrompt</text>
+                <text class="node-sub" x="710" y="242" text-anchor="middle">空闲等待，不重新绿闪</text>
               </g>
               <g class="node waiting" data-graph-node="WaitingForUser">
-                <rect x="900" y="120" width="170" height="100" rx="10"></rect>
-                <text class="node-title" x="985" y="154" text-anchor="middle">WaitingForUser</text>
-                <text class="node-sub" x="985" y="177" text-anchor="middle">权限 / 提问 / 输入</text>
-                <text class="node-sub" x="985" y="195" text-anchor="middle">优先级最高</text>
+                <rect x="900" y="180" width="170" height="100" rx="10"></rect>
+                <text class="node-title" x="985" y="214" text-anchor="middle">WaitingForUser</text>
+                <text class="node-sub" x="985" y="237" text-anchor="middle">权限 / 提问 / 输入</text>
+                <text class="node-sub" x="985" y="255" text-anchor="middle">优先级最高</text>
               </g>
             </svg>
           </article>
@@ -1688,19 +1839,47 @@
 
               <g class="edge-group green" data-edge data-event="SessionFinished" data-state="Running BackgroundRunning WaitingForPrompt WaitingForUser Completed">
                 <path class="edge" d="M230 150 H340" marker-end="url(#arrow-green)"></path>
-                <text class="edge-label" x="242" y="136">SessionFinished</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SessionFinished：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SessionFinished">
+                  <rect class="edge-event-bg" x="230" y="126" width="104" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="237" y="140">SessionFinished</text>
+                </g>
               </g>
               <g class="edge-group red" data-edge data-event="Failed" data-state="Running BackgroundRunning WaitingForPrompt WaitingForUser Unknown Failed">
                 <path class="edge" d="M140 195 V230 H700 V160" marker-end="url(#arrow-red)"></path>
-                <text class="edge-label" x="342" y="250">Failed：红灯且进入终态</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Failed：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Failed">
+                  <rect class="edge-event-bg" x="342" y="208" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="349" y="222">Failed</text>
+                </g>
               </g>
               <g class="edge-group blocked" data-edge data-event="SubagentStarted SubagentStopped Running" data-state="Completed Failed">
                 <path class="edge" d="M420 80 V40 H1010 V95" marker-end="url(#arrow)"></path>
-                <text class="edge-label" x="560" y="30">迟到子代理：只刷新时间</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStarted：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStarted">
+                  <rect class="edge-event-bg" x="404" y="18" width="122" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="411" y="32">SubagentStarted</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStopped：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStopped">
+                  <rect class="edge-event-bg" x="532" y="18" width="126" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="539" y="32">SubagentStopped</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="664" y="18" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="671" y="32">Running</text>
+                </g>
               </g>
               <g class="edge-group blocked" data-edge data-event="SubagentStarted SubagentStopped Running" data-state="Failed">
                 <path class="edge" d="M780 120 H900" marker-end="url(#arrow)"></path>
-                <text class="edge-label" x="796" y="108">不能复活</text>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStarted：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStarted">
+                  <rect class="edge-event-bg" x="772" y="14" width="122" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="779" y="28">SubagentStarted</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStopped：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStopped">
+                  <rect class="edge-event-bg" x="772" y="36" width="126" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="779" y="50">SubagentStopped</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="772" y="58" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="779" y="72">Running</text>
+                </g>
               </g>
 
               <g class="node unknown">
@@ -2034,10 +2213,12 @@
       </div>
     </section>
 
-    <footer class="footer">
+  <footer class="footer">
       <p>单文件离线文档。颜色语义：绿 <code>#34D399</code>、黄 <code>#FBBF24</code>、红 <code>#F87171</code>。无需网络资源即可完整阅读。</p>
     </footer>
   </main>
+
+  <div id="event-tooltip" class="event-tooltip" role="tooltip" hidden></div>
 
   <script>
     (() => {
@@ -2045,12 +2226,204 @@
       const nodes = Array.from(document.querySelectorAll("[data-graph-node]"));
       const buttons = Array.from(document.querySelectorAll("[data-graph-event]"));
       const clearButton = document.getElementById("graph-clear");
+      const eventTooltip = document.getElementById("event-tooltip");
+      const eventTooltipTargets = Array.from(document.querySelectorAll("[data-graph-event], .edge-event[data-tooltip-event]"));
+      const EVENT_INFO = {
+        Running: {
+          happens: "主线程事件进入 Running。带 agent_id 时先加入活跃集合；若当前是 WaitingForPrompt，则转成 BackgroundRunning。",
+          invariant: "主线程 Running 会清理同 provider 的其它 Waiting 会话；子代理 Running 跳过这一步，避免误清其它黄灯。",
+          misconception: "看到绿灯不等于主线程一定在跑，也可能是主线程已停、后台子代理仍在跑。"
+        },
+        TurnFinished: {
+          happens: "若正在等待用户，保持 WaitingForUser；若活跃集合为空，进入 WaitingForPrompt；否则进入 BackgroundRunning。",
+          invariant: "只有主线程事件最终落在 WaitingForPrompt 时才产生绿闪。带子代理 id 或无子代理但被等待用户拦截时都不闪。",
+          misconception: "Stop 不是 SessionEnd。它只说明当前轮结束，对话仍然活着。"
+        },
+        WaitingForUser: {
+          tone: "is-warning",
+          happens: "直接进入 WaitingForUser。之后任何子代理开始或结束都不会覆盖它。",
+          invariant: "直接黄灯不闪。用户中断也被视为等待下一步，不落红灯。",
+          misconception: "“还在等用户”不是“后台没工作”。子代理可能仍在跑，但人的操作优先级更高。"
+        },
+        SessionFinished: {
+          happens: "进入 Completed，清空该会话的活跃子代理集合。",
+          invariant: "移除计时开始后，迟到事件不能复活会话。Claude 的 SessionEnd reason 不用于 success / error 分流。",
+          misconception: "绿闪移除不是“正在运行”；它表示结束确认，只在短时间内可见。"
+        },
+        SubagentStarted: {
+          happens: "主线程 Running 或 WaitingForUser 时保持原状态；WaitingForPrompt、BackgroundRunning、Unknown 时进入 BackgroundRunning。",
+          invariant: "Completed / Failed 不接受子代理事件复活。它不能覆盖 WaitingForUser。",
+          misconception: "它不等于主线程 Running；它通常没有普通 Stop 的绿闪，也不会推进主线程轮次语义。"
+        },
+        SubagentStopped: {
+          happens: "主线程运行或等待用户时保持原状态。若当前是 BackgroundRunning 且集合为空，进入 WaitingForPrompt；否则保持后台运行。",
+          invariant: "不产生绿闪。WaitingForPrompt / Unknown 下不会退化成额外的等待态。",
+          misconception: "最后一个子代理结束也不需要再走一次 Stop 动画，直接黄灯才是正确语义。"
+        },
+        Failed: {
+          tone: "is-danger",
+          happens: "进入 Failed，清空集合。之后带 agent_id 的事件只刷新 last_seen_at_ms，不会改变状态。",
+          invariant: "红灯不闪。迟到子代理事件不能覆盖错误语义。",
+          misconception: "用户主动中断不一定红色。Codex 的 turn_aborted 是黄灯等待，不是接口错误。"
+        },
+        Unknown: {
+          happens: "reduce_state 直接返回上一状态，输出灯色不变。",
+          invariant: "不会主动转绿、黄、红，也不会产生闪烁。",
+          misconception: "Unknown 不是“未知灯态”总是显示成灰灯。它首先意味着“这条事件不提供转灯信息”。"
+        }
+      };
       let selectedEvent = "";
+      let activeTooltipTarget = null;
+      let pinnedTooltipTarget = null;
+      let hoveredTooltipTarget = null;
+      let focusedTooltipTarget = null;
 
       /**
        * 解析空格分隔的匹配标签。
        */
       const tokens = (value) => new Set(String(value || "").split(/\s+/).filter(Boolean));
+
+      /**
+       * 把数值夹在指定范围内。
+       */
+      const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+      /**
+       * 读取事件标记对应的事件名。
+       */
+      const eventNameForTarget = (target) => target.dataset.tooltipEvent || target.dataset.graphEvent || "";
+
+      /**
+       * 创建事件说明中的一段内容。
+       */
+      const appendTooltipSection = (list, label, text) => {
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = label;
+        description.textContent = text;
+        list.append(term, description);
+      };
+
+      /**
+       * 按触发点周围的可视空间定位事件说明，优先放在上方或下方。
+       */
+      const positionEventTooltip = (target) => {
+        if (!target || eventTooltip.hidden) {
+          return;
+        }
+
+        const gap = 10;
+        const margin = 12;
+        const triggerRect = target.getBoundingClientRect();
+        const tooltipRect = eventTooltip.getBoundingClientRect();
+        const visualViewport = window.visualViewport;
+        const viewportLeft = visualViewport ? visualViewport.offsetLeft : 0;
+        const viewportTop = visualViewport ? visualViewport.offsetTop : 0;
+        const viewportWidth = visualViewport ? visualViewport.width : window.innerWidth;
+        const viewportHeight = visualViewport ? visualViewport.height : window.innerHeight;
+        const viewportRight = viewportLeft + viewportWidth;
+        const viewportBottom = viewportTop + viewportHeight;
+        const minLeft = viewportLeft + margin;
+        const minTop = viewportTop + margin;
+        const maxLeft = Math.max(minLeft, viewportRight - tooltipRect.width - margin);
+        const maxTop = Math.max(minTop, viewportBottom - tooltipRect.height - margin);
+        const centeredLeft = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2;
+        let left = clamp(centeredLeft, minLeft, maxLeft);
+        let top = minTop;
+
+        const fitsAbove = triggerRect.top - viewportTop >= tooltipRect.height + gap + margin;
+        const fitsBelow = viewportBottom - triggerRect.bottom >= tooltipRect.height + gap + margin;
+
+        if (fitsAbove) {
+          top = triggerRect.top - tooltipRect.height - gap;
+        } else if (fitsBelow) {
+          top = triggerRect.bottom + gap;
+        } else {
+          const fitsLeft = triggerRect.left - viewportLeft >= tooltipRect.width + gap + margin;
+          const fitsRight = viewportRight - triggerRect.right >= tooltipRect.width + gap + margin;
+
+          if (fitsLeft || fitsRight) {
+            left = fitsLeft
+              ? triggerRect.left - tooltipRect.width - gap
+              : triggerRect.right + gap;
+            top = clamp(
+              triggerRect.top + triggerRect.height / 2 - tooltipRect.height / 2,
+              minTop,
+              maxTop
+            );
+          } else {
+            const roomAbove = triggerRect.top - viewportTop - gap - margin;
+            const roomBelow = viewportBottom - triggerRect.bottom - gap - margin;
+            top = roomBelow > roomAbove
+              ? triggerRect.bottom + gap
+              : triggerRect.top - tooltipRect.height - gap;
+          }
+        }
+
+        eventTooltip.style.left = `${Math.round(clamp(left, minLeft, maxLeft))}px`;
+        eventTooltip.style.top = `${Math.round(clamp(top, minTop, maxTop))}px`;
+      };
+
+      /**
+       * 显示指定事件的功能说明。
+       */
+      const showEventTooltip = (target) => {
+        const eventName = eventNameForTarget(target);
+        const info = EVENT_INFO[eventName];
+
+        if (!info) {
+          return;
+        }
+
+        activeTooltipTarget = target;
+        eventTooltip.className = "event-tooltip";
+        if (info.tone) {
+          eventTooltip.classList.add(info.tone);
+        }
+
+        const heading = document.createElement("h3");
+        const list = document.createElement("dl");
+        heading.textContent = eventName;
+        appendTooltipSection(list, "发生时会怎样", info.happens);
+        appendTooltipSection(list, "不变量", info.invariant);
+        appendTooltipSection(list, "常见误解", info.misconception);
+        eventTooltip.replaceChildren(heading, list);
+        eventTooltip.hidden = false;
+        eventTooltip.style.visibility = "hidden";
+        positionEventTooltip(target);
+        eventTooltip.style.visibility = "";
+      };
+
+      /**
+       * 隐藏事件说明并清除当前触发点。
+       */
+      const hideEventTooltip = () => {
+        eventTooltip.hidden = true;
+        activeTooltipTarget = null;
+      };
+
+      /**
+       * 当触发点不再被悬停、聚焦或固定时收起说明。
+       */
+      const hideIfUnanchored = (target) => {
+        if (
+          target !== pinnedTooltipTarget
+          && target !== hoveredTooltipTarget
+          && target !== focusedTooltipTarget
+        ) {
+          hideEventTooltip();
+        }
+      };
+
+      /**
+       * 彻底关闭事件说明，并解除触屏点击固定状态。
+       */
+      const dismissEventTooltip = () => {
+        pinnedTooltipTarget = null;
+        hoveredTooltipTarget = null;
+        focusedTooltipTarget = null;
+        hideEventTooltip();
+      };
 
       /**
        * 清除图形上和按钮上的高亮状态。
@@ -2094,6 +2467,80 @@
       buttons.forEach((button) => {
         button.addEventListener("click", () => highlightEvent(button.dataset.graphEvent));
       });
+
+      eventTooltipTargets.forEach((target) => {
+        if (!EVENT_INFO[eventNameForTarget(target)]) {
+          return;
+        }
+
+        target.setAttribute("aria-describedby", "event-tooltip");
+
+        target.addEventListener("mouseenter", () => {
+          hoveredTooltipTarget = target;
+          showEventTooltip(target);
+        });
+
+        target.addEventListener("mouseleave", () => {
+          if (hoveredTooltipTarget === target) {
+            hoveredTooltipTarget = null;
+          }
+          hideIfUnanchored(target);
+        });
+
+        target.addEventListener("focus", () => {
+          focusedTooltipTarget = target;
+          showEventTooltip(target);
+        });
+
+        target.addEventListener("blur", () => {
+          if (focusedTooltipTarget === target) {
+            focusedTooltipTarget = null;
+          }
+          hideIfUnanchored(target);
+        });
+
+        target.addEventListener("click", (event) => {
+          event.stopPropagation();
+          pinnedTooltipTarget = target;
+          showEventTooltip(target);
+        });
+
+        target.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            dismissEventTooltip();
+          }
+        });
+      });
+
+      document.addEventListener("pointerdown", (event) => {
+        if (
+          eventTooltip.hidden
+          || !event.target.closest
+          || event.target.closest("[data-graph-event], .edge-event[data-tooltip-event]")
+        ) {
+          return;
+        }
+        dismissEventTooltip();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          dismissEventTooltip();
+        }
+      });
+
+      window.addEventListener("resize", () => {
+        if (activeTooltipTarget && !eventTooltip.hidden) {
+          positionEventTooltip(activeTooltipTarget);
+        }
+      });
+
+      window.addEventListener("scroll", () => {
+        if (activeTooltipTarget && !eventTooltip.hidden) {
+          positionEventTooltip(activeTooltipTarget);
+        }
+      }, true);
 
       clearButton.addEventListener("click", clearGraph);
     })();

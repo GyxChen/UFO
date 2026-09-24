@@ -348,7 +348,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` 各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取、子代理 `agent_id`）。跨平台共用的（字段多别名取值、事件名归一化、提问裁剪、`agent_id` 判定…）放 `compat/mod.rs`。
 - **内核**：`status/kernel.rs` 只认 `AgentEventKind` 六种语义（Running / TurnFinished / WaitingForUser / SessionFinished / Failed / Unknown），`light_for_kind` 把 kind 映射成灯态 + 是否绿闪。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
 - **接入新平台** = 新增 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支；内核与前端零改动。
-- **事件源目前有两个**：hook（inbox 里的规范 JSON）与 Codex rollout 补漏（`codex_rollout.rs` 合成 `Failed`）。两者都产出 `AgentEvent`，在 monitor 里走**同一条入口** `apply_status_event`（广播调试事件 → 登记 transcript → 取存档回填 → 进内核）。加第三个源时照着接这个函数，别绕开它。
+- **事件源目前有两个**：hook（inbox 里的规范 JSON）与 Codex rollout 补漏（`codex_rollout.rs` 合成 `Failed`）。两者都产出 `AgentEvent`，在 monitor 里走**同一条入口** `apply_status_event`（广播调试事件 → 登记 transcript → 取存档回填 → 进内核）。加第三个源时照着接这个函数，别绕开它。⚠️ inbox 一批事件按**接收时刻**（`received_at_ms`，同刻按事件 id）排序后再消费 —— `read_dir` 顺序由文件系统决定，批内乱序会让迟到的「子代理收尾」先于更早的「开工」生效；平台事件多数不带 `sequence`，批与批之间的乱序识别不了（已知边界）。
 - `AgentEvent.kind` 是 `#[serde(default)]` 新增字段，缺省 `Unknown`（**不得升 `SCHEMA_VERSION`**）；旧事件反序列化后为 Unknown = 不驱灯色，与「无法识别」一致。
 - **hook 输入上限 4 MiB**：Codex 的工具事件会把 `tool_input`（apply_patch 补丁等）原样带上，卡 64 KiB 会丢掉有效生命周期事件。落盘的 inbox 事件仍只带提取字段。
 
@@ -377,7 +377,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 | 播种 | 注册时读一遍已有内容，**只为**拿 `cwd`（→ endpoint）与 token 累计，**不产出事件**（否则一启动就复读当天所有历史会话） |
 | 映射 | `session_meta`/`task_started`/`user_message` → Running；`task_complete` 无 error → TurnFinished；**带 error → Failed**；`turn_aborted` → WaitingForUser（黄不闪） |
 | 增量 | 只读新增字节；**文件在长 = 有活动**（绿），只有生命周期记录才改灯态 |
-| 去抖 | 同灯态只产出一次事件；「绿」每 30 秒补一条保活（长命令期间 Codex 一条记录都不写，不续命会被「执行中超时」清掉）。⚠️ 去抖基线必须跟着**实际灯态**走：hook 把灯抬成黄的那一刻巡检器并不知情，所以 monitor 对**来源是 hook** 的 Codex 事件调 `note_light()` 回灌基线（`apply_status_event` 的 `EventSource` 参数就是干这个的）。不回灌的话，批准后 rollout 恢复写入的那条「绿」会被当成重复整个吃掉，灯卡在黄直到 30 秒保活 |
+| 去抖 | **批内连续**同灯态压成一条；但同一批里灯态真的变化多次时（如中断后的下一轮「恢复执行 → 跑完」）**按文件里的先后顺序各产出一条** —— 只留最后一条会让内核停在「等你操作」上，把完成信号整条吞掉（内核在 WaitingForUser 下不认主线程 Stop，那是 Claude 阻塞等待的保护）。「绿」每 30 秒补一条保活（长命令期间 Codex 一条记录都不写，不续命会被「执行中超时」清掉）。⚠️ 去抖基线必须跟着**实际灯态**走：hook 把灯抬成黄的那一刻巡检器并不知情，所以 monitor 对**来源是 hook** 的 Codex 事件调 `note_light()` 回灌基线（`apply_status_event` 的 `EventSource` 参数就是干这个的）。不回灌的话，批准后 rollout 恢复写入的那条「绿」会被当成重复整个吃掉，灯卡在黄直到 30 秒保活 |
 | 结束 | 归档 = rollout 被**移走**到 `archived_sessions/`，连续两轮读不到即判 SessionFinished |
 | **等你授权** | rollout **没有**这个状态的任何记录（记录类型 / item 字段 / output 正文全查过）→ 只能靠 hook 的 `PermissionRequest` 补：它带 `tool_name` / `tool_input.command` / `tool_input.description`（Codex 自己写的审批理由）。映射为 WaitingForUser（黄灯不闪），理由进 `waiting_reason` 显示在 tooltip 的 head 行 |
 | 预筛 | `compat::codex::cares()` 先做子串扫描：97% 的字节是命令输出/消息正文（单条可达 100 KB），只有命中小标记的行才做 JSON 解析 |
@@ -403,7 +403,16 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
   - `Stop`：一轮执行完成 → 先绿闪，retention 后落成黄常亮（对话未结束）
   - `SessionEnd`：对话结束 → 绿闪后移除
 - 🔴 = Error（StopFailure 等；红灯不粘，任何能映射出别的阶段的事件都可转灯，`Unknown` 事件除外）
-- ⚠️ **子代理（subagent）事件不得驱动灯色**：子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有 payload 里的 `agent_id` 能区分（主线程事件不带该字段）。带 `agent_id` 的事件对已存活会话**只刷新 `last_seen_at_ms`**，阶段 / `is_flashing` / `remove_at_ms` 全原样保留。否则主 agent 弹出提问框（`PermissionRequest`→黄）时，后台仍在跑的子代理事件会立刻把它顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。**改内核（`kernel.rs`）的 `apply_event_with_seed` 时务必保住这条守卫。**
+- ⚠️ **子代理（subagent）事件不得把「等用户操作」的黄灯顶回绿**：子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有 payload 里的 `agent_id` 能区分（主线程事件不带该字段）。否则主 agent 弹出提问框（`PermissionRequest`→黄）时，后台仍在跑的子代理事件会立刻把它顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。`kernel.rs` 的 `apply_event_with_seed` 按这几条办事，**改它时务必一起保住**：
+  - 主线程正在等用户操作（WaitingForUser）、或会话已结束 / 已出错（Completed / Failed）时，子代理事件**只**维护后台记账（把该 `agent_id` 加入 / 移出活跃集合）并刷新 `last_seen_at_ms`，灯色与计时（`is_flashing` / `remove_at_ms` / `error_code` / `waiting_reason`）原样保留；
+  - 只有主线程已停、处于「等 prompt」空闲时，子代理活动才把灯拉回「后台运行」（对外绿常亮），最后一个活跃子代理结束时落回黄；
+  - 带 `agent_id` 的 `Failed`（子代理自己的工具失败）**不代表父会话出错**：不得把父灯染红、也不得清空其它仍在跑的子代理；
+  - 主线程出错时活跃子代理集合**不清空**（后台事实要留到恢复之后，否则灯会误落黄）；
+  - UFO 中途启动、只先收到子代理活动时，灯的起点是「后台运行」而不是「主线程在跑」，否则最后一个子代理收尾后无处可退、灯会一直绿；
+  - 子代理的 `sequence` 有自己的水位（按 `agent_id` 分开比），**不与主线程的序号互相比较**，也不写进对外快照的 `last_sequence`。
+- ⚠️ **「新一轮开始」才清旧黄灯，而且只清空闲黄、只认主线程**：主线程自己的 `Running`（`agent_id` 为空）触发一次同 provider 清理，目标是**内核私有状态为「等 prompt」**的会话（一轮跑完落下的黄），**不碰**「等用户操作」的审批黄；判据必须用私有状态而不是投影后的阶段 —— 主线程 Stop 后仍有子代理在跑时对外也是 Running，那不是新一轮。删除要**一整套**（对外快照 + 私有状态 + 子代理集合 + token + 序号水位），只删 `sessions` 会让同一个 key 再次出现时读到上一世的状态。
+- 事件去重是**有界 FIFO 窗口**（`SEEN_EVENTS_CAPACITY`，重复命中不把条目推回队尾）：会话被删后窗口内重放不会重新点灯；窗口外的旧事件不承诺 exactly-once。
+- 计时类字段（`is_flashing` / `remove_at_ms` / `completed_at_ms`）由 `resolve_timing` **显式三分支**决定：事件没构成转灯信号（`Unknown` 保持上一状态）时**原样继承上一版**，否则按新状态重算 —— 顺手重算会把 Stop 的绿闪提前掐掉（灯再也不落黄）。
 - ⚠️ **`AskUserQuestion`（选择框提问）不走 `PreToolUse`**：它走 `PermissionRequest` + `Notification(permission_prompt)`，作答后发 `PostToolUse`。不需要按工具名特判。
 - ⚠️ `notification_type` 的「等人操作」清单必须与 Claude Code 枚举对齐（详见 `reference/doc/agent-status-hooks.md`），**漏列会退化成绿色**。
 - 详情见 `reference/doc/agent-status-hooks.md`

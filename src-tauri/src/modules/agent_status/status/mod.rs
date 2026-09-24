@@ -370,16 +370,23 @@ fn consume_inbox<R: Runtime>(
     let Ok(entries) = fs::read_dir(inbox) else {
         return false;
     };
-    let mut changed = false;
+    // 先把一批整体读出来，按**接收顺序**排好再逐条消费 —— `read_dir` 的顺序由文件系统
+    // 决定，与写入顺序无关。批内不排序会让迟到的「子代理收尾」先于更早的「开工」生效，
+    // 把一个仍在后台跑的执行者从活跃集合里抹掉。
+    let mut batch: Vec<(PathBuf, Option<AgentEvent>)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
             continue;
         }
-
         let parsed = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<AgentEvent>(&bytes).ok());
+        batch.push((path, parsed));
+    }
+
+    let mut changed = false;
+    for (path, parsed) in order_inbox_batch(batch) {
         match parsed {
             Some(event) => {
                 let _ = fs::remove_file(&path);
@@ -400,6 +407,37 @@ fn consume_inbox<R: Runtime>(
         }
     }
     changed
+}
+
+/// 把一批 inbox 事件排成消费顺序：**接收时刻**升序，同一毫秒按事件 id 兜底。
+///
+/// ⚠️ 排序只用接收时间，**不用** `occurred_at_ms`：那是平台自报的时间，可能缺失、
+/// 也可能与接收时间不是同一把尺子（跨机器 / 时钟偏移），拿它排序会把迟到的事件插到前面。
+/// 收件箱文件名是 `<pid>-<纳秒>`，字典序也不代表时间序，所以靠文件名同样不行。
+/// 认不出的文件（解析失败）排在最后，按路径兜底，跟着走隔离流程。
+///
+/// **局限**：平台事件多数不带 `sequence`，因此「同一执行者的先后」只能靠这里的接收顺序
+/// （加内核按 `agent_id` 分开的序号水位兜住带序号的那部分）。没有可靠源序号时，
+/// 批与批之间的乱序无法被识破 —— 这是链路上已知的边界，不假装已经 exactly-once。
+fn order_inbox_batch(
+    mut batch: Vec<(PathBuf, Option<AgentEvent>)>,
+) -> Vec<(PathBuf, Option<AgentEvent>)> {
+    batch.sort_by(|(left_path, left), (right_path, right)| {
+        let left_key = left
+            .as_ref()
+            .map(|event| (event.received_at_ms, event.event_id.clone()));
+        let right_key = right
+            .as_ref()
+            .map(|event| (event.received_at_ms, event.event_id.clone()));
+        match (left_key, right_key) {
+            (Some(left), Some(right)) => left.cmp(&right),
+            // 可解析的排在不可解析的前面：坏文件不参与顺序。
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => left_path.cmp(right_path),
+        }
+    });
+    batch
 }
 
 /// 把一条**规范事件**送进内核 —— 所有事件源的唯一入口。
@@ -477,5 +515,75 @@ fn process_alive(session: &SessionSnapshot) -> Option<bool> {
             .status()
             .ok()?;
         Some(status.success())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::agent_status::status::model::{AgentEventKind, SCHEMA_VERSION};
+
+    fn event(id: &str, received_at_ms: i64) -> AgentEvent {
+        AgentEvent {
+            schema_version: SCHEMA_VERSION,
+            event_id: id.to_string(),
+            provider: Provider::Claude,
+            session_id: "s1".to_string(),
+            kind: AgentEventKind::Running,
+            event: String::new(),
+            sequence: None,
+            occurred_at_ms: None,
+            received_at_ms,
+            pid: None,
+            error_code: None,
+            outcome: None,
+            notification_type: None,
+            base_url: None,
+            prompt: None,
+            transcript_path: None,
+            waiting_reason: None,
+            agent_id: None,
+        }
+    }
+
+    /// 一批事件按**接收时刻**排序，与 `read_dir` 给出的顺序无关。
+    #[test]
+    fn inbox_batch_is_ordered_by_receive_time() {
+        let batch = vec![
+            (PathBuf::from("c.json"), Some(event("c", 300))),
+            (PathBuf::from("a.json"), Some(event("a", 100))),
+            (PathBuf::from("b.json"), Some(event("b", 200))),
+        ];
+        let ordered: Vec<String> = order_inbox_batch(batch)
+            .into_iter()
+            .filter_map(|(_, parsed)| parsed.map(|event| event.event_id))
+            .collect();
+        assert_eq!(ordered, vec!["a", "b", "c"]);
+    }
+
+    /// 同一毫秒按事件 id 兜底，保证顺序确定（不能用文件名：它是 `<pid>-<纳秒>`）。
+    #[test]
+    fn inbox_batch_ties_break_on_event_id() {
+        let batch = vec![
+            (PathBuf::from("999-9.json"), Some(event("z", 100))),
+            (PathBuf::from("1-1.json"), Some(event("a", 100))),
+        ];
+        let ordered: Vec<String> = order_inbox_batch(batch)
+            .into_iter()
+            .filter_map(|(_, parsed)| parsed.map(|event| event.event_id))
+            .collect();
+        assert_eq!(ordered, vec!["a", "z"]);
+    }
+
+    /// 认不出的文件排在最后（它不参与顺序），跟着走隔离流程。
+    #[test]
+    fn unparsable_inbox_files_are_ordered_last() {
+        let batch = vec![
+            (PathBuf::from("broken.json"), None),
+            (PathBuf::from("b.json"), Some(event("b", 200))),
+        ];
+        let ordered = order_inbox_batch(batch);
+        assert!(ordered[0].1.is_some(), "可解析的排前面");
+        assert!(ordered[1].1.is_none());
     }
 }
