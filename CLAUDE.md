@@ -185,7 +185,7 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
   - 二级（`variant="chips"`，胶囊）= 当前组件自己的设置分区，列它自己的 `settings.sections`。
   - ⚠️ 「悬浮窗设置」**一页到底、没有二级**：它本身就是一块整体（列表 + 预览左右并排），再切一刀会把「改组件」和「看效果」拆开。二级只服务组件设置页。
   - ⚠️ 两级 tabbar 上下相邻，外观必须保持不同（下划线 vs 胶囊），否则看不出哪条是一级。组件名在屏幕上已由两级 tab 表达，组件页里那个 h1 用 `sr-only` 只留给读屏。
-- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **窗口格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 前四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「窗口格子上限」**只是本组件自己的配置**（`module_settings['agent-status'].max_cells`，滑块 1 / 2 / 3 / 4 / 6 / 9 封顶 3×3），只限制本模块大小、不改动其它组件；整窗仍按各组件需求之和（可超过 9）自动伸缩，页面文案已写明。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页左列、组件列表下方的独立卡片**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
+- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **窗口格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 这四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「窗口格子上限」**只是本组件自己的配置**（`module_settings['agent-status'].max_cells`，滑块 1 / 2 / 3 / 4 / 6 / 9 封顶 3×3），只限制本模块大小、不改动其它组件；整窗仍按各组件需求之和（可超过 9）自动伸缩，页面文案已写明。⚠️ **「状态音效」是同一页里独立的一行**（简介在左、开关在右，`.ufo-card.light-sound`）：它配的是「有没有声音」，跟左卡的时间参数、右卡的格子尺寸都不是一类，塞进任一边都会被误读成只影响那一块，所以落在**右列「窗口格子」卡片下面**（右列由 `.general-cards__column` 纵向堆叠；列内卡片靠这条类名撑满列宽 —— `.general-cards > .ufo-card` 是直接子级选择器，够不到嵌套进去的卡片）。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页左列、组件列表下方的独立卡片**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
 - 打开组件设置有两条路，走同一个事件：① 主窗组件列表行的齿轮；② 点悬浮窗上该组件的区域（槽位根节点的 `data-module-id` + 外壳 `moduleIdAt()` → `emitTo('main', OPEN_MODULE_SETTINGS_EVENT)`，点空白处传 null = 打开组件列表页）。打开后落到该组件**第一个分区**（`activeSections` 变化时重置），不会停在上次看的那一块。⚠️ 顺序必须是「先 showMainWindow 再 emitTo」：窗口还没打开时事件没人接。`pointercancel`（触摸取消）只清状态，**不当点击**，否则会莫名弹主窗。
 - 布局 mock 见 `reference/mock/floating-modules/floating-modules-index.html`（组件选择三套，采用第三套）；两级导航 mock 见 `reference/mock/settings-nav/settings-nav-index.html`（双层横条 / 左侧竖排 / 分段控件，采用第一套 A：二级用胶囊条）。
 - `reference/mock/` **按功能分子目录**（`floating-modules/` / `agent-status/` / `todo/` / `main-window/` / `settings-nav/`，与 `src/modules/<id>/` 同名）：每个 mock 只与同目录的兄弟互相链接，因此整组搬动不会坏链；引用某个 mock 时写全路径。
@@ -220,6 +220,7 @@ src-tauri/src/
 └── modules/
     └── agent_status/       # Agent 状态灯（对应前端 `src/modules/agent-status/`）
         ├── settings.rs     # 本组件的配置块：解析 / 夹取 / 认领旧字段 / 推给运行时
+        ├── sound.rs        # 提示音：安装路径下 data/bgm 的读取与随包默认音效（编进二进制）
         ├── status/         # 采集与灯态：hook 收口 / 兼容层 compat/ / 内核 / Codex rollout / token
         ├── flow/           # 信息卡拓展的流程脚本沙盒（QuickJS）
         ├── proxy/          # 代理解析器（本地代理 → 上游 endpoint）
@@ -413,6 +414,12 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - ⚠️ **「新一轮开始」才清旧黄灯，而且只清空闲黄、只认主线程**：主线程自己的 `Running`（`agent_id` 为空）触发一次同 provider 清理，目标是**内核私有状态为「等 prompt」**的会话（一轮跑完落下的黄），**不碰**「等用户操作」的审批黄；判据必须用私有状态而不是投影后的阶段 —— 主线程 Stop 后仍有子代理在跑时对外也是 Running，那不是新一轮。删除要**一整套**（对外快照 + 私有状态 + 子代理集合 + token + 序号水位），只删 `sessions` 会让同一个 key 再次出现时读到上一世的状态。
 - 事件去重是**有界 FIFO 窗口**（`SEEN_EVENTS_CAPACITY`，重复命中不把条目推回队尾）：会话被删后窗口内重放不会重新点灯；窗口外的旧事件不承诺 exactly-once。
 - 计时类字段（`is_flashing` / `remove_at_ms` / `completed_at_ms`）由 `resolve_timing` **显式三分支**决定：事件没构成转灯信号（`Unknown` 保持上一状态）时**原样继承上一版**，否则按新状态重算 —— 顺手重算会把 Stop 的绿闪提前掐掉（灯再也不落黄）。
+- 🔊 **状态音效**：红灯 / 黄灯 / 完成绿闪三种跳色各播一段提示音（`goError` / `goWarn` / `goSucc`）。判据与播放分开：纯逻辑在 `src/modules/agent-status/lib/agent-sound.ts`（含 spec，锁文件名契约），播放端在 `lib/sound-player.ts`（含 spec；按需向后端要字节 → `blob:` 地址 → `Audio` 播放，读不到只跳过并在控制台提醒一次）。
+  - ⚠️ **音频不在前端 bundle 里，在安装路径下的 `data/bgm/`**：开发目录 ≠ 安装目录，编进 bundle 的音频用户换不了。Rust 侧 `modules/agent_status/sound.rs` 负责：首次读取时创建该目录并把**编进二进制的随包默认音效**补齐（源文件在 `src/assets/bgm/`，用 `include_bytes!` 编入 ⇒ **仓库里必须保留这三个 mp3，否则编译就失败**）；用户覆盖同名文件即可换音，**重启后生效**（字节读一次就缓存）。安装目录只读时回落二进制默认值，功能不受影响。
+  - 命令三处注册（照旧）：`#[tauri::command]` + `permissions/status.toml` 的 `allow-light-sounds` + `default.json`（悬浮窗要读字节）。⚠️ `read_light_sound` **只接受白名单文件名**，查不到连路径都不拼 —— 否则就是一条任意文件读取。⚠️ **不回传目录路径**：设置页那句「覆盖进安装路径下的 data/bgm」是固定文案，回显开发期的 `target/debug/data/bgm` 只会让人困惑（Rust 的 `SOUND_DIR_RELATIVE` 与那句文案是同一件事的两处写法，改目录要一起改）。
+  - ⚠️ 音效挂在**模块视图**（`AgentStatusModule.vue`）上，不是 store：模块视图只在悬浮窗挂载，三个窗口因此不会各响一遍；组件被关掉时就不该有声音。开关是模块配置 `sound_enabled`（缺省开），UI 是「常规」页里**独立一行**（简介在左、开关在右，落在「行为 / 窗口格子」两张卡片下面）。
+  - 转移规则：**本帧新出现的灯不响**（建档不是跳色）；转红 / 转绿闪都响；转黄只在从绿常亮 / 红灯过来时响 —— **绿闪落成黄常亮不响**（`Stop` 已在绿闪那刻响过 `goSucc`，retention 到点再响一次只会像回声）。同一帧多盏灯跳色时每种音效只响一次（红 → 绿闪 → 黄）。
+  - ⚠️ 悬浮窗在 `tauri.conf.json` 里带 `additionalBrowserArgs`（`--autoplay-policy=no-user-gesture-required` + wry 默认的那串 `--disable-features=...`）：WebView2 默认要用户手势才允许出声，而这块窗可能从没被点过。**设置该字段会覆盖 wry 的默认值，改它必须把 `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection` 一起写回。**
 - ⚠️ **`AskUserQuestion`（选择框提问）不走 `PreToolUse`**：它走 `PermissionRequest` + `Notification(permission_prompt)`，作答后发 `PostToolUse`。不需要按工具名特判。
 - ⚠️ `notification_type` 的「等人操作」清单必须与 Claude Code 枚举对齐（详见 `reference/doc/agent-status-hooks.md`），**漏列会退化成绿色**。
 - 详情见 `reference/doc/agent-status-hooks.md`

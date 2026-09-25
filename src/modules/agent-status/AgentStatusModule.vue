@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue'
+import { computed, inject, onMounted, watch } from 'vue'
 import { colorForSession, colorLabel, type SessionSnapshot } from './lib/agent-status'
+import { lightClassesOf, transitionsBetween, type LightClass } from './lib/agent-sound'
+import { playLightSound, preloadLightSounds } from './lib/sound-player'
 import {
   overflowHoverKey,
   overflowRingGradient,
@@ -10,7 +12,9 @@ import {
 import { cellsGrid, type FloatingLayout } from '@/lib/floating-layout'
 import { floatingModuleKey } from '@/lib/floating-module-context'
 import { useAgentStatusStore } from './stores/agentStatus'
+import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { agentStatusDemand } from './demand'
+import { agentStatusSettings } from './settings'
 import claudeIcon from '@/assets/claude.svg'
 import codexIcon from '@/assets/codex.svg'
 
@@ -69,6 +73,41 @@ function labelFor(session: SessionSnapshot) {
   const provider = session.provider === 'claude' ? 'Claude' : 'Codex'
   return `${provider} ${session.session_id.slice(0, 8)}: ${session.phase}`
 }
+
+/**
+ * ── 状态音效 ──
+ *
+ * 音效挂在**模块视图**上而不是 store 里：模块视图只在悬浮窗（状态灯所在的那个窗口）挂载，
+ * 提示窗 / 主窗都渲染它不到，因此不会三个窗口各响一遍；组件被关掉时就该彻底没有声音。
+ * 判据与播放分开：这里只负责「比出该响什么」，播放在 `lib/sound-player.ts`。
+ */
+const moduleSettings = useFloatingModulesStore()
+/** 音效开关（本组件自己的配置，缺省开）。 */
+const soundEnabled = computed(() => agentStatusSettings(moduleSettings.config).sound_enabled)
+
+/**
+ * 上一帧每盏灯的音效类别。
+ *
+ * 初值取**挂载那一刻**的灯：窗口刚起来 / 模块刚被启用时，已有灯不算「刚跳色」，
+ * 不该补一串音效出来（这正是 `immediate: true` 首跑静默的原因）。
+ */
+let lightClasses: Map<string, LightClass> = lightClassesOf(store.sessions)
+
+watch(
+  () => store.snapshot,
+  snapshot => {
+    const next = lightClassesOf(snapshot?.sessions ?? [])
+    // ⚠️ 关掉开关时也要推进基线：否则重新打开会把关闭期间的变化一次性补响。
+    if (soundEnabled.value) {
+      for (const sound of transitionsBetween(lightClasses, next)) playLightSound(sound)
+    }
+    lightClasses = next
+  },
+  { immediate: true }
+)
+
+// 音频按需从安装目录读字节：挂载时先预热三段，第一盏灯跳色就不必等这一次 IPC。
+onMounted(preloadLightSounds)
 </script>
 
 <template>

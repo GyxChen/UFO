@@ -129,4 +129,73 @@ describe('GeneralSection', () => {
     expect(active).toHaveLength(1)
     expect(active[0]?.text()).toBe('3×3') // 默认上限 9 盏灯 = 3×3
   })
+
+  it('renders the status sound switch from its own config block', async () => {
+    // 缺字段 = 默认开：静音是明确动作，不该由「没配过」推出来。
+    const fallback = await mountWith(backendConfig({}))
+    expect(fallback.get<HTMLInputElement>('.base-switch__input').element.checked).toBe(true)
+
+    const muted = await mountWith(backendConfig({ sound_enabled: false }))
+    expect(muted.get<HTMLInputElement>('.base-switch__input').element.checked).toBe(false)
+    // 可见标签与无障碍名称都在（开关本身没有可见文字）。
+    expect(muted.text()).toContain('状态音效')
+    expect(muted.get('.base-switch__input').attributes('aria-label')).toBe('状态音效')
+  })
+
+  it('lays the status sound row out in the right column, below the cells card', async () => {
+    const wrapper = await mountWith(backendConfig({}))
+
+    // 右列 = `.general-cards` 的第二个子节点，里面自上而下是「窗口格子」→「状态音效」。
+    const cards = wrapper.get('.general-cards')
+    const columns = [...cards.element.children]
+    expect(columns).toHaveLength(2)
+    expect(columns[1]?.classList.contains('general-cards__column')).toBe(true)
+
+    const column = wrapper.get('.general-cards__column')
+    const nested = [...column.element.children]
+    expect(nested[0]?.classList.contains('ufo-card')).toBe(true)
+    expect(nested[0]?.textContent).toContain('窗口格子')
+    expect(nested[1]?.classList.contains('light-sound')).toBe(true)
+
+    // 左列仍是「行为」卡：音效没有塞进去（否则会被读成时间参数那一类）。
+    expect(wrapper.get('.general-cards > .ufo-card').find('.light-sound').exists()).toBe(false)
+
+    // 行内布局：简介在左、开关在右（开关是这一行的最后一个子节点）。
+    const row = wrapper.get('.light-sound')
+    expect(row.get('.light-sound__text').text()).toContain('状态音效')
+    expect([...row.element.children].at(-1)?.classList.contains('base-switch')).toBe(true)
+  })
+
+  it('points the user at the replaceable sound folder under the install path', async () => {
+    const wrapper = await mountWith(backendConfig({}))
+    // 音频在安装路径下，提示写的是那句固定文案（不回显开发期的绝对路径）。
+    const text = wrapper.get('.light-sound').text()
+    expect(text).toContain('安装路径下的')
+    expect(text).toContain('data/bgm')
+    expect(text).toContain('goError.mp3')
+  })
+
+  it('writes the status sound toggle into its own config block', async () => {
+    const wrapper = await mountWith(backendConfig({ sound_enabled: false, completed_retention_ms: 45_000 }))
+    await wrapper.get('.base-switch__input').setValue(true)
+    await flushPromises()
+
+    const block = saved?.module_settings[AGENT_STATUS_MODULE_ID] as Record<string, unknown>
+    expect(block?.sound_enabled).toBe(true)
+    // 同块的其它字段必须原样保留（浅合并，不是整块替换）。
+    expect(block?.completed_retention_ms).toBe(45_000)
+    expect(saved?.module_settings['other-module']).toEqual({ untouched: true })
+  })
+
+  it('reverts the status sound switch when saving fails', async () => {
+    // 落盘失败时开关要弹回已知值，不能显示一个并没生效的状态。
+    const wrapper = await mountWith(backendConfig({ sound_enabled: false }))
+    invokeMock.mockRejectedValueOnce(new Error('offline'))
+
+    const toggle = wrapper.get<HTMLInputElement>('.base-switch__input')
+    await toggle.setValue(true)
+    await flushPromises()
+
+    expect(toggle.element.checked).toBe(false)
+  })
 })

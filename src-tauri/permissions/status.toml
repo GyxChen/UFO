@@ -49,6 +49,11 @@ description = "Allows deleting or clearing persisted session records from the ma
 commands.allow = ["delete_session_record", "clear_session_records"]
 
 [[permission]]
+identifier = "allow-light-sounds"
+description = "Allows reading the replaceable status light sound files (安装路径下 data/bgm) for playback."
+commands.allow = ["read_light_sound"]
+
+[[permission]]
 identifier = "allow-get-flow-results"
 description = "Allows reading flow-script extension fields for tooltips (信息卡拓展流程脚本)."
 commands.allow = ["get_flow_results", "get_flow_snapshot"]

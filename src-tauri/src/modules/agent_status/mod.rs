@@ -12,4 +12,6 @@ pub mod flow;
 pub mod proxy;
 pub mod session_store;
 pub mod settings;
+/// 状态灯提示音：安装目录下 `bgm/` 里可替换的三个 mp3（见模块文档）。
+pub mod sound;
 pub mod status;

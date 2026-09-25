@@ -782,6 +782,18 @@ html.is-tooltip-window #app {
   @apply max-w-none;
 }
 
+/*
+ * `.general-cards` 右列的纵向堆叠（如「窗口格子」+ 它下面的那一行）。
+ * 列内卡片同样要撑满列宽：`.general-cards > .ufo-card` 是**直接子级**选择器，够不到嵌套的卡片。
+ */
+.general-cards__column {
+  @apply flex min-w-0 flex-col gap-4;
+}
+
+.general-cards__column > .ufo-card {
+  @apply max-w-none;
+}
+
 @media (max-width: 760px) {
   .general-cards {
     grid-template-columns: minmax(0, 1fr);

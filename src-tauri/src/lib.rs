@@ -36,6 +36,7 @@ use modules::agent_status::{
         clear_session_records, delete_session_record, get_session_records, SessionStoreState,
     },
     settings::{adopt_legacy_fields, config_hook, AgentStatusSettings},
+    sound::read_light_sound,
     status::{
         dismiss_status_session, get_proxy_resolvers, get_status_snapshot, now_ms,
         set_tooltip_interactive, spawn_monitor, StatusState,
@@ -234,6 +235,7 @@ pub fn run() {
             get_session_records,
             delete_session_record,
             clear_session_records,
+            read_light_sound,
             is_left_mouse_pressed,
             get_floating_module_config,
             set_floating_module_config,
