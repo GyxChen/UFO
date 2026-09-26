@@ -2,7 +2,9 @@ use std::{fs, path::Path};
 
 /// 从仓库根目录的 `.env` 中读出需要的键，以编译期常量注入二进制。
 ///
-/// `UFO_TAG_RULES` / `UFO_STRIP_TAGS`：捕获提问的 hook 是一个独立的短命进程（`ufo --status-hook`），
+/// `UFO_TAG_RULES_CLAUDE` / `UFO_TAG_RULES_QODER`：提问标签规则表，**一个平台一个键**，
+/// 改一家不会波及另一家的行为（语法与缺省见 `status/compat/mod.rs` 的 `build_tag_rules`）。
+/// 捕获提问的 hook 是一个独立的短命进程（`ufo --status-hook`），
 /// 它的 cwd 是**被监测 agent 的项目目录**，不是 UFO 仓库，运行时按相对路径找不到仓库里的
 /// `.env`。注入成常量后 hook 无需任何文件 IO，也满足「hook 必须快进快出」的约束。
 /// 修改 `.env` 后需重新构建才会生效。
@@ -13,13 +15,11 @@ fn main() {
     // .env 变化时重跑本脚本，重新注入列表。
     println!("cargo:rerun-if-changed=../.env");
 
-    let value = read_env_value("../.env", "UFO_STRIP_TAGS").unwrap_or_default();
-    // 值为空时 `compat::tag_rules` 会回落到内置默认列表，因此这里始终注入、由使用方判空。
-    println!("cargo:rustc-env=UFO_STRIP_TAGS={value}");
-
-    // 完整语法的规则表（`name:drop` / `name:extract`），优先级高于上面那份「只写名字 = drop」的旧键。
-    let rules = read_env_value("../.env", "UFO_TAG_RULES").unwrap_or_default();
-    println!("cargo:rustc-env=UFO_TAG_RULES={rules}");
+    // 值为空时各适配器会回落到自己那份内置默认，因此这里始终注入、由使用方判空。
+    for key in ["UFO_TAG_RULES_CLAUDE", "UFO_TAG_RULES_QODER"] {
+        let rules = read_env_value("../.env", key).unwrap_or_default();
+        println!("cargo:rustc-env={key}={rules}");
+    }
 
     // 同样始终注入：空值即「全关」，正是 devtools 的默认行为。
     let devtools = read_env_value("../.env", "UFO_DEVTOOLS").unwrap_or_default();
@@ -36,7 +36,7 @@ fn read_env_value(path: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     for line in raw.lines() {
         let line = line.trim_end_matches('\r');
-        // 允许 `export UFO_STRIP_TAGS=...` 之外的写法这里不处理；仅去首尾空白。
+        // 只认 `KEY=value`；`export KEY=value` 之类的写法这里不处理，仅去首尾空白。
         let Some(rest) = line.strip_prefix(&prefix) else {
             continue;
         };

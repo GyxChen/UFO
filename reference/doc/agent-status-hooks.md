@@ -174,7 +174,7 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 ```
 
 - 上限 4000 字符，超出截断并加 `…`（按字符计数，不截断 UTF-8）。
-- **先过通用标签引擎再裁剪**：注入内容按规则表处理，`drop` = 删标签连同内文（本平台的 `system-reminder` / `ide_opened_file` 等），`extract` = 只留标签内正文（别家平台的形态，见下方 Qoder 节）。规则表全平台共用一份（`.env` 的 `UFO_TAG_RULES` > 旧键 `UFO_STRIP_TAGS` > 内置默认），**动作由各适配器自己挑**：`claude.rs` 只取 `drop` 与 `claude_*`，`qoder.rs` 只取 `extract` 与 `qoder_*`。
+- **先过通用标签引擎再裁剪**：注入内容按规则表处理，`drop` = 删标签连同内文（本平台的 `system-reminder` / `ide_opened_file` 等），`extract` = 只留标签内正文（别家平台的形态，见下方 Qoder 节）。规则表**一平台一份**：本平台读自己的 `.env` 键 `UFO_TAG_RULES_CLAUDE`（默认清一色 `drop`），没配就用 `claude.rs` 里的 `DEFAULT_TAG_RULES`；Qoder 那侧是 `UFO_TAG_RULES_QODER`，互不影响。
 - **只认 `UserPromptSubmit`**：同轮内后续事件（`PreToolUse` 等）本就不带 `prompt`，由内核继承该值；下一次 `UserPromptSubmit` 才覆盖。即提示窗始终显示**最近一次用户手输**的提问。
 - ⚠️ `UserPromptExpansion` 紧随 `UserPromptSubmit` 触发、**同样携带 `prompt`**，但那是斜杠命令展开后的模板文本，不是用户输入。UFO 不放行它 —— 否则展开内容会立刻把用户真正的提问覆盖掉。
 

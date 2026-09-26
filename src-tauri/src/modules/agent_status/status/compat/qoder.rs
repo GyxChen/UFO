@@ -39,9 +39,9 @@
 use serde_json::Value;
 
 use super::{
-    agent_id, apply_tag_rules, fallback_kind, is_user_prompt_submit, normalize_base_url,
-    normalize_event_name, number_field, payload_error, string_field, tag_rules, transcript_path,
-    truncate_prompt, AdaptContext, AdaptedEvent, HookAdapter, TagAction, TagRule,
+    agent_id, apply_tag_rules, build_tag_rules, fallback_kind, is_user_prompt_submit,
+    normalize_base_url, normalize_event_name, number_field, payload_error, string_field,
+    transcript_path, truncate_prompt, AdaptContext, AdaptedEvent, HookAdapter, TagAction, TagRule,
 };
 use crate::modules::agent_status::status::model::AgentEventKind;
 
@@ -246,13 +246,7 @@ fn string_at(value: &Value, name: &str) -> Option<String> {
 /// 覆盖用户输入」的问题；但「只在这一个事件采」的纪律要保住 —— 否则一次带 `prompt` 的工具
 /// 调用就会把提问改掉。
 ///
-/// 提问先过共用的标签引擎（[`apply_tag_rules`]）再裁剪。
-///
-/// 实测 18 条真实 payload 里 17 条就是用户原文（Qoder 的 reminder 走别的通道、不混进这个字段），
-/// 但 **`/goal` 那一轮整段被换成平台模板**：三千余字的 harness 说教包着用户真正的目标，
-/// 目标写在 `<untrusted_objective>…</untrusted_objective>` 里。因此这条规则是 `Extract`
-/// （只留标签内正文），与 Claude 侧的 `Drop`（连内文一起删）方向相反；标签集本身全平台共用一份
-/// （`.env` 的 `UFO_TAG_RULES` / `UFO_STRIP_TAGS`），**动作由本平台挑**，见 [`extract_rules`]。
+/// 提问先过本平台的标签规则再裁剪，见 [`tag_rules`]。
 fn user_prompt(event_name: &str, payload: &Value) -> Option<String> {
     if !is_user_prompt_submit(event_name) {
         return None;
@@ -261,23 +255,40 @@ fn user_prompt(event_name: &str, payload: &Value) -> Option<String> {
         .and_then(|value| normalize_prompt(&value))
 }
 
-/// 共用规则表里本平台要用的那些。
+/// 构建期由 `build.rs` 从仓库根 `.env` 注入的**本平台**规则表（本平台独占一个键，
+/// 与 Claude 那份互不影响）。未注入 / 值为空时用下面的默认表。
+const TAG_RULES_FROM_ENV: Option<&str> = option_env!("UFO_TAG_RULES_QODER");
+
+/// 没配变量时的内置默认：只解包 `/goal` 那一轮的模板标签。
 ///
-/// - `Extract`（「正文只在标签里」那类，带命中门槛）Qoder 专属，Claude 侧不配这类动作，直接照收；
-/// - `qoder_*` 前缀的 `Drop` 规则：将来发现新的 Qoder 专属注入标签，在 `.env` 里加一条
-///   `qoder_xxx:drop` 就生效，不用改代码。
-fn extract_rules() -> Vec<TagRule> {
-    tag_rules()
-        .into_iter()
-        .filter(|rule| rule.action == TagAction::Extract || rule.name.starts_with("qoder_"))
-        .collect()
+/// 实测那一轮的 `prompt` 整段被换成三千余字的 harness 模板（`A goal has been set.` 开头、
+/// 结尾带 `Goal state: turns used 0/20`），用户真正的目标只在 `<untrusted_objective>` 里 ——
+/// 不解包就会把模板当提问推上去（提示窗与手机推送都受影响）。
+const DEFAULT_TAG_RULES: &str = "untrusted_objective:extract";
+
+/// 模板的识别前缀 —— 门槛（[`TagRule::when_prefix`]）用它判断「这轮是被改写的提问」。
+const GOAL_TEMPLATE_PREFIX: &str = "A goal has been set.";
+
+/// 本适配器的规则表（扫描机制在 [`apply_tag_rules`]，这里只出策略）。
+///
+/// 环境变量只能写 `name:action`，写不出「什么情况下才生效」，所以 `Extract` 规则的命中门槛
+/// 在这里补：实测 18 条 payload 里 17 条就是用户原文、根本没有那个标签 —— 没有门槛的话，
+/// 普通提问会被判成「没有正文」，从此不再更新。
+fn tag_rules() -> Vec<TagRule> {
+    let mut rules = build_tag_rules(TAG_RULES_FROM_ENV, DEFAULT_TAG_RULES);
+    for rule in &mut rules {
+        if rule.action == TagAction::Extract && rule.when_prefix.is_none() {
+            rule.when_prefix = Some(GOAL_TEMPLATE_PREFIX.to_string());
+        }
+    }
+    rules
 }
 
 /// 解包 / 剔除标签后再走共用裁剪（去空白 + 超长截断）。
 ///
 /// 规则表为空时直接裁剪：`Extract` 命中即返回，空表跑一遍引擎只是白拷贝一次全文。
 fn normalize_prompt(raw: &str) -> Option<String> {
-    let rules = extract_rules();
+    let rules = tag_rules();
     if rules.is_empty() {
         return truncate_prompt(raw);
     }
@@ -462,7 +473,8 @@ mod tests {
         // 普通提问不带那个标签，也绝不能被 Extract 规则判成「无正文」—— 门槛就是为此而设。
         for raw in [
             "填写topic的删除按钮,没有占满行高度",
-            concat!("泛型 <T> 与 <div class=\"x\"> 原样保留"),
+            // 尖括号里的普通内容（泛型、HTML）不在规则表里，不该被动过。
+            "泛型 <T> 与 <div class=\"x\"> 原样保留",
         ] {
             assert_eq!(
                 adapt("UserPromptSubmit", serde_json::json!({"prompt": raw}))
@@ -499,14 +511,15 @@ mod tests {
     }
 
     #[test]
-    fn extract_rules_take_only_their_own_kinds() {
-        // 本平台只收 Extract 与 `qoder_*`：Claude 那批 drop 标签方向相反，拿过来会连正文一起删。
-        let rules = extract_rules();
-        assert!(rules
-            .iter()
-            .all(|rule| rule.action == TagAction::Extract || rule.name.starts_with("qoder_")));
-        assert!(rules.iter().any(|rule| rule.name == "untrusted_objective"));
-        assert!(!rules.iter().any(|rule| rule.name == "system-reminder"));
+    fn extract_rule_is_gated_by_the_template_prefix() {
+        // 本平台默认只有一条规则，而且必须带门槛：没有门槛的话普通提问（不带那个标签）
+        // 会被 Extract 判成「无正文」，提问从此不再更新。
+        let rules = tag_rules();
+        assert_eq!(rules.len(), 1);
+        let rule = &rules[0];
+        assert_eq!(rule.name, "untrusted_objective");
+        assert_eq!(rule.action, TagAction::Extract);
+        assert_eq!(rule.when_prefix.as_deref(), Some(GOAL_TEMPLATE_PREFIX));
     }
 
     #[test]

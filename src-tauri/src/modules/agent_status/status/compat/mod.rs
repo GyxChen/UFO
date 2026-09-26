@@ -488,22 +488,6 @@ fn extract_tag(text: &str, name: &str) -> Option<String> {
     (!pieces.is_empty()).then(|| pieces.join("\n"))
 }
 
-/// 构建期由 `build.rs` 从仓库根 `.env` 注入的配置（都是逗号分隔）。
-///
-/// hook 是独立短命进程、cwd 为被监测 agent 的项目目录，运行时读不到 UFO 仓库的 `.env`，
-/// 因此列表在构建期注入；改 `.env` 需重新构建才生效。未注入时为 None。
-const TAG_RULES_FROM_ENV: Option<&str> = option_env!("UFO_TAG_RULES");
-const STRIP_TAGS_FROM_ENV: Option<&str> = option_env!("UFO_STRIP_TAGS");
-
-/// 内置兜底：drop 的是实测会混进提问的平台元信息，extract 的是「正文被包进标签」的形态。
-const DEFAULT_DROP_TAGS: &str = "ide_opened_file,system-reminder,local-command,bash_input,bash_output,cli-message,command-message,command-name,command-args,allowed-prompts,env,permission_mode";
-const DEFAULT_EXTRACT_RULES: &str = "untrusted_objective:extract";
-
-/// 正文只在标签里、且只在特定轮次出现的标签：配上「以该前缀开头」才生效的门槛。
-///
-/// 没有门槛，普通提问（不带这个标签）就会被判成「无正文」，提问从此再也不更新。
-const GATED_EXTRACT_TAGS: &[(&str, &str)] = &[("untrusted_objective", "A goal has been set.")];
-
 /// 解析规则表文本：`name`（默认 `drop`）或 `name:drop` / `name:extract`。
 ///
 /// 逗号分隔、忽略空白、剥掉误写的尖括号；非法项（动作名不认识、名字含标签字符集外的字符）
@@ -531,34 +515,15 @@ pub(crate) fn parse_tag_rules(raw: &str) -> Vec<TagRule> {
     rules
 }
 
-/// 生效的标签规则表（所有平台共用这一份，标签集本就互不相干）。
+/// 由「构建期注入的值 + 本平台内置默认」拼出规则表。
 ///
-/// 优先级：`UFO_TAG_RULES`（完整语法）> `UFO_STRIP_TAGS`（只写名字 = drop 的旧写法）>
-/// 内置默认。拿到表后做两件事：给需要门槛的 `Extract` 补上前缀，再把 `Drop` 排在前面
-/// （`Extract` 是终局动作，先跑就会挡住后面的删除规则）。
-pub(crate) fn tag_rules() -> Vec<TagRule> {
-    let mut rules = match TAG_RULES_FROM_ENV.map(parse_tag_rules) {
-        Some(from_env) if !from_env.is_empty() => from_env,
-        // 只配了旧键（清一色 drop）时，解包那类仍用内置默认 —— 否则「配了删除」会把解包能力整丢掉。
-        _ => {
-            let mut defaults = match STRIP_TAGS_FROM_ENV.map(parse_tag_rules) {
-                Some(legacy) if !legacy.is_empty() => legacy,
-                _ => parse_tag_rules(DEFAULT_DROP_TAGS),
-            };
-            defaults.extend(parse_tag_rules(DEFAULT_EXTRACT_RULES));
-            defaults
-        }
-    };
-    for rule in &mut rules {
-        if rule.action != TagAction::Extract || rule.when_prefix.is_some() {
-            continue;
-        }
-        if let Some((_, prefix)) = GATED_EXTRACT_TAGS
-            .iter()
-            .find(|(name, _)| *name == rule.name.as_str())
-        {
-            rule.when_prefix = Some((*prefix).to_string());
-        }
+/// 注入值为空（没配 `.env` 里的键，或值为空串）时用默认表；解析不出任何合法项时也回落默认 ——
+/// 一份写坏的配置不该让提问采集整个失效。默认表按 `Drop` 在前、`Extract` 在后排序：
+/// `Extract` 是终局动作，排在前面会挡住本该先做的删除。
+pub(crate) fn build_tag_rules(from_env: Option<&str>, defaults: &str) -> Vec<TagRule> {
+    let mut rules = from_env.map(parse_tag_rules).unwrap_or_default();
+    if rules.is_empty() {
+        rules = parse_tag_rules(defaults);
     }
     rules.sort_by_key(|rule| match rule.action {
         TagAction::Drop => 0,
@@ -763,10 +728,10 @@ mod tests {
         let rule = TagRule::extract("obj").when_starts_with("A goal has been set.");
         // 前缀不命中 → 原样返回（普通提问不能被判成「无正文」）。
         let plain = "帮我改个 bug";
-        assert_eq!(apply_tag_rules(plain, &[rule.clone()]).as_deref(), Some(plain));
+        assert_eq!(apply_tag_rules(plain, std::slice::from_ref(&rule)).as_deref(), Some(plain));
         // 前缀命中且标签在 → 只留标签内正文。
         let wrapped = "A goal has been set.\n<obj>目标正文</obj>\nturns used 0/20";
-        assert_eq!(apply_tag_rules(wrapped, &[rule.clone()]).as_deref(), Some("目标正文"));
+        assert_eq!(apply_tag_rules(wrapped, std::slice::from_ref(&rule)).as_deref(), Some("目标正文"));
         // 前缀命中但标签没了（模板改版 / 被截断）→ 判为没有可用正文，不把脚手架当提问。
         assert_eq!(apply_tag_rules("A goal has been set.\n只剩模板", &[rule]), None);
     }
@@ -828,22 +793,6 @@ mod tests {
         let rules = parse_tag_rules("note:extract, junk:shred, <env>, 中文tag:drop");
         // 认得的动作生效、不认得的整项丢掉、非法标签名也丢掉，但**不影响同表其它项**。
         assert_eq!(rules, vec![TagRule::extract("note"), TagRule::drop("env")]);
-    }
-
-    #[test]
-    fn tag_rules_gates_extract_tags_and_keeps_drop_first() {
-        let rules = tag_rules();
-        // 「正文只在标签里」那类必须带命中门槛，否则普通提问会被判成无正文。
-        let extract = rules
-            .iter()
-            .find(|rule| rule.name == "untrusted_objective")
-            .expect("默认表里有 untrusted_objective");
-        assert_eq!(extract.action, TagAction::Extract);
-        assert_eq!(extract.when_prefix.as_deref(), Some("A goal has been set."));
-        // 顺序：Drop 全在 Extract 之前（Extract 命中即返回，会挡住后面的删除规则）。
-        let first_extract = rules.iter().position(|rule| rule.action == TagAction::Extract).expect("有 Extract 规则");
-        assert!(rules[..first_extract].iter().all(|rule| rule.action == TagAction::Drop));
-        assert!(rules.iter().any(|rule| rule.name == "system-reminder"));
     }
 
     #[test]

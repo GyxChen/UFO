@@ -8,10 +8,10 @@ use std::{env, fs, path::{Path, PathBuf}};
 use serde_json::Value;
 
 use super::{
-    agent_id, apply_tag_rules, base_url_env_names, fallback_kind, home_dir, is_user_prompt_submit,
-    normalize_base_url, normalize_event_name, number_field, payload_error, string_field, tag_rules,
-    transcript_path, truncate_prompt, AdaptContext, AdaptedEvent, HookAdapter, TagAction, TagRule,
-    CLAUDE_BASE_URL_KEY,
+    agent_id, apply_tag_rules, base_url_env_names, build_tag_rules, fallback_kind, home_dir,
+    is_user_prompt_submit, normalize_base_url, normalize_event_name, number_field, payload_error,
+    string_field, transcript_path, truncate_prompt, AdaptContext, AdaptedEvent, HookAdapter,
+    TagRule, CLAUDE_BASE_URL_KEY,
 };
 use crate::modules::agent_status::status::model::{AgentEventKind, Provider};
 
@@ -243,28 +243,29 @@ fn user_prompt(event_name: &str, payload: &Value) -> Option<String> {
         .and_then(|value| normalize_prompt(&value))
 }
 
-/// 归一化提问内容：先剔除平台注入的元标签及其内容，再交给共用的裁剪（去空白 + 超长截断）。
+/// 构建期由 `build.rs` 从仓库根 `.env` 注入的**本平台**规则表（逗号分隔，`name` / `name:drop` /
+/// `name:extract`）。hook 是独立短命进程、cwd 为被监测 agent 的项目目录，运行时读不到仓库里的
+/// `.env`，所以列表在构建期注入 —— 改 `.env` 需重新构建才生效。未注入 / 值为空时用下面的默认表。
+const TAG_RULES_FROM_ENV: Option<&str> = option_env!("UFO_TAG_RULES_CLAUDE");
+
+/// 没配变量时的内置默认：实测会混进 Claude 提问的元信息标签，一律 `drop`（连内文一起删）。
 ///
-/// 标签集与动作语法全平台共用一份（`.env` → [`super::tag_rules`]），**动作由本平台挑**：
-/// Claude 的注入是「连标签带内文一起删」，所以取 `Drop` 类；`Extract` 那类（正文只在标签里）
-/// 是别的平台的形态，在这里会被判成「没有正文」，必须挡掉。
+/// Claude 的注入形态是「标签 + 内容都是噪声」，与「正文被包进标签、标签外才是噪声」那种
+/// （Qoder `/goal`）方向相反 —— 所以本平台默认表里没有任何 `extract`，规则表也各配各的键。
+const DEFAULT_TAG_RULES: &str = "ide_opened_file,system-reminder,local-command,bash_input,bash_output,cli-message,command-message,command-name,command-args,allowed-prompts,env,permission_mode";
+
+/// 归一化提问内容：先按本平台的规则表清掉注入标签，再交给共用的裁剪（去空白 + 超长截断）。
 fn normalize_prompt(raw: &str) -> Option<String> {
-    let rules = drop_rules();
+    let rules = tag_rules();
     if rules.is_empty() {
         return truncate_prompt(raw);
     }
     truncate_prompt(&apply_tag_rules(raw, &rules).unwrap_or_default())
 }
 
-/// 共用规则表里本适配器要用的那些 `Drop` 规则。
-///
-/// 额外收 `claude_*` 前缀的规则（不论动作）：将来发现某个只有 Claude 会注入的标签，
-/// 在 `.env` 里加一条 `claude_xxx:drop` 就生效，不需要改代码，也不会影响别家。
-fn drop_rules() -> Vec<TagRule> {
-    tag_rules()
-        .into_iter()
-        .filter(|rule| rule.action == TagAction::Drop || rule.name.starts_with("claude_"))
-        .collect()
+/// 本适配器的规则表（扫描机制在 [`super::apply_tag_rules`]，这里只出策略）。
+fn tag_rules() -> Vec<TagRule> {
+    build_tag_rules(TAG_RULES_FROM_ENV, DEFAULT_TAG_RULES)
 }
 
 
@@ -278,8 +279,9 @@ mod tests {
 
     // 只在测试里用到的共享项（EventEnvelope 只在测试里构造事件；长度上限只被断言引用），
     // 故不提到 claude.rs 顶层 —— 否则非测试构建会 unused。
+    // TagAction 只在测试里断言默认表用得到，非测试构建不引用它。
     use super::super::{
-        EventEnvelope, MAX_AGENT_ID_LEN, MAX_BASE_URL_LEN, MAX_PROMPT_CHARS,
+        EventEnvelope, TagAction, MAX_AGENT_ID_LEN, MAX_BASE_URL_LEN, MAX_PROMPT_CHARS,
         MAX_TRANSCRIPT_PATH_LEN,
     };
 
@@ -710,11 +712,11 @@ mod tests {
     }
 
     #[test]
-    fn drop_rules_ignore_extract_tags() {
-        // 「正文只在标签里」那类是别的平台的形态：Claude 侧只取 Drop 规则，
-        // 否则一段正常提问会被按别人的模板解包，判成「没有正文」。
-        assert!(drop_rules().iter().all(|rule| rule.action == TagAction::Drop));
-        assert!(drop_rules().iter().any(|rule| rule.name == "system-reminder"));
+    fn default_rules_are_all_drop() {
+        // 本平台的注入形态只有「删标签连同内文」：默认表里出现 extract 就会把正常提问
+        // 判成「没有正文」（那是别的平台的模板形态），所以这条要钉住。
+        assert!(tag_rules().iter().all(|rule| rule.action == TagAction::Drop));
+        assert!(tag_rules().iter().any(|rule| rule.name == "system-reminder"));
     }
 
     #[test]
