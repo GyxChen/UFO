@@ -66,6 +66,11 @@ export interface AgentStatusSettings {
    * ⚠️ 只限制**本模块**的需求上限，不影响其它组件 —— 窗口仍按各组件需求之和（可超过 9）自动伸缩。
    */
   max_cells: number
+  /**
+   * 状态音效开关：红灯 / 黄灯 / 完成绿闪时各播一段提示音。
+   * 音效由悬浮窗前端播放（`lib/sound-player.ts`），Rust 侧不解释本字段。
+   */
+  sound_enabled: boolean
 }
 
 /** 缺配置时的默认值（与 Rust `AgentStatusSettings::default` 一致）。 */
@@ -75,6 +80,8 @@ export const DEFAULT_AGENT_STATUS_SETTINGS: AgentStatusSettings = {
   token_unit: DEFAULT_TOKEN_UNIT,
   proxy_resolver: NONE_PROXY_RESOLVER,
   max_cells: MAX_AGENT_CELLS,
+  // 默认开：音效是「不看屏幕也能知道出事了」的那一半价值，默认关会没人发现它存在。
+  sound_enabled: true,
 }
 
 /** 把任意输入夹进 [min, max] 的整数毫秒；非有限值回落 `fallback`。 */
@@ -115,6 +122,8 @@ export function agentStatusSettings(config: FloatingModuleConfig | null): AgentS
     token_unit: raw.token_unit === 'm_tokens' ? 'm_tokens' : DEFAULT_TOKEN_UNIT,
     proxy_resolver: proxyResolver || NONE_PROXY_RESOLVER,
     max_cells: clampInt(raw.max_cells, ABS_MIN_CELLS, MAX_AGENT_CELLS, defaults.max_cells),
+    // 布尔字段只认真正的布尔值：写错类型（如字符串 "false"）回落默认，不做隐式转换。
+    sound_enabled: typeof raw.sound_enabled === 'boolean' ? raw.sound_enabled : defaults.sound_enabled,
   }
 }
 

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 「消息推送」设置页四套方案对比</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ufo-bg-main: #3d3d3d; --ufo-surface: #2a2a2a; --ufo-surface-2: #323232; --ufo-input: #1f1f1f;
+        --ufo-border: rgba(255, 255, 255, 0.08); --ufo-border-strong: rgba(255, 255, 255, 0.14);
+        --ufo-text: #f3f4f6; --ufo-muted: #a3a3a3; --ufo-accent: #34d399; --ufo-accent-soft: rgba(52, 211, 153, 0.16);
+        --ufo-danger: #f87171; --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+        --font-mono: 'Cascadia Mono', ui-monospace, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; padding: 48px 20px; font-family: var(--font-sans); color: var(--ufo-text);
+        background: radial-gradient(circle at top left, #4a4a4a 0%, #1c1c1c 55%), #141414; display: grid; place-items: start center; line-height: 1.7; }
+      .wrap { width: min(920px, 100%); display: grid; gap: 22px; }
+      h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
+      h2 { margin: 0 0 8px; font-size: 16px; }
+      .lead { margin: 0; color: var(--ufo-muted); font-size: 14px; }
+      .lead b { color: var(--ufo-text); }
+      .cards { display: grid; gap: 14px; }
+      .card { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; padding: 18px 20px;
+        border-radius: 14px; background: var(--ufo-surface); border: 1px solid var(--ufo-border); text-decoration: none; color: inherit; }
+      .card:hover { border-color: var(--ufo-border-strong); background: var(--ufo-surface-2); }
+      .card h3 { margin: 0 0 6px; font-size: 16px; color: var(--ufo-text); }
+      .card p { margin: 0; font-size: 13px; color: var(--ufo-muted); }
+      .tag { margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--ufo-accent-soft); color: var(--ufo-accent); vertical-align: middle; }
+      .go { font-size: 13px; color: var(--ufo-accent); white-space: nowrap; }
+      .pros, .cons { margin: 8px 0 0; padding-left: 18px; font-size: 12px; color: var(--ufo-muted); }
+      .cons { color: #9a9a9a; }
+      .spec { padding: 20px; border-radius: 14px; background: var(--ufo-surface); border: 1px solid var(--ufo-border); }
+      .spec table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 6px; }
+      .spec th, .spec td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--ufo-border); vertical-align: top; }
+      .spec th { color: #8f8f8f; font-weight: 500; font-size: 11.5px; }
+      .spec code { background: var(--ufo-input); padding: 1px 6px; border-radius: 6px; font-size: 12px; font-family: var(--font-mono); }
+      .foot { font-size: 12px; color: #6b6b6b; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>「消息推送」设置页：四套版面</h1>
+        <p class="lead">
+          四套只差<b>下半区怎么分</b>。上半区（总开关 + 触发事件 + 提醒内容）与下半区的<b>内容完全相同</b>：
+          一个服务可以挂<b>多行具名主题</b>（Bark 一串密钥一台设备，必须能加多行并起名），
+          ntfy 与 Bark <b>可同时启用</b>，一次灯变会给所有启用服务下的每行主题各发一条。
+          ⚠️ 本页面是当初的<b>选型对比</b>，控件清单已按精简后的实现改过；只有方案 A 跟着更新，B / C / D 留作当时的思路记录。
+        </p>
+      </header>
+
+      <div class="cards">
+        <a class="card" href="./push-a-dual-pane.html">
+          <div>
+            <h3>方案 A · 双栏主从<span class="tag">已实现</span></h3>
+            <p>左列选服务（行内带各自开关 + 主题计数），右列管该服务的服务器地址与主题列表。下半区照抄「信息卡拓展」。</p>
+            <ul class="pros">
+              <li>与已有的「信息卡拓展 / 会话记录」完全同构，你不用重新学一套交互；实现上也能复用 <code>.ep-panel</code> 那套两栏 + 高度链</li>
+              <li>两列各自滚，收件方再多也不撑长页面；破坏性操作（确认移除）就在行内，位置稳定</li>
+              <li>服务数变多时，左列只是变长，不需要改版面</li>
+            </ul>
+            <ul class="cons"><li>一次只看一个服务，跨服务对比要来回点</li></ul>
+          </div>
+          <span class="go">打开 →</span>
+        </a>
+
+        <a class="card" href="./push-b-provider-cards.html">
+          <div>
+            <h3>方案 B · 服务卡并排 + 收件方宽表</h3>
+            <p>上半区下面先来一排服务卡（开关 + 计数一目了然），整幅宽度给选中服务的收件方<b>表格</b>，字段行内直接改。</p>
+            <ul class="pros">
+              <li>设备多时最快：三台 iPhone/iPad/手表一屏看全，改完即存</li>
+              <li>表格能放固定列（名称 / 地址 / 优先级 / 密钥 / 启用 / 操作），扫读成本最低</li>
+            </ul>
+            <ul class="cons">
+              <li>行内输入框窄，长主题串会被截断（要看全文得悬停或展开）</li>
+              <li>服务数一多，并排卡会挤成两行，形状开始不稳</li>
+            </ul>
+          </div>
+          <span class="go">打开 →</span>
+        </a>
+
+        <a class="card" href="./push-c-stacked.html">
+          <div>
+            <h3>方案 C · 纵向堆叠卡片（整页滚动）</h3>
+            <p>不切栏：总开关在上，两个服务各一张卡，可分别展开/收起，收件方在卡内继续往下堆。</p>
+            <ul class="pros">
+              <li>窄窗口 / 高 DPI 下最稳，没有横向挤压问题</li>
+              <li>两个服务能同时摊开对照着配（Bark 的设备与 ntfy 的主题并排看）</li>
+            </ul>
+            <ul class="cons">
+              <li>收件方一多就要长距离滚动，「测试发送」按钮会跑出视区</li>
+              <li>和同页其它两个 <code>fill</code> 面板的观感不一致（那两个是占满高度双栏自滚）</li>
+            </ul>
+          </div>
+          <span class="go">打开 →</span>
+        </a>
+
+        <a class="card" href="./push-d-side-rail.html">
+          <div>
+            <h3>方案 D · 竖排服务栏 + 右列「配置 / 发送记录」</h3>
+            <p>左列竖排服务（可滚、带开关圆点），右列拆两栏：收件方配置 + 最近发送记录（含失败原因与重试提示）。</p>
+            <ul class="pros">
+              <li>为「将来十几个 provider」准备：竖排可滚，服务名再长也不挤</li>
+              <li>唯一把<b>投递结果</b>放进主视图的方案 —— 推送这类外部依赖，「为什么没收到」是最常见的问题</li>
+            </ul>
+            <ul class="cons">
+              <li>三级信息密度最高，右列两栏在 1000px 宽下会比较紧（收件方表单列要缩到 2 列）</li>
+              <li>竖排导航与主窗两级 tab 的横条语言不同，多了一种导航形状</li>
+            </ul>
+          </div>
+          <span class="go">打开 →</span>
+        </a>
+      </div>
+
+      <section class="spec">
+        <h2>四套共用的部分：provider 规范（已实现版）</h2>
+        <p class="lead">
+          版面只是外壳，真正决定「以后能不能再加 provider」的是下面这套数据模型与注册契约。
+          <b>已选定方案 A</b>，规范全文落在 <code>reference/doc/agent-status-push-guide.md</code>（本节是它的摘要）。
+          ⚠️ 首版实现之后按用户要求做过一轮<b>精简</b>：服务只剩「服务器地址」一个配置，收件方只剩「名字 + 主题」两列，
+          凭据管理器、优先级 / 铃声 / 分组、收件方开关、节流、静默、标题前缀、投递记录全部删除。
+          方案 B / C / D 的原样保留只为留下当时的对比依据，界面细节以 <code>push-a-dual-pane.html</code> 为准。
+        </p>
+        <table>
+          <tr><th style="width:170px">项</th><th>约定</th></tr>
+          <tr>
+            <td>两层模型</td>
+            <td><code>provider</code>（ntfy / bark / 将来更多）→ <code>channel[]</code>（该服务下的<b>一行主题</b>：<code>id + name + topic</code>，0..n 个）。
+              Bark 的多设备、ntfy 的多主题都是这一行 —— 设备密钥本身就是一个主题串，因此服务差异不需要特判，UI 也只有一套列表。
+              开关是<b>与</b>关系：总开关 ∧ 服务；主题行没有自己的开关。</td>
+          </tr>
+          <tr>
+            <td>配置存放</td>
+            <td>整体存在本模块的配置块 <code>module_settings['agent-status'].push</code>（外壳只透传、不解释字段）。
+              结构：<code>{ enabled, events[], content[], providers: { ntfy: {enabled, server}, bark: {enabled, server} }, channels: [{id, provider, name, topic}] }</code>。
+              ⚠️ 新增字段一律 optional + 默认值，<b>不升 schema 版本</b>（沿用本项目既有硬规则）；旧键（<code>fields.server</code> / <code>fields.topic</code>）仍读得出来，写回时整块替换自然消失。</td>
+          </tr>
+          <tr>
+            <td>加一个 provider = 两处登记</td>
+            <td>① Rust：<code>push/providers/&lt;id&gt;.rs</code> 实现 <code>PushProvider</code>（<code>id / label / server() / send()</code>），在 <code>build_providers()</code> 加一行；
+              ② 前端：<code>lib/push-providers.ts</code> 注册表加一行文案。<b>不需要</b>声明字段表，也不需要写新的 Vue 组件 —— 这与状态灯「加平台=加适配器」的收敛方式一致。</td>
+          </tr>
+          <tr>
+            <td>服务器地址</td>
+            <td><code>ServerSpec { label, default, help }</code> 由 provider 自带：面板照它渲染一个地址输入框，留空 = 用官方默认。
+              校验只做 <code>http(s)://</code> + 形状 + 长度，<b>允许局域网自建</b>（与流程脚本的地址策略刻意不同）。</td>
+          </tr>
+          <tr>
+            <td>主题不是密钥</td>
+            <td>主题串明文显示、明文落配置（用户要的是看得见 + 能命名）。push 侧没有凭据管理器路径；
+              <code>flow</code> 那边仍用自己的 <code>KeyringSecrets</code>。代价与旧版孤儿凭据见 guide §12。</td>
+          </tr>
+          <tr>
+            <td>触发与限流</td>
+            <td>事件源固定为内核已有的语义：<code>TurnFinished</code> / <code>WaitingForUser</code> / <code>Failed</code> / <code>SessionFinished</code>（灯已经会的东西，推送不再自造一套判定）。
+              一次灯变 → 该服务下每行主题各一条；不再节流、没有静默期。所有 agent 全停 = <b>零出网</b>（与流程脚本同一不变量）。</td>
+          </tr>
+          <tr>
+            <td>投递与反馈</td>
+            <td>专用 worker 线程 + 串行队列 + 按主题行的指数退避（连续失败不每秒打网）；不再有内存投递记录，诊断入口是卡片右上角的<b>统一测试</b>：
+              <code>test_push_provider(provider_id)</code> 逐主题回 <code>{name, ok, status, error}</code>。
+              UI 反馈一律 <code>role="status"</code> 行内提示，破坏性操作两步确认（本项目禁止 <code>alert/confirm</code>）。</td>
+          </tr>
+        </table>
+      </section>
+
+      <p class="foot">
+        方案 A 已实现并按精简要求改过一轮；契约、红线与验收清单以 <code>reference/doc/agent-status-push-guide.md</code> 为准
+        （命令两处：<code>get_push_status</code> 与 <code>test_push_provider</code>，都只在主窗授权）。
+      </p>
+    </div>
+  </body>
+</html>

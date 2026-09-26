@@ -37,6 +37,7 @@ describe('agentStatusSettings', () => {
           token_unit: 'm_tokens',
           proxy_resolver: 'cc-switch',
           max_cells: 6,
+          sound_enabled: false,
         })
       )
     ).toEqual({
@@ -45,7 +46,17 @@ describe('agentStatusSettings', () => {
       token_unit: 'm_tokens',
       proxy_resolver: 'cc-switch',
       max_cells: 6,
+      sound_enabled: false,
     })
+  })
+
+  it('keeps the status sound on unless it was explicitly switched off', () => {
+    // 缺字段 / 写错类型都回落「开」：静音是个明确的动作，不该由坏配置猜出来。
+    expect(DEFAULT_AGENT_STATUS_SETTINGS.sound_enabled).toBe(true)
+    expect(agentStatusSettings(configWith({})).sound_enabled).toBe(true)
+    expect(agentStatusSettings(configWith({ sound_enabled: 'false' })).sound_enabled).toBe(true)
+    expect(agentStatusSettings(configWith({ sound_enabled: true })).sound_enabled).toBe(true)
+    expect(agentStatusSettings(configWith({ sound_enabled: false })).sound_enabled).toBe(false)
   })
 
   it('clamps out-of-range values', () => {

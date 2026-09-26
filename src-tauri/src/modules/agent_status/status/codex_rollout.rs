@@ -9,8 +9,10 @@
 //!    当天所有历史会话复读成一串灯色动画）。
 //! 3. **增量**：之后每轮只读新增字节。文件在长本身就等于「有活动」→ 绿；命中生命周期记录
 //!    （`task_complete` / `turn_aborted` / …）才按 `compat::codex` 的映射改灯态。
-//! 4. **去抖**：同一灯态只产出一次事件（一条指令会连写十几条记录）；长时间保持「绿」则每
-//!    30 秒补一条保活事件，免得被内核的「执行中超时」清掉。
+//! 4. **去抖**：每轮里**连续的**同灯态压成一条（一条指令会连写十几条记录），但同一批里灯态
+//!    真的变化多次时会**按文件里的先后顺序各产出一条** —— 只留最后一条会让内核停在
+//!    「等你操作」上，把「恢复执行 → 一轮结束」的完成信号整条吞掉。
+//!    长时间保持「绿」则每 30 秒补一条保活事件，免得被内核的「执行中超时」清掉。
 //! 5. **结束**：归档会把 rollout **移走**到 `archived_sessions/`，连续两轮不见即判会话结束。
 //!
 //! ⚠️ 只读、增量、按会话独立；agent 全停时文件不再增长 → 零解析、零事件。
@@ -41,6 +43,22 @@ pub(crate) struct RolloutUpdates {
     pub events: Vec<AgentEvent>,
     /// 各会话的最新累计用量：`(session_key, totals)`。
     pub tokens: Vec<(String, TokenTotals)>,
+}
+
+/// 一轮巡检里观察到的一次灯态变化。
+///
+/// 批内连续同灯态会被压成一条（一条指令连写十几条记录），但灯态**真的变了**的那些
+/// 变化会各占一条，按文件里的先后顺序排列 —— 内核据此才能看到「恢复执行 → 一轮结束」
+/// 这样的序列，而不是只看到最后那个状态。
+struct Observed {
+    /// 该变化对应的灯态。
+    kind: AgentEventKind,
+    /// 记录名，写进事件的 `event` 字段供诊断。
+    name: &'static str,
+    /// turn 级记录的轮 id（去重键）；非 turn 级为 None。
+    turn_id: Option<String>,
+    /// `task_complete` 的错误正文。
+    error_code: Option<String>,
 }
 
 /// 单个 rollout 文件的读取状态。
@@ -202,14 +220,13 @@ impl CodexRolloutWatcher {
     fn scan(&mut self, now: i64) -> RolloutUpdates {
         let mut updates = RolloutUpdates::default();
         for session in self.sessions.values_mut() {
-            // 本轮命中的最后一条「带灯态」的记录：(kind, 记录名, turn_id, 错误正文, 提问)。
-            let mut latest: Option<(
-                AgentEventKind,
-                &'static str,
-                Option<String>,
-                Option<String>,
-            )> = None;
-            // 本轮的提问：**独立于 `latest`**，因为它常与生命周期记录同轮出现（见字段注释）。
+            // 本轮观察到的**灯态变化序列**：批内连续同灯态压成一条（一条指令会连写十几条
+            // 记录），但**不再只留最后一条** —— 同一批里真的出现了「恢复执行 → 结束」时
+            // 必须按顺序发出去，否则内核停在「等你操作」上，完成信号被整条吞掉。
+            let mut observed: Vec<Observed> = Vec::new();
+            // 本轮是否读到过生命周期记录（决定「只有活动」的兜底要不要生效）。
+            let mut saw_lifecycle = false;
+            // 本轮的提问：**独立于 `observed`**，因为它常与生命周期记录同轮出现（见字段注释）。
             let mut prompt: Option<String> = None;
             let mut grew = false;
             let mut vanished: Vec<PathBuf> = Vec::new();
@@ -248,7 +265,16 @@ impl CodexRolloutWatcher {
                         prompt = record.prompt.clone();
                     }
                     if let Some(kind) = record.kind {
-                        latest = Some((kind, record.name, record.turn_id, record.error_code));
+                        saw_lifecycle = true;
+                        // 连续同灯态压成一条；灯态真的变了才追加。
+                        if observed.last().map(|entry| entry.kind) != Some(kind) {
+                            observed.push(Observed {
+                                kind,
+                                name: record.name,
+                                turn_id: record.turn_id,
+                                error_code: record.error_code,
+                            });
+                        }
                     }
                 });
                 if let Some(meta) = identity {
@@ -277,25 +303,38 @@ impl CodexRolloutWatcher {
 
             session.tokens = sum_tokens(&session.files);
 
-            // 灯态：只在变化时产出；长时间保持「绿」则按间隔补一条保活事件。
+            // 灯态：**首条与上一轮基线相同**的丢掉（不是新变化），其后的每一条都是本轮
+            // 新观测到的变化。长时间保持「绿」则按间隔补一条保活事件。
             let keepalive_due = now.saturating_sub(session.last_emit_ms) >= RUNNING_KEEPALIVE;
-            let candidate = match latest {
-                // 有生命周期记录：以本轮最后一条为准（一轮内的中间态不必上报）。
-                Some(latest) => Some(latest),
-                // 只有活动、没有生命周期记录 → 绿。
-                None if grew => Some((AgentEventKind::Running, "activity", None, None)),
-                // 文件没长：没有新事实，但「绿」要能靠保活续命 —— 长命令期间 Codex 一条记录
-                // 都不写（实测 20 秒的命令中间空档），不续命会被内核的「执行中超时」清掉。
-                None if session.last_kind == Some(AgentEventKind::Running) && keepalive_due => {
-                    Some((AgentEventKind::Running, "keepalive", None, None))
+            let mut emitting: Vec<Observed> = Vec::new();
+            for entry in observed {
+                if emitting.is_empty() && Some(entry.kind) == session.last_kind {
+                    continue;
                 }
-                None => None,
-            };
-            // 同灯态不重复产出；唯一的例外是「绿 + 到点」的保活。
-            let emitting = candidate.filter(|(kind, ..)| {
-                Some(*kind) != session.last_kind
-                    || (*kind == AgentEventKind::Running && keepalive_due)
-            });
+                emitting.push(entry);
+            }
+            // 没有新的灯态变化时兜两件事：
+            // - 只有活动、没有生命周期记录（`!saw_lifecycle`）→ 文件在长就是「绿」；
+            // - 灯本来就是绿的且到点 → 补一条保活，刷新内核那边的存活时间。
+            //   长命令期间 Codex 一条记录都不写，不续命会被内核的「执行中超时」清掉；
+            //   即便本批有生命周期记录，只要它没构成新灯态（基线已相同）也要续这条命。
+            if emitting.is_empty() {
+                if grew && !saw_lifecycle && session.last_kind != Some(AgentEventKind::Running) {
+                    emitting.push(Observed {
+                        kind: AgentEventKind::Running,
+                        name: "activity",
+                        turn_id: None,
+                        error_code: None,
+                    });
+                } else if keepalive_due && session.last_kind == Some(AgentEventKind::Running) {
+                    emitting.push(Observed {
+                        kind: AgentEventKind::Running,
+                        name: "keepalive",
+                        turn_id: None,
+                        error_code: None,
+                    });
+                }
+            }
 
             // 提问取「本轮见过的」或「此前记住的」：提问只在每轮开头写一次，
             // 而 tooltip 任何时候悬停都要能显示最近一次提问。
@@ -303,23 +342,23 @@ impl CodexRolloutWatcher {
                 session.prompt = Some(fresh);
             }
 
-            let produced_event = emitting.is_some();
-            if let Some((kind, name, turn_id, error_code)) = emitting {
+            let produced_event = !emitting.is_empty();
+            for entry in emitting {
                 session.activity_seq = session.activity_seq.saturating_add(1);
                 // turn 级记录用语义 id：文件被截断重扫时，内核那层去重仍能兜住。
-                let event_id = match turn_id {
-                    Some(turn_id) => format!("rollout-{name}-{turn_id}"),
-                    None => format!("rollout-{name}-{}", session.activity_seq),
+                let event_id = match entry.turn_id {
+                    Some(turn_id) => format!("rollout-{}-{turn_id}", entry.name),
+                    None => format!("rollout-{}-{}", entry.name, session.activity_seq),
                 };
                 updates.events.push(session.event(
-                    kind,
-                    name,
+                    entry.kind,
+                    entry.name,
                     event_id,
-                    error_code,
+                    entry.error_code,
                     session.prompt.clone(),
                     now,
                 ));
-                session.last_kind = Some(kind);
+                session.last_kind = Some(entry.kind);
                 session.last_emit_ms = now;
             }
 
@@ -650,14 +689,36 @@ mod tests {
             AgentEventKind::TurnFinished
         );
 
-        // 一轮内「开始 → 被中断」落在同一次巡检里：只产出一条，取最后一个状态。
-        // （中间态没必要上报 —— 内核本来就要的是「现在是什么灯」。）
+        // 一轮内「开始 → 被中断」落在同一次巡检里：两个**真的不同**的灯态各产出一条，
+        // 按文件里的先后顺序。同步丢掉中间态会让内核以为「这一轮压根没跑起来」。
         append(&path, &task_started("t2"));
         append(&path, &turn_aborted("t2"));
         let updates = watcher.poll_at(3_000);
-        assert_eq!(updates.events.len(), 1);
-        assert_eq!(updates.events[0].kind, AgentEventKind::WaitingForUser);
-        assert_eq!(updates.events[0].event, "turn_aborted");
+        assert_eq!(updates.events.len(), 2);
+        assert_eq!(updates.events[0].kind, AgentEventKind::Running);
+        assert_eq!(updates.events[0].event, "task_started");
+        assert_eq!(updates.events[1].kind, AgentEventKind::WaitingForUser);
+        assert_eq!(updates.events[1].event, "turn_aborted");
+    }
+
+    /// 中断后用户接着发了下一条、且「恢复执行 + 一轮跑完」落在同一次巡检里：
+    /// 必须**按顺序**看到 Running → TurnFinished。
+    ///
+    /// 早先只留最后一条（TurnFinished），而内核在「等你操作」态下不认主线程 Stop
+    /// （那是 Claude 阻塞等待的保护），完成信号就被整条吞掉 —— 灯一直卡在黄灯上。
+    #[test]
+    fn turn_aborted_then_a_completed_turn_reports_running_before_finished() {
+        let (mut watcher, path, _temp, _home) = watched(&session_meta(SESSION, None));
+        append(&path, &task_started("t1"));
+        append(&path, &turn_aborted("t1"));
+        assert_eq!(watcher.poll_at(2_000).events.len(), 2);
+
+        append(&path, &task_started("t2"));
+        append(&path, &task_complete("t2", None));
+        let updates = watcher.poll_at(2_500);
+        assert_eq!(updates.events.len(), 2, "恢复执行与完成各算一次变化");
+        assert_eq!(updates.events[0].kind, AgentEventKind::Running);
+        assert_eq!(updates.events[1].kind, AgentEventKind::TurnFinished);
     }
 
     #[test]
@@ -666,7 +727,12 @@ mod tests {
         let (mut watcher, path, _temp, _home) = watched(&session_meta(SESSION, None));
         append(&path, &task_started("t1"));
         append(&path, &turn_aborted("t1"));
-        assert_eq!(watcher.poll_at(2_000).events.len(), 1);
+        let first = watcher.poll_at(2_000);
+        assert_eq!(first.events.len(), 2);
+        assert_eq!(
+            first.events.last().map(|event| event.kind),
+            Some(AgentEventKind::WaitingForUser)
+        );
 
         append(&path, &turn_aborted("t2"));
         assert!(watcher.poll_at(2_500).events.is_empty(), "同灯态不重复");
@@ -848,6 +914,7 @@ mod tooltip_contract_tests {
     use super::*;
     use crate::modules::agent_status::status::compat::codex::CodexHomeGuard;
     use crate::modules::agent_status::status::kernel::StatusRegistry;
+    use crate::modules::agent_status::status::SessionPhase;
     use crate::modules::agent_status::status::test_support::TempDir;
 
     /// 把一轮巡检的产出喂给内核（与 monitor 的顺序一致：**先事件后用量**）。
@@ -961,5 +1028,55 @@ mod tooltip_contract_tests {
         assert_eq!(session.prompt.as_deref(), Some("帮我看看这个 bug"));
         let totals = session.tokens.expect("播种读到的用量要补推");
         assert_eq!(totals.input_tokens + totals.cache_read_input_tokens + totals.output_tokens, 30593);
+    }
+
+    /// Codex 快速轮次：先中断（黄），下一轮「恢复 + 跑完」落在**同一次巡检**里。
+    ///
+    /// 契约：灯要真的落回「等 prompt」（绿闪后黄常亮），而不是卡在「等你操作」上 ——
+    /// 早先那一批被压成最后一条 TurnFinished，而内核在「等你操作」态下不认主线程 Stop
+    /// （那是 Claude 阻塞等待的保护），完成信号就被整条吞掉。
+    #[test]
+    fn aborted_turn_then_a_completed_turn_settles_the_light() {
+        let (path, _guard, _temp) = rollout(&format!("{}\n", meta()));
+        let mut watcher = CodexRolloutWatcher::new();
+        let mut registry = StatusRegistry::new();
+        feed(&mut watcher, &mut registry, 1_000);
+
+        append(&path, serde_json::json!({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "t1"}}));
+        append(&path, serde_json::json!({"type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": "t1", "reason": "interrupted"}}));
+        feed(&mut watcher, &mut registry, 2_000);
+        assert_eq!(
+            registry.snapshot(2_000).sessions[0].phase,
+            SessionPhase::Waiting,
+            "中断 → 黄灯不闪"
+        );
+
+        append(&path, serde_json::json!({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "t2"}}));
+        append(&path, serde_json::json!({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "t2"}}));
+        feed(&mut watcher, &mut registry, 2_500);
+
+        let session = &registry.snapshot(2_500).sessions[0];
+        assert_eq!(session.phase, SessionPhase::Waiting, "一轮跑完应落回等 prompt");
+        assert!(session.is_flashing, "正常结束先绿闪");
+        assert_eq!(session.remove_at_ms, Some(32_500), "retention 30s 后落黄常亮");
+        assert_eq!(session.waiting_reason, None);
+    }
+
+    /// 中断后用户接着发了下一条、且「恢复执行 + 一轮跑完」落在同一次巡检里：
+    /// 必须**按顺序**看到 Running → TurnFinished。
+    #[test]
+    fn rollback_ordering_is_preserved_for_the_kernel() {
+        let (path, _guard, _temp) = rollout(&format!("{}\n", meta()));
+        let mut watcher = CodexRolloutWatcher::new();
+        feed(&mut watcher, &mut StatusRegistry::new(), 1_000);
+
+        append(&path, serde_json::json!({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "t1"}}));
+        append(&path, serde_json::json!({"type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": "t1", "reason": "interrupted"}}));
+        let updates = watcher.poll_at(2_000);
+        let kinds: Vec<_> = updates.events.iter().map(|event| event.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![AgentEventKind::Running, AgentEventKind::WaitingForUser]
+        );
     }
 }

@@ -1,14 +1,18 @@
 <script setup lang="ts">
 /**
- * Agent 状态灯设置 · 常规：所有「填一下就完事」的配置，两块卡片横向并排。
+ * Agent 状态灯设置 · 常规：所有「填一下就完事」的配置，两块卡片横向并排，下面再补一行状态音效。
  *
  * 左「行为」（时间参数与全局取值）、右「窗口格子」（各形态上限）。
  * 它们都是短表单，纵向堆叠会白白拉长页面，所以并排铺开 —— 一屏看完，不用滚。
  * 需要「占满高度 + 左右各自滚动」的两个面板（信息卡拓展 / 会话记录）才各占一个二级 tab。
  *
- * 左卡的字段是本组件自己的配置（`../settings` 读写外层的 `module_settings['agent-status']`，字段名不经过外壳）；
- * 右卡的「最多显示几盏灯」也是本组件自己的配置（同块的 `max_cells`），只限制状态灯，
- * 不影响其它组件 —— 同级组件各管各的格子数，整窗按它们的需求之和自动伸缩。
+ * 「状态音效」是右列里的一行（简介在左、开关在右），落在「窗口格子」卡片**下面**：
+ * 它配的是「有没有声音」，与左卡的时间参数、上面卡片的格子尺寸都不是一类，
+ * 塞进任一张卡都会被误读成只影响那一块。
+ *
+ * 卡里的字段是本组件自己的配置（`../settings` 读写外层的 `module_settings['agent-status']`，
+ * 字段名不经过外壳）；右卡的「最多显示几盏灯」也是本组件自己的配置（同块的 `max_cells`），
+ * 只限制状态灯，不影响其它组件 —— 同级组件各管各的格子数，整窗按它们的需求之和自动伸缩。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
@@ -17,6 +21,7 @@ import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSegmentedControl from '@/components/ui/BaseSegmentedControl.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import BaseSlider from '@/components/ui/BaseSlider.vue'
+import BaseSwitch from '@/components/ui/BaseSwitch.vue'
 import SettingsField from '@/components/ui/SettingsField.vue'
 import {
   AGENT_MAX_CELL_STEPS,
@@ -44,6 +49,8 @@ const retentionInput = ref(toSeconds(settings.value.completed_retention_ms))
 const runningTimeoutInput = ref(toSeconds(settings.value.running_timeout_ms))
 const tokenUnitInput = ref<TokenUnit>(settings.value.token_unit)
 const proxyResolverInput = ref(settings.value.proxy_resolver)
+/** 状态音效开关：悬浮窗前端播放，关掉后三种跳色都不出声。 */
+const soundEnabledInput = ref(settings.value.sound_enabled)
 
 /** 代理解析器选项：这是本组件自己的概念，所以由本组件自己向后端拉。 */
 const resolvers = ref<ProxyResolverInfo[]>([])
@@ -106,6 +113,7 @@ watch(
     tokenUnitInput.value = value.token_unit
     proxyResolverInput.value = value.proxy_resolver
     maxCellsIndex.value = indexForCells(value.max_cells)
+    soundEnabledInput.value = value.sound_enabled
   },
   { immediate: true }
 )
@@ -164,6 +172,15 @@ async function updateProxyResolver() {
   }
 }
 
+/** 更新状态音效开关（悬浮窗前端据此决定跳色时播不播提示音）；失败时退回已知值。 */
+async function updateSoundEnabled() {
+  try {
+    await modules.updateModuleSettings(AGENT_STATUS_MODULE_ID, { sound_enabled: soundEnabledInput.value })
+  } catch {
+    soundEnabledInput.value = settings.value.sound_enabled
+  }
+}
+
 /** 把输入框恢复成当前配置值（放弃未提交的编辑）。 */
 function resetInputs() {
   maxCellsIndex.value = indexForCells(settings.value.max_cells)
@@ -171,6 +188,7 @@ function resetInputs() {
   runningTimeoutInput.value = toSeconds(settings.value.running_timeout_ms)
   tokenUnitInput.value = settings.value.token_unit
   proxyResolverInput.value = settings.value.proxy_resolver
+  soundEnabledInput.value = settings.value.sound_enabled
 }
 
 /**
@@ -184,7 +202,7 @@ async function saveTimeouts() {
 </script>
 
 <template>
-  <!-- 两块卡片横向并排（窄窗口由 .general-cards 的媒体查询塌成单列）。 -->
+  <!-- 两块卡片横向并排（窄窗口由 .general-cards 的媒体查询塌成单列）；右列自己再纵向堆叠。 -->
   <div class="general-cards">
     <section class="ufo-card module-settings" aria-labelledby="agent-status-behaviour-title">
       <div class="ufo-card__header">
@@ -249,37 +267,66 @@ async function saveTimeouts() {
       </SettingsField>
     </section>
 
-    <section class="ufo-card module-settings" aria-labelledby="agent-status-cells-title">
-      <div class="ufo-card__header">
-        <h2 id="agent-status-cells-title" class="ufo-card__title">窗口格子</h2>
-        <span class="ufo-card__hint">最多 {{ currentMaxCells }} 盏灯</span>
-      </div>
-
-      <p class="ufo-card__hint">
-        有几个会话就显示几盏灯：上下贴边时横向排开、左右贴边时纵向排开、贴到四角时排成方块。
-        这里限制的是「最多显示几盏」，超出的会话折叠成最后一格的 +N；只影响状态灯，不影响其它组件。
-      </p>
-
-      <SettingsField label="最多显示" label-id="max-cells-label">
-        <div class="module-settings__cap-row">
-          <!-- 刻度即档位：拖到哪档就是几盏灯，每档下方标注贴到四角时的方块形状。 -->
-          <BaseSlider
-            v-model="maxCellsIndex"
-            class="flex-1"
-            :min="0"
-            :max="AGENT_MAX_CELL_STEPS.length - 1"
-            :step="1"
-            :ticks="maxCellTicks"
-            aria-labelledby="max-cells-label"
-            :aria-value-text="`${currentMaxCells} 盏灯`"
-            @change="updateMaxCells"
-          />
-          <span class="module-settings__cap-value">
-            {{ currentMaxCells }} 盏<span v-if="currentCornerShape"> · 四角 {{ currentCornerShape }}</span>
-          </span>
+    <div class="general-cards__column">
+      <section class="ufo-card module-settings" aria-labelledby="agent-status-cells-title">
+        <div class="ufo-card__header">
+          <h2 id="agent-status-cells-title" class="ufo-card__title">窗口格子</h2>
+          <span class="ufo-card__hint">最多 {{ currentMaxCells }} 盏灯</span>
         </div>
-      </SettingsField>
-    </section>
+
+        <p class="ufo-card__hint">
+          有几个会话就显示几盏灯：上下贴边时横向排开、左右贴边时纵向排开、贴到四角时排成方块。
+          这里限制的是「最多显示几盏」，超出的会话折叠成最后一格的 +N；只影响状态灯，不影响其它组件。
+        </p>
+
+        <SettingsField label="最多显示" label-id="max-cells-label">
+          <div class="module-settings__cap-row">
+            <!-- 刻度即档位：拖到哪档就是几盏灯，每档下方标注贴到四角时的方块形状。 -->
+            <BaseSlider
+              v-model="maxCellsIndex"
+              class="flex-1"
+              :min="0"
+              :max="AGENT_MAX_CELL_STEPS.length - 1"
+              :step="1"
+              :ticks="maxCellTicks"
+              aria-labelledby="max-cells-label"
+              :aria-value-text="`${currentMaxCells} 盏灯`"
+              @change="updateMaxCells"
+            />
+            <span class="module-settings__cap-value">
+              {{ currentMaxCells }} 盏<span v-if="currentCornerShape"> · 四角 {{ currentCornerShape }}</span>
+            </span>
+          </div>
+        </SettingsField>
+      </section>
+
+      <!--
+        状态音效：右列里「窗口格子」**下面**的一行（简介在左、开关在右）。
+        它配的是「有没有声音」，与左卡的时间参数、上面卡片的格子尺寸都不是一类 ——
+        塞进行为卡会像时间参数、塞进格子卡会像格子设置，所以自己占一行。
+      -->
+      <section class="ufo-card module-settings light-sound" aria-labelledby="light-sound-title">
+        <div class="light-sound__text">
+          <h2 id="light-sound-title" class="ufo-card__title">状态音效</h2>
+          <p class="ufo-card__hint">
+            红灯 / 黄灯 / 完成绿闪各播一段提示音；绿常亮不发声，绿闪落成黄常亮也不重复响。
+          </p>
+          <p class="ufo-card__hint">
+            换音频：把
+            <span class="light-sound__path">goError.mp3</span> /
+            <span class="light-sound__path">goWarn.mp3</span> /
+            <span class="light-sound__path">goSucc.mp3</span>
+            覆盖进安装路径下的 <span class="light-sound__path">data/bgm</span>（重启后生效）。
+          </p>
+        </div>
+        <BaseSwitch
+          v-model="soundEnabledInput"
+          aria-label="状态音效"
+          title="红灯 / 黄灯 / 完成绿闪时播放提示音"
+          @change="updateSoundEnabled"
+        />
+      </section>
+    </div>
   </div>
 
   <!-- 重置 / 保存是整页动作（保存的是左卡的两个时间参数，格子上限本就在 change 时落盘），

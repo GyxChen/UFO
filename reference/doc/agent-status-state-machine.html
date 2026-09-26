@@ -1,0 +1,2549 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent 状态机 - UFO</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #202020;
+      --surface: #2a2a2a;
+      --surface-2: #323232;
+      --surface-3: #3a3a3a;
+      --input: #1f1f1f;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.14);
+      --text: #f3f4f6;
+      --muted: #a3a3a3;
+      --green: #34d399;
+      --green-soft: rgba(52, 211, 153, 0.14);
+      --yellow: #fbbf24;
+      --yellow-soft: rgba(251, 191, 36, 0.14);
+      --red: #f87171;
+      --red-soft: rgba(248, 113, 113, 0.14);
+      --blue: #93c5fd;
+      --blue-soft: rgba(147, 197, 253, 0.12);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
+      --sans: "Plus Jakarta Sans", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      --mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.65;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    code,
+    .mono {
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+
+    code {
+      display: inline-block;
+      padding: 0.1rem 0.38rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--input);
+      color: #e5e7eb;
+      white-space: nowrap;
+    }
+
+    .page {
+      width: min(1440px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 32px 0 72px;
+    }
+
+    .topbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      margin: 0 -20px 26px;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(32, 32, 32, 0.94);
+      backdrop-filter: blur(14px);
+    }
+
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      width: min(1400px, 100%);
+      margin: 0 auto;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .brand-mark {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 5px var(--green-soft);
+    }
+
+    .topnav {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .topnav a {
+      padding: 7px 10px;
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+      transition: background 160ms ease, color 160ms ease;
+    }
+
+    .topnav a:hover,
+    .topnav a:focus-visible {
+      background: var(--surface-2);
+      color: var(--text);
+      outline: none;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(330px, 0.75fr);
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 22px;
+    }
+
+    .hero-main,
+    .hero-side,
+    .panel,
+    .callout,
+    .sequence-card,
+    .event-detail {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-main {
+      padding: clamp(24px, 4vw, 44px);
+      border-radius: var(--radius);
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      max-width: 850px;
+      margin-bottom: 14px;
+      font-size: clamp(32px, 5vw, 58px);
+      line-height: 1.08;
+      letter-spacing: -0.02em;
+    }
+
+    h2 {
+      margin-bottom: 8px;
+      font-size: clamp(22px, 3vw, 30px);
+      line-height: 1.22;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 17px;
+      line-height: 1.35;
+    }
+
+    h4 {
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .hero-copy {
+      max-width: 820px;
+      margin-bottom: 22px;
+      color: #d4d4d4;
+      font-size: 16px;
+    }
+
+    .hero-side {
+      display: grid;
+      grid-template-rows: repeat(3, 1fr);
+      overflow: hidden;
+      border-radius: var(--radius);
+    }
+
+    .metric {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .metric:last-child {
+      border-bottom: 0;
+    }
+
+    .metric strong {
+      font-family: var(--mono);
+      font-size: 24px;
+      color: var(--green);
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .flow-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0;
+      margin-top: 24px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--input);
+    }
+
+    .flow-step {
+      position: relative;
+      min-height: 82px;
+      padding: 14px 18px 14px 34px;
+      border-right: 1px solid var(--border);
+    }
+
+    .flow-step:last-child {
+      border-right: 0;
+    }
+
+    .flow-step::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 13px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      transform: translateY(-50%);
+    }
+
+    .flow-step small {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .flow-step b {
+      display: block;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .section {
+      scroll-margin-top: 84px;
+      margin-top: 44px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 22px;
+      margin-bottom: 14px;
+    }
+
+    .section-head p {
+      max-width: 760px;
+      margin-bottom: 0;
+      color: var(--muted);
+    }
+
+    .panel {
+      border-radius: var(--radius);
+    }
+
+    .panel-pad {
+      padding: 20px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .light-list {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .light-card {
+      min-height: 150px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+    }
+
+    .light-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
+    .dot.green {
+      background: var(--green);
+      box-shadow: 0 0 0 5px var(--green-soft);
+    }
+
+    .dot.yellow {
+      background: var(--yellow);
+      box-shadow: 0 0 0 5px var(--yellow-soft);
+    }
+
+    .dot.red {
+      background: var(--red);
+      box-shadow: 0 0 0 5px var(--red-soft);
+    }
+
+    .dot.blink {
+      animation: blink 1.1s steps(2, end) infinite;
+    }
+
+    .dot.off {
+      border: 1px solid var(--border-strong);
+      background: transparent;
+      box-shadow: none;
+    }
+
+    @keyframes blink {
+      50% {
+        opacity: 0.2;
+      }
+    }
+
+    .light-card p {
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .light-card .mono {
+      color: #d6d6d6;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      scrollbar-gutter: stable;
+    }
+
+    table {
+      width: 100%;
+      min-width: 940px;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      position: sticky;
+      z-index: 2;
+      top: 0;
+      background: #303030;
+      color: #e8e8e8;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    td {
+      color: #d6d6d6;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    tbody tr:hover td {
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      background: var(--input);
+      color: #e8e8e8;
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.3;
+      white-space: nowrap;
+    }
+
+    .tag.green {
+      border-color: rgba(52, 211, 153, 0.35);
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .tag.yellow {
+      border-color: rgba(251, 191, 36, 0.35);
+      background: var(--yellow-soft);
+      color: var(--yellow);
+    }
+
+    .tag.red {
+      border-color: rgba(248, 113, 113, 0.35);
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .tag.blue {
+      border-color: rgba(147, 197, 253, 0.35);
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .substate {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .graph-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .graph-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      min-height: 34px;
+      padding: 6px 11px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: var(--surface-2);
+      color: #dedede;
+      cursor: pointer;
+      transition: border-color 150ms ease, background 150ms ease, color 150ms ease, transform 150ms ease;
+    }
+
+    .chip:hover,
+    .chip:focus-visible {
+      border-color: rgba(52, 211, 153, 0.5);
+      outline: none;
+      transform: translateY(-1px);
+    }
+
+    .chip.is-active {
+      border-color: var(--green);
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .chip[data-graph-event="Failed"].is-active {
+      border-color: var(--red);
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .chip[data-graph-event="WaitingForUser"].is-active,
+    .chip[data-graph-event="TurnFinished"].is-active {
+      border-color: var(--yellow);
+      background: var(--yellow-soft);
+      color: var(--yellow);
+    }
+
+    .graph-note {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .graph-scroll {
+      overflow-x: auto;
+      padding: 12px;
+      display: grid;
+      gap: 14px;
+      scrollbar-gutter: stable;
+    }
+
+    .graph-layer {
+      min-width: 1040px;
+    }
+
+    .graph-layer-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 4px 8px;
+    }
+
+    .graph-layer-head h3 {
+      margin: 0;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .graph-layer-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .graph-layer svg {
+      display: block;
+      width: 100%;
+      min-width: 1040px;
+      height: auto;
+      border-radius: var(--radius-sm);
+      background: #242424;
+    }
+
+    .lane-frame {
+      fill: #202020;
+      stroke: rgba(255, 255, 255, 0.06);
+      stroke-width: 1;
+    }
+
+    .lane-title {
+      fill: #d8d8d8;
+      font-family: var(--sans);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .lane-note {
+      fill: #8f8f8f;
+      font-family: var(--sans);
+      font-size: 10px;
+    }
+
+    .priority-box rect {
+      fill: #292929;
+      stroke: rgba(255, 255, 255, 0.12);
+      stroke-width: 1;
+    }
+
+    .priority-box .priority-rank {
+      fill: var(--yellow);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      pointer-events: none;
+    }
+
+    .priority-box .priority-copy {
+      fill: var(--muted);
+      font-family: var(--sans);
+      font-size: 10px;
+      pointer-events: none;
+    }
+
+    .priority-arrow {
+      fill: none;
+      stroke: rgba(251, 191, 36, 0.6);
+      stroke-width: 1.6;
+    }
+
+    .edge-group {
+      transition: opacity 150ms ease;
+    }
+
+    .edge-group .edge {
+      fill: none;
+      stroke: #6b7280;
+      stroke-width: 1.8;
+      transition: stroke-width 150ms ease, stroke 150ms ease, opacity 150ms ease;
+    }
+
+    .edge-group.green .edge {
+      stroke: rgba(52, 211, 153, 0.72);
+    }
+
+    .edge-group.yellow .edge {
+      stroke: rgba(251, 191, 36, 0.74);
+    }
+
+    .edge-group.red .edge {
+      stroke: rgba(248, 113, 113, 0.78);
+    }
+
+    .edge-group.blue .edge {
+      stroke: rgba(147, 197, 253, 0.72);
+    }
+
+    .edge-group.blocked .edge {
+      stroke-dasharray: 5 5;
+    }
+
+    .edge-group .edge-label {
+      fill: #a3a3a3;
+      font-family: var(--mono);
+      font-size: 11px;
+      pointer-events: none;
+    }
+
+    .edge-event {
+      cursor: pointer;
+      outline: none;
+    }
+
+    .edge-event .edge-event-bg {
+      fill: #252525;
+      stroke: rgba(255, 255, 255, 0.18);
+      stroke-width: 1;
+      transition: fill 150ms ease, stroke 150ms ease, stroke-width 150ms ease;
+    }
+
+    .edge-event .edge-event-name {
+      fill: #d7d7d7;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      pointer-events: none;
+    }
+
+    .edge-event:hover .edge-event-bg,
+    .edge-event:focus-visible .edge-event-bg {
+      fill: #343434;
+      stroke: var(--green);
+      stroke-width: 2;
+    }
+
+    .edge-event:focus-visible .edge-event-bg {
+      filter: drop-shadow(0 0 5px rgba(52, 211, 153, 0.45));
+    }
+
+    .edge-group.is-dim {
+      opacity: 0.13;
+    }
+
+    .edge-group.is-active {
+      opacity: 1;
+    }
+
+    .edge-group.is-active .edge {
+      stroke-width: 3.4;
+    }
+
+    .edge-group.is-active .edge-label {
+      fill: var(--text);
+    }
+
+    .edge-group.is-active .edge-event-bg {
+      fill: #333333;
+      stroke-width: 1.8;
+    }
+
+    .edge-group.green.is-active .edge-event-bg {
+      stroke: var(--green);
+    }
+
+    .edge-group.yellow.is-active .edge-event-bg {
+      stroke: var(--yellow);
+    }
+
+    .edge-group.red.is-active .edge-event-bg {
+      stroke: var(--red);
+    }
+
+    .edge-group.is-active .edge-event-name {
+      fill: var(--text);
+    }
+
+    .node rect {
+      fill: #303030;
+      stroke: var(--border-strong);
+      stroke-width: 1.2;
+      transition: fill 150ms ease, stroke 150ms ease, stroke-width 150ms ease;
+    }
+
+    .node .node-title {
+      fill: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+      pointer-events: none;
+    }
+
+    .node .node-sub {
+      fill: var(--muted);
+      font-family: var(--sans);
+      font-size: 11px;
+      pointer-events: none;
+    }
+
+    .node.running rect {
+      stroke: rgba(52, 211, 153, 0.7);
+    }
+
+    .node.waiting rect {
+      stroke: rgba(251, 191, 36, 0.7);
+    }
+
+    .node.failed rect {
+      stroke: rgba(248, 113, 113, 0.74);
+    }
+
+    .node.unknown rect {
+      stroke: rgba(255, 255, 255, 0.2);
+    }
+
+    .node.is-dim {
+      opacity: 0.24;
+    }
+
+    .node.is-active rect {
+      fill: #373737;
+      stroke-width: 3;
+    }
+
+    .graph-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      padding: 0 16px 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .event-tooltip {
+      position: fixed;
+      z-index: 80;
+      width: min(340px, calc(100vw - 24px));
+      max-height: min(420px, calc(100vh - 24px));
+      width: min(340px, calc(100dvw - 24px));
+      max-height: min(420px, calc(100dvh - 24px));
+      overflow: hidden;
+      padding: 13px 14px;
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      background: rgba(31, 31, 31, 0.98);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+      color: #dedede;
+      pointer-events: none;
+    }
+
+    .event-tooltip[hidden] {
+      display: none;
+    }
+
+    .event-tooltip h3 {
+      margin: 0 0 8px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 14px;
+    }
+
+    .event-tooltip dl {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+    }
+
+    .event-tooltip dt {
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .event-tooltip dd {
+      margin: 1px 0 0;
+      color: #c9c9c9;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .event-tooltip.is-danger dt {
+      color: var(--red);
+    }
+
+    .event-tooltip.is-warning dt {
+      color: var(--yellow);
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .legend-line {
+      width: 26px;
+      height: 2px;
+      background: #6b7280;
+    }
+
+    .legend-line.green {
+      background: var(--green);
+    }
+
+    .legend-line.yellow {
+      background: var(--yellow);
+    }
+
+    .legend-line.red {
+      background: var(--red);
+    }
+
+    .legend-line.dashed {
+      height: 0;
+      border-top: 2px dashed #6b7280;
+      background: transparent;
+    }
+
+    .priority {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      padding: 14px 16px 18px;
+      border-top: 1px solid var(--border);
+      background: var(--input);
+    }
+
+    .priority div {
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+    }
+
+    .priority strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .priority span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .callout {
+      padding: 20px;
+      border-radius: var(--radius);
+    }
+
+    .callout.green {
+      border-color: rgba(52, 211, 153, 0.24);
+      background: #2b302e;
+    }
+
+    .callout.yellow {
+      border-color: rgba(251, 191, 36, 0.24);
+      background: #302f2b;
+    }
+
+    .callout.red {
+      border-color: rgba(248, 113, 113, 0.24);
+      background: #312c2c;
+    }
+
+    .check-list,
+    .plain-list {
+      margin: 12px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .check-list li,
+    .plain-list li {
+      position: relative;
+      margin-top: 8px;
+      padding-left: 18px;
+      color: #d5d5d5;
+      font-size: 13px;
+    }
+
+    .check-list li::before,
+    .plain-list li::before {
+      content: "";
+      position: absolute;
+      top: 0.66em;
+      left: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      transform: translateY(-50%);
+    }
+
+    .plain-list li::before {
+      border: 1px solid var(--border-strong);
+      background: transparent;
+    }
+
+    .sequence-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .sequence-card {
+      padding: 18px;
+      border-radius: var(--radius);
+    }
+
+    .sequence {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .seq-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 10px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface-2);
+    }
+
+    .seq-index {
+      display: grid;
+      width: 22px;
+      height: 22px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--input);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .seq-row strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .seq-row small {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .mapping-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .mapping-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mapping-head h3 {
+      margin-bottom: 0;
+    }
+
+    .mapping-body {
+      padding: 8px 18px 18px;
+    }
+
+    .map-row {
+      display: grid;
+      grid-template-columns: minmax(150px, 0.85fr) minmax(0, 1.15fr);
+      gap: 14px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .map-row:last-child {
+      border-bottom: 0;
+    }
+
+    .map-row > span:last-child {
+      color: var(--muted);
+    }
+
+    .detail-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .event-detail {
+      overflow: hidden;
+      border-radius: var(--radius-sm);
+    }
+
+    .event-detail summary {
+      display: grid;
+      grid-template-columns: minmax(180px, 0.36fr) minmax(0, 1fr);
+      gap: 14px;
+      align-items: center;
+      padding: 14px 16px;
+      cursor: pointer;
+      list-style: none;
+      background: var(--surface);
+    }
+
+    .event-detail summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .event-detail summary::after {
+      content: "+";
+      justify-self: end;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 18px;
+    }
+
+    .event-detail[open] summary::after {
+      content: "-";
+    }
+
+    .event-name {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-family: var(--mono);
+      font-weight: 700;
+    }
+
+    .event-summary {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .event-body {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      padding: 16px;
+      border-top: 1px solid var(--border);
+      background: #272727;
+    }
+
+    .event-body section {
+      padding: 13px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+
+    .event-body h4 {
+      color: #ededed;
+    }
+
+    .event-body p {
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+
+    .source {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .source-item {
+      padding: 15px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+    }
+
+    .source-item code {
+      margin-bottom: 8px;
+      color: var(--green);
+    }
+
+    .source-item p {
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+
+    .footer {
+      margin-top: 46px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 1180px) {
+      .light-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .grid-3 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 900px) {
+      .page {
+        width: min(100% - 28px, 1440px);
+        padding-top: 18px;
+      }
+
+      .topbar {
+        margin-inline: -14px;
+        padding-inline: 14px;
+      }
+
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .topnav {
+        justify-content: flex-start;
+        width: 100%;
+      }
+
+      .hero,
+      .grid-2,
+      .grid-3,
+      .sequence-grid,
+      .mapping-grid,
+      .source {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-side {
+        grid-template-rows: none;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .metric {
+        flex-direction: column;
+        align-items: flex-start;
+        border-right: 1px solid var(--border);
+        border-bottom: 0;
+      }
+
+      .metric:last-child {
+        border-right: 0;
+      }
+
+      .flow-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-step {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .flow-step:last-child {
+        border-bottom: 0;
+      }
+
+      .event-body {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .hero-side,
+      .light-list,
+      .priority {
+        grid-template-columns: 1fr;
+      }
+
+      .metric {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .graph-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .graph-note {
+        white-space: normal;
+      }
+
+      .event-detail summary {
+        grid-template-columns: 1fr auto;
+      }
+
+      .event-summary {
+        grid-column: 1 / -1;
+      }
+
+      .map-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      .dot.blink {
+        animation: none;
+      }
+
+      * {
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav class="topbar" aria-label="页面导航">
+    <div class="topbar-inner">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>UFO / Agent Status</span></div>
+      <div class="topnav">
+        <a href="#overview">总览</a>
+        <a href="#states">状态表</a>
+        <a href="#events">事件表</a>
+        <a href="#graph">流向图</a>
+        <a href="#subagents">子代理</a>
+        <a href="#sequences">关键时序</a>
+        <a href="#mapping">平台映射</a>
+        <a href="#sources">源码</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="page">
+    <header class="hero">
+      <div class="hero-main">
+        <p class="eyebrow">Kernel State Machine</p>
+        <h1>Agent 状态机：从原始事件到状态灯</h1>
+        <p class="hero-copy">
+          兼容层先把 Claude Code 与 Codex 的原始记录归一化成八种 <code>AgentEventKind</code>。
+          内核再用私有 <code>SessionState</code> 保存比灯色更细的语义，最后投影成对外的五种
+          <code>SessionPhase</code>。
+        </p>
+        <div class="flow-strip" aria-label="处理链路">
+          <div class="flow-step"><small>01 / INPUT</small><b>Claude hooks 与 Codex rollout</b></div>
+          <div class="flow-step"><small>02 / COMPAT</small><b>归一化成 AgentEventKind</b></div>
+          <div class="flow-step"><small>03 / KERNEL</small><b>reduce_state 归约</b></div>
+          <div class="flow-step"><small>04 / PRIVATE</small><b>SessionState 保留后台语义</b></div>
+          <div class="flow-step"><small>05 / OUTPUT</small><b>SessionPhase 驱动状态灯</b></div>
+        </div>
+      </div>
+      <aside class="hero-side" aria-label="状态机规模">
+        <div class="metric"><strong>8</strong><span>归一化事件<br>AgentEventKind</span></div>
+        <div class="metric"><strong>7</strong><span>内核状态<br>SessionState</span></div>
+        <div class="metric"><strong>5</strong><span>对外投影<br>SessionPhase</span></div>
+      </aside>
+    </header>
+
+    <section class="section" id="overview">
+      <div class="section-head">
+        <div>
+          <h2>总览</h2>
+          <p>内核不解析平台词汇。Claude 和 Codex 的差异全部被挡在兼容层，状态归约只认统一事件。</p>
+        </div>
+      </div>
+      <div class="grid-3">
+        <article class="panel panel-pad">
+          <h3>兼容层</h3>
+          <p class="muted">Claude 的 hook 事件名、Codex 的 rollout JSON 会先变成 <code>AgentEvent</code>，其中最重要的字段是 <code>kind</code>。</p>
+          <ul class="check-list">
+            <li>内核不认 <code>Stop</code>、<code>task_complete</code> 或 <code>session_meta</code>。</li>
+            <li>未知平台事件不猜测，统一落到 <code>Unknown</code>。</li>
+            <li>事件先按 ID 去重，再按 sequence 丢弃迟到包。</li>
+          </ul>
+        </article>
+        <article class="panel panel-pad">
+          <h3>内核归约</h3>
+          <p class="muted">核心函数是 <code>reduce_state(previous, event, subagents)</code>。它返回下一状态，以及是否需要在黄灯前先绿闪。</p>
+          <ul class="check-list">
+            <li><code>Running</code> 与 <code>BackgroundRunning</code> 都投影成对外绿灯。</li>
+            <li><code>WaitingForPrompt</code> 与 <code>WaitingForUser</code> 都投影成对外黄灯。</li>
+            <li>只有主线程正常结束且没有活跃子代理时，才产生绿闪。</li>
+          </ul>
+        </article>
+        <article class="panel panel-pad">
+          <h3>状态灯语义</h3>
+          <p class="muted">对外阶段只有五种，但 <code>is_flashing</code> 与 <code>remove_at_ms</code> 会改变观看效果。</p>
+          <ul class="check-list">
+            <li>绿灯常亮：主线程或后台子代理正在执行。</li>
+            <li>绿闪落黄：主线程一轮正常跑完，等待下一条 prompt。</li>
+            <li>黄灯常亮：等待用户输入、授权或取消后的下一步。</li>
+            <li>红灯：错误。</li>
+            <li>绿闪移除：会话确认结束。</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="light-list" style="margin-top: 16px;">
+        <article class="light-card">
+          <div class="light-head"><span class="dot green" aria-hidden="true"></span>绿常亮</div>
+          <p><span class="mono">Running / BackgroundRunning</span></p>
+          <p>主线程执行中，或主线程已停但子代理仍在后台运行。</p>
+        </article>
+        <article class="light-card">
+          <div class="light-head"><span class="dot green blink" aria-hidden="true"></span>绿闪落黄</div>
+          <p><span class="mono">TurnFinished</span></p>
+          <p>主线程正常完成一轮，且没有活跃子代理。绿闪保留一段时间后进入黄灯常亮。</p>
+        </article>
+        <article class="light-card">
+          <div class="light-head"><span class="dot yellow" aria-hidden="true"></span>黄常亮</div>
+          <p><span class="mono">WaitingForPrompt / WaitingForUser</span></p>
+          <p>等待下一条 prompt，或正在等待授权、elicitation、用户输入。</p>
+        </article>
+        <article class="light-card">
+          <div class="light-head"><span class="dot red" aria-hidden="true"></span>红灯</div>
+          <p><span class="mono">Failed</span></p>
+          <p>本轮或会话发生错误。迟到子代理事件只能刷新存活时间，不能把红灯复活成绿灯。</p>
+        </article>
+        <article class="light-card">
+          <div class="light-head"><span class="dot green blink" aria-hidden="true"></span>绿闪移除</div>
+          <p><span class="mono">Completed</span></p>
+          <p>会话非错误结束。绿闪到期后移除，不落成长期黄灯。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="states">
+      <div class="section-head">
+        <div>
+          <h2>状态表</h2>
+          <p>私有状态比对外阶段多一层，是为了区分“主线程在跑”和“主线程停了但子代理还在跑”。</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>内部状态</th>
+              <th>含义</th>
+              <th>对外投影</th>
+              <th>灯色 / 闪烁</th>
+              <th>自然退出</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="tag green">Running</span><span class="substate">主线程执行中</span></td>
+              <td>工具调用、生成中、会话启动等主线程活动。</td>
+              <td><span class="tag green">Running</span></td>
+              <td>绿灯常亮，不闪。</td>
+              <td>转入结束、等待、失败、完成；无新事件时按 running timeout 或进程死亡清理。</td>
+            </tr>
+            <tr>
+              <td><span class="tag yellow">WaitingForPrompt</span><span class="substate">等下一句</span></td>
+              <td>一轮正常完成，对话未结束，等待用户下一条 prompt。</td>
+              <td><span class="tag yellow">Waiting</span></td>
+              <td>通常在 <code>TurnFinished</code> 后先绿闪，再落成黄常亮。</td>
+              <td>同 provider 下一次主线程运行开始时清理旧等待；另有 30 分钟 failsafe。</td>
+            </tr>
+            <tr>
+              <td><span class="tag yellow">WaitingForUser</span><span class="substate">等人操作</span></td>
+              <td>权限请求、elicitation、等待用户补充，以及部分用户取消后的等待语义。</td>
+              <td><span class="tag yellow">Waiting</span></td>
+              <td>黄常亮，不闪。子代理事件也不能覆盖它。</td>
+              <td>下一次主线程运行、会话结束、失败或 30 分钟 failsafe。</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">BackgroundRunning</span><span class="substate">后台子代理</span></td>
+              <td>主线程一轮已停，但活跃子代理集合非空。</td>
+              <td><span class="tag green">Running</span></td>
+              <td>绿灯常亮，不闪。</td>
+              <td>最后一个子代理停止后直接进入 <code>WaitingForPrompt</code>；会话完成或失败也会结束它。</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">Completed</span><span class="substate">结束并移除</span></td>
+              <td>会话确认非错误结束。</td>
+              <td><span class="tag green">Completed</span></td>
+              <td>绿闪，随后移除。</td>
+              <td><code>remove_at_ms</code> 到期移除；到期前拒绝迟到事件复活。</td>
+            </tr>
+            <tr>
+              <td><span class="tag red">Failed</span><span class="substate">错误</span></td>
+              <td>本轮或会话发生错误。</td>
+              <td><span class="tag red">Error</span></td>
+              <td>红灯，不闪。</td>
+              <td>可被新的主线程事件改写到新语义；迟到子代理事件不会覆盖它。</td>
+            </tr>
+            <tr>
+              <td><span class="tag">Unknown</span><span class="substate">保守态</span></td>
+              <td>无法识别或冷启动，没有足够信息主动转灯。</td>
+              <td><span class="tag">Unknown</span></td>
+              <td>保持上一状态，不主动驱动灯色。</td>
+              <td>Error / Unknown 类快照有 60 秒短超时；进程死亡也会移除。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footer" style="margin-top: 10px;">
+        <code>from_phase()</code> 只在内存里缺少私有状态时用于回推；它无法恢复
+        <code>BackgroundRunning</code>，会把该细分退化成普通 <code>Running</code>。
+      </p>
+    </section>
+
+    <section class="section" id="events">
+      <div class="section-head">
+        <div>
+          <h2>事件表</h2>
+          <p>事件先决定状态，再决定是否闪烁。<code>agent_id</code> 是否存在，是子代理语义的门槛。</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>AgentEventKind</th>
+              <th>来源含义</th>
+              <th>如何驱动状态</th>
+              <th>agent_id</th>
+              <th>绿闪</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="tag green">Running</span></td>
+              <td>执行中：会话启动、工具调用、生成中、用户提交 prompt。</td>
+              <td>主线程事件直接进入 <code>Running</code>；子代理事件只在上一状态为 <code>WaitingForPrompt</code> 时进入 <code>BackgroundRunning</code>。</td>
+              <td>决定分支。带 <code>agent_id</code> 时还会加入活跃子代理集合。</td>
+              <td>否。</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">TurnFinished</span></td>
+              <td>一轮正常结束，但对话没结束。Claude 的 <code>Stop</code>、Codex 无错误的 <code>task_complete</code>。</td>
+              <td><code>WaitingForUser</code> 保持不变；无子代理则 <code>WaitingForPrompt</code>；有子代理则 <code>BackgroundRunning</code>。</td>
+              <td>主线程事件通常没有；带 <code>agent_id</code> 时不产生停止绿闪。</td>
+              <td>仅当主线程事件且最终落 <code>WaitingForPrompt</code>。</td>
+            </tr>
+            <tr>
+              <td><span class="tag yellow">WaitingForUser</span></td>
+              <td>权限、elicitation、用户中断后等待下一条指令。</td>
+              <td>直接进入 <code>WaitingForUser</code>，优先级最高。</td>
+              <td>不靠该字段判定；它是主线程级等待语义。</td>
+              <td>否。</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">SessionFinished</span></td>
+              <td>会话确认结束。</td>
+              <td>进入 <code>Completed</code>，清空活跃子代理集合。</td>
+              <td>否。</td>
+              <td>是，绿闪后移除。</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">SubagentStarted</span></td>
+              <td>子代理开始。它与主会话共用 <code>session_id</code>，只用 <code>agent_id</code> 区分。</td>
+              <td>先加入活跃集合；主线程运行或等待用户时保持原状态；等待 prompt、后台运行、未知时进入 <code>BackgroundRunning</code>。</td>
+              <td>必须带 <code>agent_id</code> 才有子代理语义。</td>
+              <td>否。</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">SubagentStopped</span></td>
+              <td>某个子代理结束。</td>
+              <td>先从活跃集合移除；若仍为 <code>BackgroundRunning</code> 且集合清空，则进入 <code>WaitingForPrompt</code>。</td>
+              <td>必须带 <code>agent_id</code>。</td>
+              <td>否。最后一个结束也不重新绿闪。</td>
+            </tr>
+            <tr>
+              <td><span class="tag red">Failed</span></td>
+              <td>本轮或会话出错。</td>
+              <td>进入 <code>Failed</code>，清空活跃子代理集合。</td>
+              <td>不是子代理专属事件。</td>
+              <td>否。</td>
+            </tr>
+            <tr>
+              <td><span class="tag">Unknown</span></td>
+              <td>无法识别的事件或平台语义缺口。</td>
+              <td>保持上一状态，不主动改变灯色。</td>
+              <td>不参与子代理集合规则。</td>
+              <td>否。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="graph">
+      <div class="section-head">
+        <div>
+          <h2>状态流向图</h2>
+          <p>点击下方状态或事件，可高亮相关路径；悬停、键盘聚焦或点击边上的事件名，可查看该事件说明。关闭 JavaScript 时，事件名与四层子图仍完整可见。</p>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="graph-toolbar">
+          <div class="graph-actions" aria-label="图形高亮控制">
+            <button class="chip" type="button" data-graph-event="Running">Running</button>
+            <button class="chip" type="button" data-graph-event="TurnFinished">TurnFinished</button>
+            <button class="chip" type="button" data-graph-event="WaitingForUser">WaitingForUser</button>
+            <button class="chip" type="button" data-graph-event="SessionFinished">SessionFinished</button>
+            <button class="chip" type="button" data-graph-event="SubagentStarted">SubagentStarted</button>
+            <button class="chip" type="button" data-graph-event="SubagentStopped">SubagentStopped</button>
+            <button class="chip" type="button" data-graph-event="Failed">Failed</button>
+            <button class="chip" type="button" data-graph-event="Unknown">Unknown</button>
+            <button class="chip" id="graph-clear" type="button">清除高亮</button>
+          </div>
+          <div class="graph-note">优先级：WaitingForUser &gt; 子代理后台运行 &gt; 空闲等待</div>
+        </div>
+        <div class="graph-scroll">
+          <article class="graph-layer">
+            <div class="graph-layer-head">
+              <h3>1. 主线程基线</h3>
+              <p>只走相邻列；回入与终止各自使用独立下轨。</p>
+            </div>
+            <svg viewBox="0 0 1180 290" role="img" aria-labelledby="graph-title graph-desc">
+              <title id="graph-title">Agent 状态流向图</title>
+              <desc id="graph-desc">分层展示状态机。主线程、子代理、优先级和终态守卫拆成独立子图，边线全部使用水平或垂直线段，避免交叉、回绕和穿过节点。</desc>
+              <defs>
+                <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#6b7280"></path>
+                </marker>
+                <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#34d399"></path>
+                </marker>
+                <marker id="arrow-yellow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#fbbf24"></path>
+                </marker>
+                <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#f87171"></path>
+                </marker>
+                <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#93c5fd"></path>
+                </marker>
+              </defs>
+
+              <rect class="lane-frame" x="12" y="12" width="1156" height="266" rx="14"></rect>
+              <text class="lane-title" x="28" y="38">主线程 Run - TurnFinished - SessionFinished</text>
+              <text class="lane-note" x="28" y="56">纵向轨道只穿过空白列；每条路径都有独立标签位。</text>
+
+              <g class="edge-group green" data-edge data-event="Running" data-state="Unknown Running">
+                <path class="edge" d="M200 142 H300" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="218" y="118" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="225" y="132">Running</text>
+                </g>
+              </g>
+              <g class="edge-group green" data-edge data-event="TurnFinished" data-state="Running WaitingForPrompt">
+                <path class="edge" d="M460 142 H570" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 TurnFinished：查看说明" aria-describedby="event-tooltip" data-tooltip-event="TurnFinished">
+                  <rect class="edge-event-bg" x="473" y="118" width="94" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="480" y="132">TurnFinished</text>
+                </g>
+              </g>
+              <g class="edge-group green" data-edge data-event="Running" data-state="WaitingForPrompt Running">
+                <path class="edge" d="M570 168 V214 H340 V192" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="466" y="190" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="473" y="204">Running</text>
+                </g>
+              </g>
+              <g class="edge-group green" data-edge data-event="SessionFinished" data-state="Running Completed">
+                <path class="edge" d="M420 192 V228 H980 V179" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SessionFinished：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SessionFinished">
+                  <rect class="edge-event-bg" x="620" y="206" width="112" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="627" y="220">SessionFinished</text>
+                </g>
+              </g>
+              <g class="edge-group green" data-edge data-event="SessionFinished" data-state="WaitingForPrompt Completed">
+                <path class="edge" d="M750 142 H900" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SessionFinished：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SessionFinished">
+                  <rect class="edge-event-bg" x="775" y="112" width="112" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="782" y="126">SessionFinished</text>
+                </g>
+              </g>
+              <g class="edge-group blocked" data-edge data-event="Unknown" data-state="Unknown">
+                <path class="edge" d="M90 105 V78 H160 V105" marker-end="url(#arrow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Unknown：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Unknown">
+                  <rect class="edge-event-bg" x="72" y="56" width="62" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="79" y="70">Unknown</text>
+                </g>
+              </g>
+
+              <g class="node unknown" data-graph-node="Unknown">
+                <rect x="50" y="105" width="150" height="74" rx="10"></rect>
+                <text class="node-title" x="125" y="135" text-anchor="middle">Unknown</text>
+                <text class="node-sub" x="125" y="157" text-anchor="middle">冷启动 / 不猜测</text>
+              </g>
+              <g class="node running" data-graph-node="Running">
+                <rect x="300" y="92" width="160" height="100" rx="10"></rect>
+                <text class="node-title" x="380" y="126" text-anchor="middle">Running</text>
+                <text class="node-sub" x="380" y="149" text-anchor="middle">主线程执行</text>
+                <text class="node-sub" x="380" y="167" text-anchor="middle">对外绿常亮</text>
+              </g>
+              <g class="node waiting" data-graph-node="WaitingForPrompt">
+                <rect x="570" y="105" width="180" height="74" rx="10"></rect>
+                <text class="node-title" x="660" y="135" text-anchor="middle">WaitingForPrompt</text>
+                <text class="node-sub" x="660" y="157" text-anchor="middle">空闲等待下一条</text>
+              </g>
+              <g class="node running" data-graph-node="Completed">
+                <rect x="900" y="105" width="160" height="74" rx="10"></rect>
+                <text class="node-title" x="980" y="135" text-anchor="middle">Completed</text>
+                <text class="node-sub" x="980" y="157" text-anchor="middle">绿闪后移除</text>
+              </g>
+            </svg>
+          </article>
+
+          <article class="graph-layer">
+            <div class="graph-layer-head">
+              <h3>2. 子代理分叉</h3>
+              <p>子代理只把主线程推到后台态；黄灯优先覆盖绿色活动。</p>
+            </div>
+            <svg viewBox="0 0 1180 400" role="img" aria-labelledby="subagent-graph-title subagent-graph-desc">
+              <title id="subagent-graph-title">子代理后台状态流向图</title>
+              <desc id="subagent-graph-desc">SubagentStarted 进入 BackgroundRunning，最后一个 SubagentStopped 回到 WaitingForPrompt；WaitingForUser 保持最高优先级。</desc>
+              <rect class="lane-frame" x="12" y="12" width="1156" height="376" rx="14"></rect>
+              <text class="lane-title" x="28" y="38">SubagentStarted - BackgroundRunning - SubagentStopped</text>
+              <text class="lane-note" x="28" y="56">上层只表达后台分支，下层单列 WaitingForUser 覆盖规则。</text>
+
+              <g class="edge-group green" data-edge data-event="SubagentStarted Running" data-state="Running BackgroundRunning">
+                <path class="edge" d="M210 230 H310" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStarted：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStarted">
+                  <rect class="edge-event-bg" x="218" y="152" width="122" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="225" y="166">SubagentStarted</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="346" y="152" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="353" y="166">Running</text>
+                </g>
+              </g>
+              <g class="edge-group yellow" data-edge data-event="SubagentStopped" data-state="BackgroundRunning WaitingForPrompt">
+                <path class="edge" d="M510 230 H620" marker-end="url(#arrow-yellow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStopped：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStopped">
+                  <rect class="edge-event-bg" x="518" y="152" width="126" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="525" y="166">SubagentStopped</text>
+                </g>
+              </g>
+              <g class="edge-group green" data-edge data-event="SubagentStarted Running" data-state="WaitingForPrompt BackgroundRunning">
+                <path class="edge" d="M710 270 V335 H410 V285" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStarted：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStarted">
+                  <rect class="edge-event-bg" x="490" y="310" width="122" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="497" y="324">SubagentStarted</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="618" y="310" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="625" y="324">Running</text>
+                </g>
+              </g>
+              <g class="edge-group yellow" data-edge data-event="WaitingForUser" data-state="BackgroundRunning WaitingForUser">
+                <path class="edge" d="M410 175 V92 H1010 V180" marker-end="url(#arrow-yellow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 WaitingForUser：查看说明" aria-describedby="event-tooltip" data-tooltip-event="WaitingForUser">
+                  <rect class="edge-event-bg" x="616" y="68" width="114" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="623" y="82">WaitingForUser</text>
+                </g>
+              </g>
+              <g class="edge-group yellow" data-edge data-event="WaitingForUser" data-state="WaitingForPrompt WaitingForUser">
+                <path class="edge" d="M710 270 V320 H900 V280" marker-end="url(#arrow-yellow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 WaitingForUser：查看说明" aria-describedby="event-tooltip" data-tooltip-event="WaitingForUser">
+                  <rect class="edge-event-bg" x="772" y="296" width="114" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="779" y="310">WaitingForUser</text>
+                </g>
+              </g>
+              <g class="edge-group yellow" data-edge data-event="WaitingForUser" data-state="Running WaitingForUser">
+                <path class="edge" d="M130 280 V370 H1010 V280" marker-end="url(#arrow-yellow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 WaitingForUser：查看说明" aria-describedby="event-tooltip" data-tooltip-event="WaitingForUser">
+                  <rect class="edge-event-bg" x="518" y="344" width="114" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="525" y="358">WaitingForUser</text>
+                </g>
+              </g>
+
+              <g class="node running" data-graph-node="Running">
+                <rect x="50" y="180" width="160" height="100" rx="10"></rect>
+                <text class="node-title" x="130" y="214" text-anchor="middle">Running</text>
+                <text class="node-sub" x="130" y="237" text-anchor="middle">主线程活动</text>
+                <text class="node-sub" x="130" y="255" text-anchor="middle">可同时有子代理</text>
+              </g>
+              <g class="node running" data-graph-node="BackgroundRunning">
+                <rect x="310" y="175" width="200" height="110" rx="10"></rect>
+                <text class="node-title" x="410" y="209" text-anchor="middle">BackgroundRunning</text>
+                <text class="node-sub" x="410" y="232" text-anchor="middle">主线程已停</text>
+                <text class="node-sub" x="410" y="250" text-anchor="middle">活跃子代理非空，对外绿灯</text>
+              </g>
+              <g class="node waiting" data-graph-node="WaitingForPrompt">
+                <rect x="620" y="190" width="180" height="80" rx="10"></rect>
+                <text class="node-title" x="710" y="220" text-anchor="middle">WaitingForPrompt</text>
+                <text class="node-sub" x="710" y="242" text-anchor="middle">空闲等待，不重新绿闪</text>
+              </g>
+              <g class="node waiting" data-graph-node="WaitingForUser">
+                <rect x="900" y="180" width="170" height="100" rx="10"></rect>
+                <text class="node-title" x="985" y="214" text-anchor="middle">WaitingForUser</text>
+                <text class="node-sub" x="985" y="237" text-anchor="middle">权限 / 提问 / 输入</text>
+                <text class="node-sub" x="985" y="255" text-anchor="middle">优先级最高</text>
+              </g>
+            </svg>
+          </article>
+
+          <article class="graph-layer">
+            <div class="graph-layer-head">
+              <h3>3. 状态归约优先级</h3>
+              <p>每帧只投影一个对外相位；下面三项按从左到右判定。</p>
+            </div>
+            <svg viewBox="0 0 1180 220" role="img" aria-labelledby="priority-graph-title priority-graph-desc">
+              <title id="priority-graph-title">状态归约优先级</title>
+              <desc id="priority-graph-desc">WaitingForUser 高于子代理后台运行，子代理后台运行高于空闲等待。</desc>
+              <rect class="lane-frame" x="12" y="12" width="1156" height="196" rx="14"></rect>
+              <text class="lane-title" x="28" y="38">reduce_state() 的单次归约顺序</text>
+              <text class="lane-note" x="28" y="56">高优先级命中后，低优先级只保留为后续可回落的候选。</text>
+
+              <g class="priority-box">
+                <rect x="60" y="84" width="270" height="90" rx="10"></rect>
+                <text class="priority-rank" x="82" y="116">1. WaitingForUser</text>
+                <text class="priority-copy" x="82" y="139">权限、提问、用户输入等待</text>
+                <text class="priority-copy" x="82" y="157">对外黄常亮，子代理事件不能顶回绿</text>
+              </g>
+              <g class="priority-box">
+                <rect x="430" y="84" width="270" height="90" rx="10"></rect>
+                <text class="priority-rank" x="452" y="116">2. BackgroundRunning</text>
+                <text class="priority-copy" x="452" y="139">主线程停，但活跃子代理集合非空</text>
+                <text class="priority-copy" x="452" y="157">对外仍投影为 Running</text>
+              </g>
+              <g class="priority-box">
+                <rect x="800" y="84" width="270" height="90" rx="10"></rect>
+                <text class="priority-rank" x="822" y="116">3. WaitingForPrompt</text>
+                <text class="priority-copy" x="822" y="139">无主线程活动，也无活跃子代理</text>
+                <text class="priority-copy" x="822" y="157">等待下一条输入，必要时绿闪后黄</text>
+              </g>
+              <g class="edge-group yellow">
+                <path class="priority-arrow" d="M330 129 H420" marker-end="url(#arrow-yellow)"></path>
+                <text class="edge-label" x="342" y="116">高于</text>
+              </g>
+              <g class="edge-group yellow">
+                <path class="priority-arrow" d="M700 129 H790" marker-end="url(#arrow-yellow)"></path>
+                <text class="edge-label" x="712" y="116">高于</text>
+              </g>
+            </svg>
+          </article>
+
+          <article class="graph-layer">
+            <div class="graph-layer-head">
+              <h3>4. 终态守卫</h3>
+              <p>Completed / Failed 清空活跃集合；迟到子代理事件不能复活终态。</p>
+            </div>
+            <svg viewBox="0 0 1180 300" role="img" aria-labelledby="terminal-graph-title terminal-graph-desc">
+              <title id="terminal-graph-title">终态与迟到事件守卫</title>
+              <desc id="terminal-graph-desc">任意非终态可因 SessionFinished 进入 Completed，或因 Failed 进入红灯 Failed；两者都会丢弃迟到的子代理事件，只刷新最后出现时间。</desc>
+              <rect class="lane-frame" x="12" y="12" width="1156" height="276" rx="14"></rect>
+              <text class="lane-title" x="28" y="38">终态不可被迟到事件覆盖</text>
+              <text class="lane-note" x="28" y="56">失败与完成分开走线，迟到守卫放在右侧独立轨道。</text>
+
+              <g class="edge-group green" data-edge data-event="SessionFinished" data-state="Running BackgroundRunning WaitingForPrompt WaitingForUser Completed">
+                <path class="edge" d="M230 150 H340" marker-end="url(#arrow-green)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SessionFinished：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SessionFinished">
+                  <rect class="edge-event-bg" x="230" y="126" width="104" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="237" y="140">SessionFinished</text>
+                </g>
+              </g>
+              <g class="edge-group red" data-edge data-event="Failed" data-state="Running BackgroundRunning WaitingForPrompt WaitingForUser Unknown Failed">
+                <path class="edge" d="M140 195 V230 H700 V160" marker-end="url(#arrow-red)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Failed：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Failed">
+                  <rect class="edge-event-bg" x="342" y="208" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="349" y="222">Failed</text>
+                </g>
+              </g>
+              <g class="edge-group blocked" data-edge data-event="SubagentStarted SubagentStopped Running" data-state="Completed Failed">
+                <path class="edge" d="M420 80 V40 H1010 V95" marker-end="url(#arrow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStarted：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStarted">
+                  <rect class="edge-event-bg" x="404" y="18" width="122" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="411" y="32">SubagentStarted</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStopped：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStopped">
+                  <rect class="edge-event-bg" x="532" y="18" width="126" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="539" y="32">SubagentStopped</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="664" y="18" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="671" y="32">Running</text>
+                </g>
+              </g>
+              <g class="edge-group blocked" data-edge data-event="SubagentStarted SubagentStopped Running" data-state="Failed">
+                <path class="edge" d="M780 120 H900" marker-end="url(#arrow)"></path>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStarted：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStarted">
+                  <rect class="edge-event-bg" x="772" y="14" width="122" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="779" y="28">SubagentStarted</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 SubagentStopped：查看说明" aria-describedby="event-tooltip" data-tooltip-event="SubagentStopped">
+                  <rect class="edge-event-bg" x="772" y="36" width="126" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="779" y="50">SubagentStopped</text>
+                </g>
+                <g class="edge-event" role="button" tabindex="0" aria-label="事件 Running：查看说明" aria-describedby="event-tooltip" data-tooltip-event="Running">
+                  <rect class="edge-event-bg" x="772" y="58" width="58" height="20" rx="6"></rect>
+                  <text class="edge-event-name" x="779" y="72">Running</text>
+                </g>
+              </g>
+
+              <g class="node unknown">
+                <rect x="50" y="105" width="180" height="90" rx="10"></rect>
+                <text class="node-title" x="140" y="139" text-anchor="middle">任意非终态</text>
+                <text class="node-sub" x="140" y="162" text-anchor="middle">Running / Waiting / Background</text>
+              </g>
+              <g class="node running" data-graph-node="Completed">
+                <rect x="340" y="80" width="160" height="80" rx="10"></rect>
+                <text class="node-title" x="420" y="110" text-anchor="middle">Completed</text>
+                <text class="node-sub" x="420" y="132" text-anchor="middle">绿闪后移除</text>
+              </g>
+              <g class="node failed" data-graph-node="Failed">
+                <rect x="620" y="80" width="160" height="80" rx="10"></rect>
+                <text class="node-title" x="700" y="110" text-anchor="middle">Failed</text>
+                <text class="node-sub" x="700" y="132" text-anchor="middle">红灯常亮</text>
+              </g>
+              <g class="node unknown">
+                <rect x="900" y="95" width="220" height="80" rx="10"></rect>
+                <text class="node-title" x="1010" y="125" text-anchor="middle">迟到子代理事件</text>
+                <text class="node-sub" x="1010" y="147" text-anchor="middle">丢弃灯态变化，只更新 last_seen_at_ms</text>
+              </g>
+            </svg>
+          </article>
+        </div>
+        <div class="graph-legend">
+          <span class="legend-item"><span class="legend-line green"></span>绿色运行路径</span>
+          <span class="legend-item"><span class="legend-line yellow"></span>等待 / 后台收尾</span>
+          <span class="legend-item"><span class="legend-line red"></span>失败</span>
+          <span class="legend-item"><span class="legend-line dashed"></span>被拒绝或保持原状态</span>
+          <span class="legend-item"><span class="legend-line"></span>正交轨道：横竖折线，复杂关系拆成独立子图</span>
+        </div>
+        <div class="priority">
+          <div><strong>1. WaitingForUser</strong><span>权限、提问、用户输入等待永远压过子代理活动。</span></div>
+          <div><strong>2. 子代理后台运行</strong><span>主线程停后，只要集合非空就仍是绿灯。</span></div>
+          <div><strong>3. 空闲等待</strong><span>没有主线程活动，也没有活跃子代理，才落回 WaitingForPrompt。</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="subagents">
+      <div class="section-head">
+        <div>
+          <h2>子代理后台运行</h2>
+          <p>这是状态机比灯色多出来的一层，也是 Plan 模式主线程停止后仍然亮绿灯的原因。</p>
+        </div>
+      </div>
+      <div class="grid-2">
+        <article class="callout green">
+          <h3>集合规则</h3>
+          <ul class="check-list">
+            <li>子代理与主会话共用 <code>session_id</code>；<code>agent_id</code> 是区分主线程和子代理的关键。</li>
+            <li><code>SubagentStarted</code> 和带 <code>agent_id</code> 的 <code>Running</code> 会把该 id 加入活跃集合。</li>
+            <li><code>SubagentStopped</code> 会移除该 id。</li>
+            <li><code>Completed</code> 与 <code>Failed</code> 会清空集合，且后续迟到子代理事件只能刷新 <code>last_seen_at_ms</code>。</li>
+          </ul>
+        </article>
+        <article class="callout yellow">
+          <h3>主线程结束时的判定</h3>
+          <ul class="check-list">
+            <li>集合为空：进入 <code>WaitingForPrompt</code>，对外黄灯；若事件是主线程 <code>TurnFinished</code>，先绿闪。</li>
+            <li>集合非空：进入 <code>BackgroundRunning</code>，对外保持绿灯，并清除“等待落黄”的语义。</li>
+            <li>最后一个子代理结束：直接进入 <code>WaitingForPrompt</code>，不重新绿闪。</li>
+            <li>若主线程处于 <code>WaitingForUser</code>：子代理开始或结束都不能把黄灯顶回绿色。</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="grid-2" style="margin-top: 16px;">
+        <article class="panel panel-pad">
+          <h3>为什么子代理事件不等于主线程 Running</h3>
+          <p class="muted">主线程 Running 是“当前这盏灯代表的主对话正在执行”。子代理事件只说明“后台还有工作”。两者对外都是绿，但内部收尾完全不同：主线程 Running 之后可以进入等待用户、失败、完成；后台子代理收尾只能落回等待下一条 prompt。</p>
+        </article>
+        <article class="panel panel-pad">
+          <h3>为什么最后一个子代理停止不绿闪</h3>
+          <p class="muted">绿闪在本项目里只表示“主线程一轮顺利跑完，准备落黄”。子代理结束只是后台集合清空，不是新的一轮 Stop；如果这里再闪一次，会把系统噪声误读成用户刚完成一次主线程回合。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="sequences">
+      <div class="section-head">
+        <div>
+          <h2>关键时序</h2>
+          <p>这些序列覆盖最常见的正常结束、Plan 模式后台、等待用户、会话结束、失败和未知事件。</p>
+        </div>
+      </div>
+      <div class="sequence-grid">
+        <article class="sequence-card">
+          <h3>主线程正常结束</h3>
+          <div class="sequence">
+            <div class="seq-row"><span class="seq-index">1</span><div><strong>主线程 Running</strong><small>工具调用 / 生成中</small></div><span class="tag green">绿常亮</span></div>
+            <div class="seq-row"><span class="seq-index">2</span><div><strong>TurnFinished，无子代理</strong><small>进入 WaitingForPrompt</small></div><span class="tag green">绿闪</span></div>
+            <div class="seq-row"><span class="seq-index">3</span><div><strong>retention 到期</strong><small>清除闪烁，不移除</small></div><span class="tag yellow">黄常亮</span></div>
+          </div>
+        </article>
+        <article class="sequence-card">
+          <h3>Plan 模式后台继续跑</h3>
+          <div class="sequence">
+            <div class="seq-row"><span class="seq-index">1</span><div><strong>主线程 Running</strong><small>主对话正在执行</small></div><span class="tag green">绿常亮</span></div>
+            <div class="seq-row"><span class="seq-index">2</span><div><strong>子代理开始</strong><small>agent_id 加入集合</small></div><span class="tag green">绿常亮</span></div>
+            <div class="seq-row"><span class="seq-index">3</span><div><strong>主线程 TurnFinished</strong><small>集合非空，进入 BackgroundRunning</small></div><span class="tag green">仍绿</span></div>
+            <div class="seq-row"><span class="seq-index">4</span><div><strong>最后一个子代理停止</strong><small>集合清空，进入 WaitingForPrompt</small></div><span class="tag yellow">直接黄</span></div>
+          </div>
+        </article>
+        <article class="sequence-card">
+          <h3>等待用户时子代理仍在跑</h3>
+          <div class="sequence">
+            <div class="seq-row"><span class="seq-index">1</span><div><strong>WaitingForUser</strong><small>弹权限框 / elicitation</small></div><span class="tag yellow">黄常亮</span></div>
+            <div class="seq-row"><span class="seq-index">2</span><div><strong>SubagentStarted</strong><small>优先级低于等待用户</small></div><span class="tag yellow">保持黄</span></div>
+            <div class="seq-row"><span class="seq-index">3</span><div><strong>SubagentStopped</strong><small>仍不改等待语义</small></div><span class="tag yellow">保持黄</span></div>
+          </div>
+        </article>
+        <article class="sequence-card">
+          <h3>会话结束</h3>
+          <div class="sequence">
+            <div class="seq-row"><span class="seq-index">1</span><div><strong>SessionFinished</strong><small>进入 Completed，清空集合</small></div><span class="tag green">绿闪</span></div>
+            <div class="seq-row"><span class="seq-index">2</span><div><strong>remove_at_ms 到期</strong><small>移除窗口中的会话</small></div><span class="tag">移除</span></div>
+          </div>
+        </article>
+        <article class="sequence-card">
+          <h3>错误</h3>
+          <div class="sequence">
+            <div class="seq-row"><span class="seq-index">1</span><div><strong>Failed</strong><small>进入 Failed，清空集合</small></div><span class="tag red">红灯</span></div>
+            <div class="seq-row"><span class="seq-index">2</span><div><strong>迟到子代理事件</strong><small>只刷新 last_seen_at_ms</small></div><span class="tag red">仍红</span></div>
+          </div>
+        </article>
+        <article class="sequence-card">
+          <h3>未知事件</h3>
+          <div class="sequence">
+            <div class="seq-row"><span class="seq-index">1</span><div><strong>Unknown</strong><small>reduce_state 返回 previous</small></div><span class="tag">不变</span></div>
+            <div class="seq-row"><span class="seq-index">2</span><div><strong>等待下一条有效事件</strong><small>不让兼容层猜错语义</small></div><span class="tag">保守</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="mapping">
+      <div class="section-head">
+        <div>
+          <h2>Claude / Codex 映射</h2>
+          <p>平台映射只负责把原始记录变成统一事件。状态迁移本身仍由内核一份逻辑处理。</p>
+        </div>
+      </div>
+      <div class="mapping-grid">
+        <article class="panel">
+          <div class="mapping-head">
+            <h3>Claude Code</h3>
+            <span class="tag green">hook 为主</span>
+          </div>
+          <div class="mapping-body">
+            <div class="map-row"><span><code>subagent_start</code></span><span><code>SubagentStarted</code></span></div>
+            <div class="map-row"><span><code>subagent_stop</code></span><span><code>SubagentStopped</code></span></div>
+            <div class="map-row"><span><code>stop</code></span><span><code>TurnFinished</code>，正常一轮结束</span></div>
+            <div class="map-row"><span><code>PermissionRequest</code> / <code>Elicitation</code> / <code>elicit</code></span><span><code>WaitingForUser</code>，黄灯不闪</span></div>
+            <div class="map-row"><span>等待类 <code>Notification</code></span><span><code>WaitingForUser</code>：idle_prompt、permission_prompt、elicitation_dialog、agent_needs_input、elicitation_url_dialog、worker_permission_prompt</span></div>
+            <div class="map-row"><span>其它已知活动</span><span><code>Running</code></span></div>
+            <div class="map-row"><span><code>SessionEnd</code> / <code>SessionCompleted</code> / <code>SessionDone</code></span><span><code>SessionFinished</code>，不按 reason 区分 success / error</span></div>
+            <div class="map-row"><span><code>StopFailure</code> / error_code / 失败 outcome</span><span><code>Failed</code>，错误字段优先级高于事件名</span></div>
+            <div class="map-row"><span>未识别事件</span><span><code>Unknown</code></span></div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="mapping-head">
+            <h3>Codex</h3>
+            <span class="tag blue">rollout 为主，hook 只补授权</span>
+          </div>
+          <div class="mapping-body">
+            <div class="map-row"><span><code>session_meta</code></span><span><code>Running</code>，同时提供会话身份 / endpoint 信息</span></div>
+            <div class="map-row"><span><code>task_started</code></span><span><code>Running</code></span></div>
+            <div class="map-row"><span><code>user_message</code> / <code>item_completed(UserMessage)</code></span><span><code>Running</code>，同时提取 prompt</span></div>
+            <div class="map-row"><span><code>task_complete</code> 无 error</span><span><code>TurnFinished</code>，主线程正常结束</span></div>
+            <div class="map-row"><span><code>task_complete</code> 带 error</span><span><code>Failed</code></span></div>
+            <div class="map-row"><span><code>turn_aborted</code></span><span><code>WaitingForUser</code>，用户中断黄灯不闪</span></div>
+            <div class="map-row"><span><code>token_count</code></span><span>不改变灯态，只更新 token 用量</span></div>
+            <div class="map-row"><span>文件增长但无生命周期记录</span><span><code>Running</code>；长任务每约 30 秒补保活 Running</span></div>
+            <div class="map-row"><span>rollout 连续两轮读不到</span><span><code>SessionFinished</code>，按归档 / 会话结束处理</span></div>
+            <div class="map-row"><span>hook <code>PermissionRequest</code></span><span><code>WaitingForUser</code>，审批理由取 description 或 command</span></div>
+          </div>
+        </article>
+      </div>
+      <div class="callout blue" style="margin-top: 16px; border-color: rgba(147, 197, 253, 0.24);">
+        <h3>Codex 子代理说明</h3>
+        <p class="muted" style="margin-bottom: 0;">
+          当前 Codex rollout 链路没有产生 <code>SubagentStarted</code> / <code>SubagentStopped</code>。
+          Codex 子线程有独立 rollout，并带 <code>parent_thread_id</code> / <code>source.subagent</code> 等身份信息。
+          因此这里是“兼容层尚未接入”，不是内核不支持：内核的子代理集合、后台运行语义和优先级规则已经存在。
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="event-details">
+      <div class="section-head">
+        <div>
+          <h2>事件功能说明</h2>
+          <p>每条事件按“发生时会怎样 / 不变量 / 常见误解”展开。默认收起，避免打断快速扫读。</p>
+        </div>
+      </div>
+      <div class="detail-list">
+        <details class="event-detail">
+          <summary>
+            <span class="event-name"><span class="tag green">Running</span></span>
+            <span class="event-summary">主线程活动直接转绿；子代理活动只在特定后台场景转绿。</span>
+          </summary>
+          <div class="event-body">
+            <section><h4>发生时会怎样</h4><p>主线程事件进入 <code>Running</code>。带 <code>agent_id</code> 时先加入活跃集合；若当前是 <code>WaitingForPrompt</code>，则转成 <code>BackgroundRunning</code>。</p></section>
+            <section><h4>不变量</h4><p>主线程 Running 会清理同 provider 的其它 Waiting 会话；子代理 Running 跳过这一步，避免误清其它黄灯。</p></section>
+            <section><h4>常见误解</h4><p>看到绿灯不等于主线程一定在跑，也可能是主线程已停、后台子代理仍在跑。</p></section>
+          </div>
+        </details>
+
+        <details class="event-detail">
+          <summary>
+            <span class="event-name"><span class="tag green">TurnFinished</span></span>
+            <span class="event-summary">一轮完成，不一定是会话完成。</span>
+          </summary>
+          <div class="event-body">
+            <section><h4>发生时会怎样</h4><p>若正在等待用户，保持 <code>WaitingForUser</code>；若活跃集合为空，进入 <code>WaitingForPrompt</code>；否则进入 <code>BackgroundRunning</code>。</p></section>
+            <section><h4>不变量</h4><p>只有主线程事件最终落在 <code>WaitingForPrompt</code> 时才产生绿闪。带子代理 id 或无子代理但被等待用户拦截时都不闪。</p></section>
+            <section><h4>常见误解</h4><p><code>Stop</code> 不是 SessionEnd。它只说明当前轮结束，对话仍然活着。</p></section>
+          </div>
+        </details>
+
+        <details class="event-detail">
+          <summary>
+            <span class="event-name"><span class="tag yellow">WaitingForUser</span></span>
+            <span class="event-summary">最高优先级等待态，黄灯不闪。</span>
+          </summary>
+          <div class="event-body">
+            <section><h4>发生时会怎样</h4><p>直接进入 <code>WaitingForUser</code>。之后任何子代理开始或结束都不会覆盖它。</p></section>
+            <section><h4>不变量</h4><p>直接黄灯不闪。用户中断也被视为等待下一步，不落红灯。</p></section>
+            <section><h4>常见误解</h4><p>“还在等用户”不是“后台没工作”。子代理可能仍在跑，但人的操作优先级更高。</p></section>
+          </div>
+        </details>
+
+        <details class="event-detail">
+          <summary>
+            <span class="event-name"><span class="tag green">SessionFinished</span></span>
+            <span class="event-summary">会话结束，绿闪后移除。</span>
+          </summary>
+          <div class="event-body">
+            <section><h4>发生时会怎样</h4><p>进入 <code>Completed</code>，清空该会话的活跃子代理集合。</p></section>
+            <section><h4>不变量</h4><p>移除计时开始后，迟到事件不能复活会话。Claude 的 SessionEnd reason 不用于 success / error 分流。</p></section>
+            <section><h4>常见误解</h4><p>绿闪移除不是“正在运行”；它表示结束确认，只在短时间内可见。</p></section>
+          </div>
+        </details>
+
+        <details class="event-detail">
+          <summary>
+            <span class="event-name"><span class="tag green">SubagentStarted</span></span>
+            <span class="event-summary">把 agent_id 加入集合，最多把空闲等待拉回后台运行。</span>
+          </summary>
+          <div class="event-body">
+            <section><h4>发生时会怎样</h4><p>主线程 Running 或 WaitingForUser 时保持原状态；WaitingForPrompt、BackgroundRunning、Unknown 时进入 <code>BackgroundRunning</code>。</p></section>
+            <section><h4>不变量</h4><p>Completed / Failed 不接受子代理事件复活。它不能覆盖 WaitingForUser。</p></section>
+            <section><h4>常见误解</h4><p>它不等于主线程 <code>Running</code>；它通常没有普通 Stop 的绿闪，也不会推进主线程轮次语义。</p></section>
+          </div>
+        </details>
+
+        <details class="event-detail">
+          <summary>
+            <span class="event-name"><span class="tag green">SubagentStopped</span></span>
+            <span class="event-summary">从集合移除；只有集合清空且仍在后台运行态时才落黄。</span>
+          </summary>
+          <div class="event-body">
+            <section><h4>发生时会怎样</h4><p>主线程运行或等待用户时保持原状态。若当前是 <code>BackgroundRunning</code> 且集合为空，进入 <code>WaitingForPrompt</code>；否则保持后台运行。</p></section>
+            <section><h4>不变量</h4><p>不产生绿闪。WaitingForPrompt / Unknown 下不会退化成额外的等待态。</p></section>
+            <section><h4>常见误解</h4><p>最后一个子代理结束也不需要再走一次 Stop 动画，直接黄灯才是正确语义。</p></section>
+          </div>
+        </details>
+
+        <details class="event-detail">
+          <summary>
+            <span class="event-name"><span class="tag red">Failed</span></span>
+            <span class="event-summary">红灯终态，清空子代理集合。</span>
+          </summary>
+          <div class="event-body">
+            <section><h4>发生时会怎样</h4><p>进入 <code>Failed</code>，清空集合。之后带 <code>agent_id</code> 的事件只刷新 <code>last_seen_at_ms</code>，不会改变状态。</p></section>
+            <section><h4>不变量</h4><p>红灯不闪。迟到子代理事件不能覆盖错误语义。</p></section>
+            <section><h4>常见误解</h4><p>用户主动中断不一定红色。Codex 的 <code>turn_aborted</code> 是黄灯等待，不是接口错误。</p></section>
+          </div>
+        </details>
+
+        <details class="event-detail">
+          <summary>
+            <span class="event-name"><span class="tag">Unknown</span></span>
+            <span class="event-summary">宁可少动灯，也不猜错。</span>
+          </summary>
+          <div class="event-body">
+            <section><h4>发生时会怎样</h4><p><code>reduce_state</code> 直接返回上一状态，输出灯色不变。</p></section>
+            <section><h4>不变量</h4><p>不会主动转绿、黄、红，也不会产生闪烁。</p></section>
+            <section><h4>常见误解</h4><p>Unknown 不是“未知灯态”总是显示成灰灯。它首先意味着“这条事件不提供转灯信息”。</p></section>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="section" id="sources">
+      <div class="section-head">
+        <div>
+          <h2>源码索引</h2>
+          <p>本页事实来源均在生成时从当前仓库读取。这里列文件和主要符号，不写脆弱行号。</p>
+        </div>
+      </div>
+      <div class="source">
+        <div class="source-item">
+          <code>src-tauri/src/modules/agent_status/status/model.rs</code>
+          <p><code>AgentEventKind</code>、<code>SessionPhase</code>、<code>AgentEvent</code>：统一事件种类和对外阶段契约。</p>
+        </div>
+        <div class="source-item">
+          <code>src-tauri/src/modules/agent_status/status/kernel.rs</code>
+          <p><code>apply_event_with_seed</code>、<code>SessionState</code>、<code>from_phase</code>、<code>to_phase</code>、<code>reduce_state</code>：状态归约、子代理集合和绿闪判定。</p>
+        </div>
+        <div class="source-item">
+          <code>src-tauri/src/modules/agent_status/status/compat/claude.rs</code>
+          <p><code>classify</code>、<code>is_waiting_notification</code>：Claude 事件名到统一事件的映射。</p>
+        </div>
+        <div class="source-item">
+          <code>src-tauri/src/modules/agent_status/status/compat/codex.rs</code>
+          <p><code>classify_rollout_line</code>：Codex rollout 记录到统一事件的映射。</p>
+        </div>
+        <div class="source-item">
+          <code>src-tauri/src/modules/agent_status/status/codex_rollout.rs</code>
+          <p>增量读取、保活 Running、归档 / 消失检测，以及 Codex PermissionRequest 的补口。</p>
+        </div>
+        <div class="source-item">
+          <code>reference/doc/agent-status-hooks.md</code>
+          <p>平台 hook 语义、子代理与 agent_id 说明、状态灯映射和清理策略。</p>
+        </div>
+      </div>
+    </section>
+
+  <footer class="footer">
+      <p>单文件离线文档。颜色语义：绿 <code>#34D399</code>、黄 <code>#FBBF24</code>、红 <code>#F87171</code>。无需网络资源即可完整阅读。</p>
+    </footer>
+  </main>
+
+  <div id="event-tooltip" class="event-tooltip" role="tooltip" hidden></div>
+
+  <script>
+    (() => {
+      const edges = Array.from(document.querySelectorAll("[data-edge]"));
+      const nodes = Array.from(document.querySelectorAll("[data-graph-node]"));
+      const buttons = Array.from(document.querySelectorAll("[data-graph-event]"));
+      const clearButton = document.getElementById("graph-clear");
+      const eventTooltip = document.getElementById("event-tooltip");
+      const eventTooltipTargets = Array.from(document.querySelectorAll("[data-graph-event], .edge-event[data-tooltip-event]"));
+      const EVENT_INFO = {
+        Running: {
+          happens: "主线程事件进入 Running。带 agent_id 时先加入活跃集合；若当前是 WaitingForPrompt，则转成 BackgroundRunning。",
+          invariant: "主线程 Running 会清理同 provider 的其它 Waiting 会话；子代理 Running 跳过这一步，避免误清其它黄灯。",
+          misconception: "看到绿灯不等于主线程一定在跑，也可能是主线程已停、后台子代理仍在跑。"
+        },
+        TurnFinished: {
+          happens: "若正在等待用户，保持 WaitingForUser；若活跃集合为空，进入 WaitingForPrompt；否则进入 BackgroundRunning。",
+          invariant: "只有主线程事件最终落在 WaitingForPrompt 时才产生绿闪。带子代理 id 或无子代理但被等待用户拦截时都不闪。",
+          misconception: "Stop 不是 SessionEnd。它只说明当前轮结束，对话仍然活着。"
+        },
+        WaitingForUser: {
+          tone: "is-warning",
+          happens: "直接进入 WaitingForUser。之后任何子代理开始或结束都不会覆盖它。",
+          invariant: "直接黄灯不闪。用户中断也被视为等待下一步，不落红灯。",
+          misconception: "“还在等用户”不是“后台没工作”。子代理可能仍在跑，但人的操作优先级更高。"
+        },
+        SessionFinished: {
+          happens: "进入 Completed，清空该会话的活跃子代理集合。",
+          invariant: "移除计时开始后，迟到事件不能复活会话。Claude 的 SessionEnd reason 不用于 success / error 分流。",
+          misconception: "绿闪移除不是“正在运行”；它表示结束确认，只在短时间内可见。"
+        },
+        SubagentStarted: {
+          happens: "主线程 Running 或 WaitingForUser 时保持原状态；WaitingForPrompt、BackgroundRunning、Unknown 时进入 BackgroundRunning。",
+          invariant: "Completed / Failed 不接受子代理事件复活。它不能覆盖 WaitingForUser。",
+          misconception: "它不等于主线程 Running；它通常没有普通 Stop 的绿闪，也不会推进主线程轮次语义。"
+        },
+        SubagentStopped: {
+          happens: "主线程运行或等待用户时保持原状态。若当前是 BackgroundRunning 且集合为空，进入 WaitingForPrompt；否则保持后台运行。",
+          invariant: "不产生绿闪。WaitingForPrompt / Unknown 下不会退化成额外的等待态。",
+          misconception: "最后一个子代理结束也不需要再走一次 Stop 动画，直接黄灯才是正确语义。"
+        },
+        Failed: {
+          tone: "is-danger",
+          happens: "进入 Failed，清空集合。之后带 agent_id 的事件只刷新 last_seen_at_ms，不会改变状态。",
+          invariant: "红灯不闪。迟到子代理事件不能覆盖错误语义。",
+          misconception: "用户主动中断不一定红色。Codex 的 turn_aborted 是黄灯等待，不是接口错误。"
+        },
+        Unknown: {
+          happens: "reduce_state 直接返回上一状态，输出灯色不变。",
+          invariant: "不会主动转绿、黄、红，也不会产生闪烁。",
+          misconception: "Unknown 不是“未知灯态”总是显示成灰灯。它首先意味着“这条事件不提供转灯信息”。"
+        }
+      };
+      let selectedEvent = "";
+      let activeTooltipTarget = null;
+      let pinnedTooltipTarget = null;
+      let hoveredTooltipTarget = null;
+      let focusedTooltipTarget = null;
+
+      /**
+       * 解析空格分隔的匹配标签。
+       */
+      const tokens = (value) => new Set(String(value || "").split(/\s+/).filter(Boolean));
+
+      /**
+       * 把数值夹在指定范围内。
+       */
+      const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+      /**
+       * 读取事件标记对应的事件名。
+       */
+      const eventNameForTarget = (target) => target.dataset.tooltipEvent || target.dataset.graphEvent || "";
+
+      /**
+       * 创建事件说明中的一段内容。
+       */
+      const appendTooltipSection = (list, label, text) => {
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = label;
+        description.textContent = text;
+        list.append(term, description);
+      };
+
+      /**
+       * 按触发点周围的可视空间定位事件说明，优先放在上方或下方。
+       */
+      const positionEventTooltip = (target) => {
+        if (!target || eventTooltip.hidden) {
+          return;
+        }
+
+        const gap = 10;
+        const margin = 12;
+        const triggerRect = target.getBoundingClientRect();
+        const tooltipRect = eventTooltip.getBoundingClientRect();
+        const visualViewport = window.visualViewport;
+        const viewportLeft = visualViewport ? visualViewport.offsetLeft : 0;
+        const viewportTop = visualViewport ? visualViewport.offsetTop : 0;
+        const viewportWidth = visualViewport ? visualViewport.width : window.innerWidth;
+        const viewportHeight = visualViewport ? visualViewport.height : window.innerHeight;
+        const viewportRight = viewportLeft + viewportWidth;
+        const viewportBottom = viewportTop + viewportHeight;
+        const minLeft = viewportLeft + margin;
+        const minTop = viewportTop + margin;
+        const maxLeft = Math.max(minLeft, viewportRight - tooltipRect.width - margin);
+        const maxTop = Math.max(minTop, viewportBottom - tooltipRect.height - margin);
+        const centeredLeft = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2;
+        let left = clamp(centeredLeft, minLeft, maxLeft);
+        let top = minTop;
+
+        const fitsAbove = triggerRect.top - viewportTop >= tooltipRect.height + gap + margin;
+        const fitsBelow = viewportBottom - triggerRect.bottom >= tooltipRect.height + gap + margin;
+
+        if (fitsAbove) {
+          top = triggerRect.top - tooltipRect.height - gap;
+        } else if (fitsBelow) {
+          top = triggerRect.bottom + gap;
+        } else {
+          const fitsLeft = triggerRect.left - viewportLeft >= tooltipRect.width + gap + margin;
+          const fitsRight = viewportRight - triggerRect.right >= tooltipRect.width + gap + margin;
+
+          if (fitsLeft || fitsRight) {
+            left = fitsLeft
+              ? triggerRect.left - tooltipRect.width - gap
+              : triggerRect.right + gap;
+            top = clamp(
+              triggerRect.top + triggerRect.height / 2 - tooltipRect.height / 2,
+              minTop,
+              maxTop
+            );
+          } else {
+            const roomAbove = triggerRect.top - viewportTop - gap - margin;
+            const roomBelow = viewportBottom - triggerRect.bottom - gap - margin;
+            top = roomBelow > roomAbove
+              ? triggerRect.bottom + gap
+              : triggerRect.top - tooltipRect.height - gap;
+          }
+        }
+
+        eventTooltip.style.left = `${Math.round(clamp(left, minLeft, maxLeft))}px`;
+        eventTooltip.style.top = `${Math.round(clamp(top, minTop, maxTop))}px`;
+      };
+
+      /**
+       * 显示指定事件的功能说明。
+       */
+      const showEventTooltip = (target) => {
+        const eventName = eventNameForTarget(target);
+        const info = EVENT_INFO[eventName];
+
+        if (!info) {
+          return;
+        }
+
+        activeTooltipTarget = target;
+        eventTooltip.className = "event-tooltip";
+        if (info.tone) {
+          eventTooltip.classList.add(info.tone);
+        }
+
+        const heading = document.createElement("h3");
+        const list = document.createElement("dl");
+        heading.textContent = eventName;
+        appendTooltipSection(list, "发生时会怎样", info.happens);
+        appendTooltipSection(list, "不变量", info.invariant);
+        appendTooltipSection(list, "常见误解", info.misconception);
+        eventTooltip.replaceChildren(heading, list);
+        eventTooltip.hidden = false;
+        eventTooltip.style.visibility = "hidden";
+        positionEventTooltip(target);
+        eventTooltip.style.visibility = "";
+      };
+
+      /**
+       * 隐藏事件说明并清除当前触发点。
+       */
+      const hideEventTooltip = () => {
+        eventTooltip.hidden = true;
+        activeTooltipTarget = null;
+      };
+
+      /**
+       * 当触发点不再被悬停、聚焦或固定时收起说明。
+       */
+      const hideIfUnanchored = (target) => {
+        if (
+          target !== pinnedTooltipTarget
+          && target !== hoveredTooltipTarget
+          && target !== focusedTooltipTarget
+        ) {
+          hideEventTooltip();
+        }
+      };
+
+      /**
+       * 彻底关闭事件说明，并解除触屏点击固定状态。
+       */
+      const dismissEventTooltip = () => {
+        pinnedTooltipTarget = null;
+        hoveredTooltipTarget = null;
+        focusedTooltipTarget = null;
+        hideEventTooltip();
+      };
+
+      /**
+       * 清除图形上和按钮上的高亮状态。
+       */
+      const clearGraph = () => {
+        selectedEvent = "";
+        buttons.forEach((button) => button.classList.toggle("is-active", false));
+        edges.forEach((edge) => edge.classList.remove("is-dim", "is-active"));
+        nodes.forEach((node) => node.classList.remove("is-dim", "is-active"));
+      };
+
+      /**
+       * 根据事件名高亮相关边和端点状态。
+       */
+      const highlightEvent = (eventName) => {
+        if (selectedEvent === eventName) {
+          clearGraph();
+          return;
+        }
+
+        selectedEvent = eventName;
+        const activeStates = new Set();
+        buttons.forEach((button) => button.classList.toggle("is-active", button.dataset.graphEvent === eventName));
+
+        edges.forEach((edge) => {
+          const isActive = tokens(edge.dataset.event).has(eventName);
+          edge.classList.toggle("is-active", isActive);
+          edge.classList.toggle("is-dim", !isActive);
+          if (isActive) {
+            tokens(edge.dataset.state).forEach((state) => activeStates.add(state));
+          }
+        });
+
+        nodes.forEach((node) => {
+          const isActive = activeStates.has(node.dataset.graphNode);
+          node.classList.toggle("is-active", isActive);
+          node.classList.toggle("is-dim", !isActive);
+        });
+      };
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => highlightEvent(button.dataset.graphEvent));
+      });
+
+      eventTooltipTargets.forEach((target) => {
+        if (!EVENT_INFO[eventNameForTarget(target)]) {
+          return;
+        }
+
+        target.setAttribute("aria-describedby", "event-tooltip");
+
+        target.addEventListener("mouseenter", () => {
+          hoveredTooltipTarget = target;
+          showEventTooltip(target);
+        });
+
+        target.addEventListener("mouseleave", () => {
+          if (hoveredTooltipTarget === target) {
+            hoveredTooltipTarget = null;
+          }
+          hideIfUnanchored(target);
+        });
+
+        target.addEventListener("focus", () => {
+          focusedTooltipTarget = target;
+          showEventTooltip(target);
+        });
+
+        target.addEventListener("blur", () => {
+          if (focusedTooltipTarget === target) {
+            focusedTooltipTarget = null;
+          }
+          hideIfUnanchored(target);
+        });
+
+        target.addEventListener("click", (event) => {
+          event.stopPropagation();
+          pinnedTooltipTarget = target;
+          showEventTooltip(target);
+        });
+
+        target.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            dismissEventTooltip();
+          }
+        });
+      });
+
+      document.addEventListener("pointerdown", (event) => {
+        if (
+          eventTooltip.hidden
+          || !event.target.closest
+          || event.target.closest("[data-graph-event], .edge-event[data-tooltip-event]")
+        ) {
+          return;
+        }
+        dismissEventTooltip();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          dismissEventTooltip();
+        }
+      });
+
+      window.addEventListener("resize", () => {
+        if (activeTooltipTarget && !eventTooltip.hidden) {
+          positionEventTooltip(activeTooltipTarget);
+        }
+      });
+
+      window.addEventListener("scroll", () => {
+        if (activeTooltipTarget && !eventTooltip.hidden) {
+          positionEventTooltip(activeTooltipTarget);
+        }
+      }, true);
+
+      clearButton.addEventListener("click", clearGraph);
+    })();
+  </script>
+</body>
+</html>

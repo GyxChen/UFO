@@ -7,6 +7,7 @@ pub const SCHEMA_VERSION: u16 = 1;
 pub enum Provider {
     Claude,
     Codex,
+    Qoder,
 }
 
 impl Provider {
@@ -14,18 +15,30 @@ impl Provider {
         match value.to_ascii_lowercase().as_str() {
             "claude" | "claude-code" => Some(Self::Claude),
             "codex" | "codex-cli" => Some(Self::Codex),
+            "qoder" | "qoder-cli" => Some(Self::Qoder),
             _ => None,
         }
     }
 
-    /// provider 的稳定字符串写法（`"claude"` / `"codex"`）。
+    /// provider 的稳定字符串写法（`"claude"` / `"codex"` / `"qoder"`）。
     ///
     /// 会话 key、存档表里的 `provider` 列都用它，避免各处各写一份 match。
     pub fn as_str(&self) -> &'static str {
         match self {
             Provider::Claude => "claude",
             Provider::Codex => "codex",
+            Provider::Qoder => "qoder",
         }
+    }
+
+    /// 该平台的会话日志是否与 Claude Code 的 transcript 同构（能直接喂给 `TokenTracker`）。
+    ///
+    /// Qoder 实测共用同一套记录字段（`type` = assistant、`message.usage` 的四个 token 键名）
+    /// 与同一套目录布局（`<项目>/<session-id>.jsonl` + `<session-id>/subagents/*.jsonl`），
+    /// 所以 token 统计复用同一个解析器，不必另写一套。
+    /// Codex 的会话是 rollout 文件、格式不同，由 `codex_rollout` 自己读，**不得**登记进来。
+    pub fn uses_claude_transcript(&self) -> bool {
+        matches!(self, Provider::Claude | Provider::Qoder)
     }
 }
 
@@ -59,9 +72,16 @@ pub enum AgentEventKind {
     WaitingForUser,
     /// 会话确认结束（Claude / Codex 的 `SessionEnd`）→ 绿闪后移除。
     SessionFinished,
+    /// 子代理开始执行；与主会话共用 `session_id`，靠 `agent_id` 区分。
+    ///
+    /// 它不直接等于主线程正在执行：主线程可能已经 `Stop`、正在等用户输入，
+    /// 而 Plan / Agent 子对话仍在后台跑。内核用该语义维护活跃子代理集合。
+    SubagentStarted,
+    /// 子代理结束；只有最后一个活跃子代理结束时，后台运行态才会退出。
+    SubagentStopped,
     /// 本轮或会话出错 → 红灯。
     Failed,
-    /// 无法识别；内核保守处理（不构成转灯信号，见 `kernel::light_for_kind`）。
+    /// 无法识别；内核保守处理（不构成转灯信号，见 `kernel::reduce_state`）。
     #[default]
     Unknown,
 }
@@ -135,9 +155,10 @@ pub struct AgentEvent {
     /// 子代理（subagent）事件的来源标识；主线程事件缺省为 None。
     ///
     /// ⚠️ 子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有本字段能区分。
-    /// 若让子代理事件参与灯色迁移，主线程 Waiting（等用户作答/授权）会被仍在后台跑的子代理
-    /// 事件顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。因此内核
-    /// 用本字段把子代理事件限制为「只刷存活时间、不驱灯色」（见 `apply_event_with_seed`）。
+    /// 内核用本字段维护「活跃子代理集合」，并按主线程所处状态分流（见 `kernel::reduce_state`）：
+    /// 主线程在等用户操作、或会话已结束 / 已出错时，子代理事件只记账、不转灯 —— 否则
+    /// 「Claude 已经在问我了，灯却一直是绿色」；只有主线程已停、处于「等 prompt」空闲时，
+    /// 子代理活动才把灯拉回后台运行（对外绿常亮）。子代理自己的 `Failed` 也不染红父灯。
     /// 旧事件缺此字段时反序列化为 None。
     #[serde(default)]
     pub agent_id: Option<String>,
@@ -272,6 +293,9 @@ mod tests {
         assert_eq!(Provider::parse("codex"), Some(Provider::Codex));
         assert_eq!(Provider::parse("codex-cli"), Some(Provider::Codex));
         assert_eq!(Provider::parse("CODEX"), Some(Provider::Codex));
+        assert_eq!(Provider::parse("qoder"), Some(Provider::Qoder));
+        assert_eq!(Provider::parse("qoder-cli"), Some(Provider::Qoder));
+        assert_eq!(Provider::parse("QODER"), Some(Provider::Qoder));
     }
 
     #[test]
@@ -285,6 +309,15 @@ mod tests {
     fn session_key_includes_provider_namespace() {
         assert_eq!(session_key(Provider::Claude, "abc"), "claude:abc");
         assert_eq!(session_key(Provider::Codex, "abc"), "codex:abc");
+        assert_eq!(session_key(Provider::Qoder, "abc"), "qoder:abc");
+    }
+
+    #[test]
+    fn only_claude_shaped_transcripts_go_to_the_token_tracker() {
+        // Qoder 的会话日志与 Claude 同构，复用 TokenTracker；Codex 是 rollout，格式不同。
+        assert!(Provider::Claude.uses_claude_transcript());
+        assert!(Provider::Qoder.uses_claude_transcript());
+        assert!(!Provider::Codex.uses_claude_transcript());
     }
 
     #[test]

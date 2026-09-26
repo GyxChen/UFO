@@ -3,7 +3,14 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export const AGENT_STATUS_EVENT = 'agent-status'
 
-export type Provider = 'claude' | 'codex'
+/**
+ * 事件来源平台。
+ *
+ * 列出已接入平台的字面量拿到补全，同时容纳尚未登记进
+ * {@link providerMeta} 的新平台串（`(string & {})` 是"宽口径但仍列得出已知项"的写法）。
+ * ⚠️ 展示名/图标一律走注册表，不要在这里加字面量后又在视图里写三元。
+ */
+export type Provider = 'claude' | 'codex' | 'qoder' | (string & {})
 export type SessionPhase = 'running' | 'waiting' | 'error' | 'unknown' | 'completed'
 export type StatusColor = 'green' | 'yellow' | 'red'
 
@@ -169,6 +176,9 @@ export function isStatusSnapshot(value: unknown): value is StatusSnapshot {
   if (!value || typeof value !== 'object') return false
   const snapshot = value as Partial<StatusSnapshot>
   return (
+    // ⚠️ schema_version 是**刻意**的前后端同步 tripwire（内核恒发 1），与早先的 provider 白名单
+    // 性质不同：那条白名单会把新平台的每一帧整帧丢弃（首帧走 invoke 不经此校验，
+    // 症状是灯冻结在首帧、永不更新），故只按"是不是个能看的串"校验，展示交给注册表降级。
     snapshot.schema_version === 1 &&
     Number.isSafeInteger(snapshot.revision) &&
     snapshot.revision >= 0 &&
@@ -179,7 +189,9 @@ export function isStatusSnapshot(value: unknown): value is StatusSnapshot {
       session =>
         session &&
         typeof session.key === 'string' &&
-        (session.provider === 'claude' || session.provider === 'codex') &&
+        typeof session.provider === 'string' &&
+        session.provider.length > 0 &&
+        session.provider.length <= 64 &&
         typeof session.session_id === 'string' &&
         typeof session.phase === 'string' &&
         typeof session.termination_confirmed === 'boolean'

@@ -260,7 +260,7 @@ src-tauri/src/
 | 字段 | 来源 | 处理 |
 |---|---|---|
 | `base_url` | **配置文件优先**：`~/.claude/settings.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json` 的 `env.ANTHROPIC_BASE_URL`（后者覆盖前者，`cwd` 取自 hook payload）；**环境变量兜底**：`ANTHROPIC_BASE_URL`。codex 读 `$CODEX_HOME/config.toml`（见下「Codex」节），环境变量兜底 | 只按名字取该 key（`env` 块里的 token 绝不读取）；不脱敏，仅 trim；上限 4096 |
-| `prompt` | **仅** `UserPromptSubmit` payload 的 `prompt` 字段（`UserPromptExpansion` 的展开模板文本不认，否则会覆盖用户真正的提问） | trim + 截断；上限 4000 字符；同轮内后续事件继承，下次提交才覆盖 |
+| `prompt` | **仅** `UserPromptSubmit` payload 的 `prompt` 字段（`UserPromptExpansion` 的展开模板文本不认，否则会覆盖用户真正的提问）；Qoder 的 `/goal` 轮整段被换成平台模板，正文在 `<untrusted_objective>` 里 → 标签引擎 `extract` 只上报那段正文 | 先过通用标签引擎（`drop` 删标签连同内文 / `extract` 只留标签内正文），再 trim + 截断；上限 4000 字符；同轮内后续事件继承，下次提交才覆盖 |
 
 - 同轮内后续事件继承这两个值，下次提交/新事件才覆盖（`kernel.rs` 用 `.or(previous_*)`）。
 - ⚠️ 二者**明文写入** `%APPDATA%/<identifier>/status/inbox/*.json`（约 500ms 内消费删除）。提问可能含密钥或私有代码，这是已知代价。
@@ -334,6 +334,23 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - **新命令注册三处**：`#[tauri::command]` + `permissions/status.toml` 的 `[[permission]]` + capability 文件。`get_session_records` 给三窗口（`default.json`），`delete_session_record`/`clear_session_records` 只在 `main-module-settings.json` 授权（仅 main）。
 - ⚠️ 会话记录面板同样**不能用 `window.alert`/`confirm`**（`tauri-plugin-prevent-default`），删除/清除都走两步确认 + `role="status"`。
 
+### 消息推送（ntfy / Bark，可扩展）
+
+灯态变化可以推到手机。设置页是「Agent 状态灯」的第四个二级分区「消息推送」（方案 A 版面：上半区总开关，下半区左列选服务、右列管该服务的收件方，与「信息卡拓展」同构）。
+
+- **模型只有两层**：`provider`（服务，代码注册，唯一可配字段是服务器地址）→ `channel[]`（一行「名字 + 主题」，用户增删）。Bark 的设备密钥**就是一个主题串**，与 ntfy 的可订阅主题落在同一层，因此**没有 `provider === 'bark'` 这类分支**，UI 也只有一套列表。开关是**与**关系：总开关 ∧ 服务；主题行**没有自己的开关**（不想发就删掉那一行）。
+- **服务差异只写在 provider 里**：加一个服务 = `push/providers/<id>.rs`（`server()` 给标签 / 官方默认 / 说明，`send()` 只管发）+ `build_providers()` 一行 + 前端 `lib/push-providers.ts` 一行文案，不写新组件、不改面板。⚠️ 原先的 `field_spec` 通用字段表（`FieldSpec` / `FieldKind` / `sanitize`）已删 —— 服务只剩一个地址、收件方固定两列，留着就是空转的抽象。`push-providers.spec.ts` 用 `?raw` 读 Rust 源断言两边同源，并断言 provider 里不再出现 `FieldSpec` / `secrets` / `Bearer`。
+- ⚠️ **只消费内核投影的事件语义**（`TurnFinished` / `WaitingForUser` / `Failed` / `SessionFinished`），且只在 `apply_status_event` 判定「灯真的变了」时记一条信号 —— 手机上的结论与悬浮窗的灯必然一致。推送层不得自己判定灯态。
+- **正文 = 固定一行状态 + 勾选的若干行**：`{平台} {事件}`（如「claude 在等你」）**固定发**，没有开关；`config.content` 可勾 `endpoint` / `prompt`（提问） / `script`（脚本内容） / `session_id` 四项，勾了才多一行 `标签: 值`，取不到值就整行不出现。标题前缀是常量 `PUSH_TITLE_PREFIX = "UFO"`，**不再可配**。
+- ⚠️ **四项默认全不勾**：ntfy 主题公开可订阅，提问与脚本结果可能含密钥或私有代码，出网后不受控；勾选处必须写明风险，不许做成默认值。`waiting_reason` 刻意不在选项里（它是平台注入的文案，比用户输入更易含敏感上下文）。
+- ⚠️ **二级分区别再重复左上角标题与说明**：二级 tabbar 已经说明是哪一区（`ExtensionsSection` / `RecordsSection` / `PushSection` 都只留 `aria-label`）。推送面板的版面是硬约定：上半区**按内容高**（`grid-template-rows: auto minmax(0, 1fr)`，曾写死 40%，控件删掉后会在中间留一片空白），下半区双栏吃满剩余高度、两列各自滚。
+- ⚠️ **放开卡片 `max-w-md` 必须用两个类权重**（`.push-panel > .push-master` / `.push-split > .ufo-card`，同 `.ufo-card.light-sound`）：模块 CSS 排在 `main.css` **之前**，单类覆盖与 `.ufo-card` 同权重、由加载顺序定胜负，写成 `.push-master { @apply max-w-none }` 会被压回去（实测上半区缩成 448px）。护栏：`agent-status-css.spec.ts` 扫全部 `max-w-none` 的选择器权重。
+- **主题行 = 名字 | 主题串 | 移除**（`.push-topic`，`grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto`，主题串等宽）。两个格子都是行内输入框、改完即存，所以行本身**不是 `<button>`**；移除复用「信息卡拓展」的 `.ep-list__remove` / `--armed` 两步确认。⚠️ **主题不是密钥**：它按用户要求明文显示、明文落配置，push 侧整套凭据路径（`set_push_secret` / `delete_push_secret` / `SecretView` / 级联清凭据 / `notice`）已删；`flow` 那边用自己的 `KeyringSecrets`，不受影响。代价与孤儿凭据见 guide §12。
+- **调度**：一次灯变 → 该服务下**每个主题各一条**；连续失败按主题行退避 `60s × 2^n` 封顶 600s；投递跑在专用 worker 线程串行队列。（节流与静默期已删 —— 去重靠内核的「灯变了」判定。）⚠️ agent 全停 = 零出网。
+- 地址策略与 flow **刻意不同**：push 的地址是用户显式填的固定字段，允许局域网自建服务器（flow 那边拦私网是因为跑用户脚本）。
+- 命令 2 个（`get_push_status` / `test_push_provider`）**只授权给主窗**（`main-module-settings.json` 的 `allow-manage-push`）；配置写回走外壳的 `updateModuleSettings`，不新增保存命令。`test_push_provider(provider_id)` 返回逐主题的 `PushTestOutcome`，必须是 `async` + `spawn_blocking`。
+- 契约、红线与验收见 `reference/doc/agent-status-push-guide.md`。
+
 ### 平台兼容层 / 内核层
 
 平台（Claude / Codex / …）的 hook 数据先经「兼容层」归一化，再入「内核」维护灯态；内核不认识任何平台词汇：
@@ -342,9 +359,10 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 平台 hook payload ─▸ compat（status/compat/，按 provider 选适配器）─▸ AgentEvent{ kind, … } ─▸ kernel（status/kernel.rs）
 ```
 
-- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` 各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取、子代理 `agent_id`）。跨平台共用的（字段多别名取值、事件名归一化、提问裁剪、`agent_id` 判定…）放 `compat/mod.rs`。
-- **内核**：`status/kernel.rs` 只认 `AgentEventKind` 六种语义（Running / TurnFinished / WaitingForUser / SessionFinished / Failed / Unknown），`light_for_kind` 把 kind 映射成灯态 + 是否绿闪。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
-- **接入新平台** = 新增 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支；内核与前端零改动。
+- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` / `qoder.rs` **互不引用**，各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取与裁剪、子代理 `agent_id`）—— 共用一张表会让改一个平台静默带偏另一个的灯。`compat/mod.rs` 只放与平台无关的通用工具（多别名取值、事件名归一化、未知事件兜底、错误短路判定、裁剪额度、`agent_id` / `transcript_path` 提取、**提问标签引擎** [`apply_tag_rules`]）。
+- **提问标签引擎：机制共用、策略各留各的**。平台会往 `prompt` 里塞自己的模板，两家的修法相反：Claude 是 `drop`（删 `<system-reminder>` 等标签连同内文），Qoder 是 `extract`（`/goal` 轮把 3282 字 harness 当提问上报，用户真正的目标只在 `<untrusted_objective>` 里，故只留标签内正文）。扫描/边界（成对、自闭合、未闭合、多字节安全、同名前缀不误命中）在 `compat/mod.rs`（`apply_tag_rules` + `build_tag_rules`），**规则表与配置一平台一份**：`claude.rs::tag_rules()` 读 `.env` 的 `UFO_TAG_RULES_CLAUDE`（默认清一色 `drop`），`qoder.rs::tag_rules()` 读 `UFO_TAG_RULES_QODER`（默认 `untrusted_objective:extract`）——改一家动不到另一家的行为，拿错方向（该 drop 的配成 extract）会连用户正文一起丢。语法是 `name` / `name:drop` / `name:extract`，留空或整表都非法时用该文件自己的 `DEFAULT_TAG_RULES`；两个键都由 `build.rs` 构建期注入（hook 进程运行时读不到仓库 `.env`，改完要重新构建）。Qoder 的 `extract` 规则带命中门槛「文本以 `A goal has been set.` 开头才生效」（门槛写在 `compat/qoder.rs`，环境变量只能写 `name:action`，写不出条件）—— 没有门槛，普通提问会被判成「无正文」，提问从此不再更新。
+- **内核**：`status/kernel.rs` 只认 `AgentEventKind` **八种**语义（Running / TurnFinished / WaitingForUser / SessionFinished / SubagentStarted / SubagentStopped / Failed / Unknown）。灯态与是否绿闪由 `reduce_state` 推导（再经 `SessionState::to_phase` 与 `resolve_timing` 投影），**没有 `light_for_kind` 这个函数**。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
+- **接入新平台** = 新建 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支 —— 内核零改动，但**前端不是**：`Provider` 是闭包枚举，另有 `base_url_env_names` / `provider_base_url` / `AgentApp::from_provider` 三处穷尽 match 会编译报错点名要登记，前端展示名与图标在 `lib/provider-registry.ts` 加一行。完整改动清单、payload 契约与灯色退化档位见 `reference/doc/agent-status-platform-onboarding.md`。
 - **事件源目前有两个**：hook（inbox 里的规范 JSON）与 Codex rollout 补漏（`codex_rollout.rs` 合成 `Failed`）。两者都产出 `AgentEvent`，在 monitor 里走**同一条入口** `apply_status_event`（广播调试事件 → 登记 transcript → 取存档回填 → 进内核）。加第三个源时照着接这个函数，别绕开它。
 - `AgentEvent.kind` 是 `#[serde(default)]` 新增字段，缺省 `Unknown`（**不得升 `SCHEMA_VERSION`**）；旧事件反序列化后为 Unknown = 不驱灯色，与「无法识别」一致。
 - **hook 输入上限 4 MiB**：Codex 的工具事件会把 `tool_input`（apply_patch 补丁等）原样带上，卡 64 KiB 会丢掉有效生命周期事件。落盘的 inbox 事件仍只带提取字段。
@@ -379,7 +397,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 | **等你授权** | rollout **没有**这个状态的任何记录（记录类型 / item 字段 / output 正文全查过）→ 只能靠 hook 的 `PermissionRequest` 补：它带 `tool_name` / `tool_input.command` / `tool_input.description`（Codex 自己写的审批理由）。映射为 WaitingForUser（黄灯不闪），理由进 `waiting_reason` 显示在 tooltip 的 head 行 |
 | 预筛 | `compat::codex::cares()` 先做子串扫描：97% 的字节是命令输出/消息正文（单条可达 100 KB），只有命中小标记的行才做 JSON 解析 |
 
-⚠️ 不要把 Codex 的 hook 适配器「顺手」补回来：两路同时驱动同一会话会让灯态互顶（`compat::tests::only_claude_uses_the_hook_adapter` 锁着这条）。
+⚠️ 不要把 Codex 的 hook 适配器「顺手」补回来：两路同时驱动同一会话会让灯态互顶（`status/compat/mod.rs` 的 `codex_adapter_only_accepts_permission_request` 与 `status/hook.rs` 的 `codex_hook_writes_only_permission_request` 锁着这条）。
 
 #### 取不到的东西
 
@@ -400,7 +418,14 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
   - `Stop`：一轮执行完成 → 先绿闪，retention 后落成黄常亮（对话未结束）
   - `SessionEnd`：对话结束 → 绿闪后移除
 - 🔴 = Error（StopFailure 等；红灯不粘，任何能映射出别的阶段的事件都可转灯，`Unknown` 事件除外）
-- ⚠️ **子代理（subagent）事件不得驱动灯色**：子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有 payload 里的 `agent_id` 能区分（主线程事件不带该字段）。带 `agent_id` 的事件对已存活会话**只刷新 `last_seen_at_ms`**，阶段 / `is_flashing` / `remove_at_ms` 全原样保留。否则主 agent 弹出提问框（`PermissionRequest`→黄）时，后台仍在跑的子代理事件会立刻把它顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。**改内核（`kernel.rs`）的 `apply_event_with_seed` 时务必保住这条守卫。**
+- ⚠️ **子代理（subagent）事件不得把「等用户操作」的黄灯顶回绿**：子代理事件与主会话**共用同一个 `session_id`**（实测确认），只有 payload 里的 `agent_id` 能区分（主线程事件不带该字段）。否则主 agent 弹出提问框（`PermissionRequest`→黄）时，后台仍在跑的子代理事件会立刻把它顶回 Running —— 表现为「Claude 已经在问我了，灯却一直是绿色」。`kernel.rs` 的 `apply_event_with_seed` 按这几条办事，**改它时务必一起保住**：
+  - 主线程正在等用户操作（WaitingForUser）、或会话已结束 / 已出错（Completed / Failed）时，子代理事件**只**维护后台记账（把该 `agent_id` 加入 / 移出活跃集合）并刷新 `last_seen_at_ms`，灯色与计时（`is_flashing` / `remove_at_ms` / `error_code` / `waiting_reason`）原样保留；
+  - 只有主线程已停、处于「等 prompt」空闲时，子代理活动才把灯拉回「后台运行」（对外绿常亮），最后一个活跃子代理结束时落回黄；
+  - 带 `agent_id` 的 `Failed`（子代理自己的工具失败）**不代表父会话出错**：不得把父灯染红、也不得清空其它仍在跑的子代理；
+  - 主线程出错时活跃子代理集合**不清空**（后台事实要留到恢复之后，否则灯会误落黄）；
+  - UFO 中途启动、只先收到子代理活动时，灯的起点是「后台运行」而不是「主线程在跑」，否则最后一个子代理收尾后无处可退、灯会一直绿；
+  - 子代理的 `sequence` 有自己的水位（按 `agent_id` 分开比），**不与主线程的序号互相比较**，也不写进对外快照的 `last_sequence`。
 - ⚠️ **`AskUserQuestion`（选择框提问）不走 `PreToolUse`**：它走 `PermissionRequest` + `Notification(permission_prompt)`，作答后发 `PostToolUse`。不需要按工具名特判。
 - ⚠️ `notification_type` 的「等人操作」清单必须与 Claude Code 枚举对齐（详见 `reference/doc/agent-status-hooks.md`），**漏列会退化成绿色**。
 - 详情见 `reference/doc/agent-status-hooks.md`
+- **接入新平台的规范**（payload 契约、最小事件集、改动清单、验收）见 `reference/doc/agent-status-platform-onboarding.md`

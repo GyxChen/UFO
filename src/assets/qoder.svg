@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Qoder 官方 mark 的单色（纯白）简化版：官方图形是两圈相交的圆角环、右下带一小段尾巴。
+  悬浮窗徽章只有约 18px，官方那份的立体渐变与交叠细节在这个尺寸下会糊成一团，
+  因此只保留「双环 + 尾巴」的轮廓。⚠️ 与 codex.svg 一样是纯白单色，必须配 `.ufo-mono-icon`
+  （浅色主题反相），否则在浅底上隐形。
+-->
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" fill="none"
+     stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+  <g transform="rotate(-8 50 50)">
+    <!-- 后环：官方 mark 里偏左上的那一圈 -->
+    <rect x="14" y="18" width="38" height="38" rx="14" />
+    <!-- 前环：偏右下、与后环相交的那一圈 -->
+    <rect x="48" y="44" width="38" height="38" rx="14" />
+    <!-- 尾巴：前环右下角伸出的那一笔（读作 Q） -->
+    <path d="M76 78 L84 83" />
+  </g>
+</svg>

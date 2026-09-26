@@ -8,11 +8,7 @@ import SessionRecordsPanel from '../panels/SessionRecordsPanel.vue'
 </script>
 
 <template>
-  <section class="module-page__section module-page__section--fill" aria-labelledby="agent-status-records-title">
-    <h2 id="agent-status-records-title" class="module-page__section-title">会话记录</h2>
-    <p class="module-page__section-hint">
-      跨重启保留的会话存档：重启或 <code>--resume</code> 后灯位、token、提问都能续上。
-    </p>
+  <section class="module-page__section module-page__section--fill" aria-label="会话记录">
     <SessionRecordsPanel />
   </section>
 </template>

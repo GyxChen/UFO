@@ -62,11 +62,14 @@ describe('isSessionRecordList', () => {
     expect(isSessionRecordList({ revision: 1, records: {} })).toBe(false)
   })
 
-  it('rejects entries with a blank key or an unknown provider', () => {
+  it('rejects entries with a blank key', () => {
     expect(isSessionRecordList({ revision: 1, records: [{ ...record, key: '' }] })).toBe(false)
-    expect(
-      isSessionRecordList({ revision: 1, records: [{ ...record, provider: 'gemini' }] }),
-    ).toBe(false)
+  })
+
+  it('accepts an entry from an unregistered provider', () => {
+    // 与 isStatusSnapshot 同一取舍：早先这里按 claude/codex 白名单校验，
+    // 新平台的一条存档就会让**整表**校验失败、面板直接空掉。未知平台由注册表降级显示。
+    expect(isSessionRecordList({ revision: 1, records: [{ ...record, provider: 'gemini' }] })).toBe(true)
   })
 
   it('rejects entries missing a required numeric field', () => {

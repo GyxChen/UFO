@@ -49,6 +49,11 @@ description = "Allows deleting or clearing persisted session records from the ma
 commands.allow = ["delete_session_record", "clear_session_records"]
 
 [[permission]]
+identifier = "allow-light-sounds"
+description = "Allows reading the replaceable status light sound files (安装路径下 data/bgm) for playback."
+commands.allow = ["read_light_sound"]
+
+[[permission]]
 identifier = "allow-get-flow-results"
 description = "Allows reading flow-script extension fields for tooltips (信息卡拓展流程脚本)."
 commands.allow = ["get_flow_results", "get_flow_snapshot"]
@@ -67,6 +72,13 @@ commands.allow = ["run_flow_test"]
 identifier = "allow-manage-flow-secrets"
 description = "Allows writing/deleting flow script secrets to the OS credential store from the main window."
 commands.allow = ["set_flow_secret", "delete_flow_secret"]
+
+# 消息推送的读写全在主窗（悬浮窗与提示窗不显示推送，因此不进 default.json）：
+# 读配置快照、给某个服务下的每个主题发一条测试。
+[[permission]]
+identifier = "allow-manage-push"
+description = "Allows reading push settings and sending a test push to every topic of one service from the main window (消息推送设置)."
+commands.allow = ["get_push_status", "test_push_provider"]
 
 [[permission]]
 identifier = "allow-is-left-mouse-pressed"

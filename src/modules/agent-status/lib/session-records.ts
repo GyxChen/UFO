@@ -78,7 +78,11 @@ export function isSessionRecordList(value: unknown): value is SessionRecordList 
     return (
       typeof item.key === 'string' &&
       item.key.length > 0 &&
-      (item.provider === 'claude' || item.provider === 'codex') &&
+      // 与 `isStatusSnapshot` 同口径：只验"是不是个能看的串"，未知平台由 provider 注册表降级显示。
+      // 早先这里是 claude/codex 白名单，新平台会让整表存档被丢弃、面板直接空掉。
+      typeof item.provider === 'string' &&
+      item.provider.length > 0 &&
+      item.provider.length <= 64 &&
       typeof item.session_id === 'string' &&
       typeof item.started_at_ms === 'number' &&
       typeof item.last_seen_at_ms === 'number'

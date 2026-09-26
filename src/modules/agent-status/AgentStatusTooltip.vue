@@ -20,8 +20,7 @@ import { useAgentStatusStore } from './stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { useFlowResultsStore } from './stores/flowResults'
 import { agentStatusSettings } from './settings'
-import claudeIcon from '@/assets/claude.svg'
-import codexIcon from '@/assets/codex.svg'
+import { providerFallbackMark, providerMeta } from './lib/provider-registry'
 
 /**
  * Agent 状态灯的悬停信息卡，两种内容共用一个组件（按悬停目标分派）：
@@ -68,13 +67,17 @@ const hiddenSessions = computed(() => overflowList.value ?? [])
  */
 const hiddenSegments = computed(() => overflowSegments(hiddenSessions.value))
 
-/** provider → 平台图标（清单里每行都要按自己的 provider 取）。 */
-function iconFor(item: SessionSnapshot) {
-  return item.provider === 'codex' ? codexIcon : claudeIcon
-}
+/**
+ * 折叠清单的行：会话 + 各自的平台元信息，一次算好。
+ *
+ * 模板里未登记平台要在「图标」与「首字符徽标」两种节点间分流，取两次注册表既啰嗦也拿不到收窄。
+ */
+const overflowRows = computed(() =>
+  hiddenSessions.value.map(item => ({ item, meta: providerMeta(item.provider) }))
+)
 
-const providerLabel = computed(() => (session.value?.provider === 'codex' ? 'Codex' : 'Claude'))
-const providerIcon = computed(() => (session.value?.provider === 'codex' ? codexIcon : claudeIcon))
+/** 头部会话的平台元信息（名称 / 图标 / 是否反相）。未登记平台降级显示，而不是冒充 Claude。 */
+const provider = computed(() => providerMeta(session.value?.provider ?? ''))
 const statusColor = computed(() => (session.value ? colorForSession(session.value) : 'green'))
 
 /** Endpoint 展示值：命中代理解析的上游时优先显示上游，否则回落 base_url。 */
@@ -175,23 +178,29 @@ async function dismissSession() {
     </div>
 
     <div class="tooltip-overflow-list">
-      <div v-for="item in hiddenSessions" :key="item.key" class="tooltip-row tooltip-overflow-row">
-        <span class="tooltip-dot" :class="`tooltip-dot--${colorForSession(item)}`" aria-hidden="true" />
-        <!-- Codex 的图标是纯白单色，浅色主题下要反相；Claude 的橙不套。 -->
+      <div v-for="row in overflowRows" :key="row.item.key" class="tooltip-row tooltip-overflow-row">
+        <span class="tooltip-dot" :class="`tooltip-dot--${colorForSession(row.item)}`" aria-hidden="true" />
+        <!-- 平台图标与是否反相来自 provider 注册表；未登记平台退化成首字符徽标。 -->
         <img
-          :src="iconFor(item)"
-          :alt="item.provider"
+          v-if="row.meta.icon"
+          :src="row.meta.icon"
+          :alt="row.meta.label"
           class="tooltip-provider-icon"
-          :class="{ 'ufo-mono-icon': item.provider === 'codex' }"
+          :class="{ 'ufo-mono-icon': row.meta.mono }"
           aria-hidden="true"
         />
+        <span v-else class="tooltip-provider-icon tooltip-provider-icon--fallback" aria-hidden="true">{{
+          providerFallbackMark(row.item.provider)
+        }}</span>
         <span
           class="tooltip-overflow-row__phase"
-          :class="`tooltip-overflow-row__phase--${colorForSession(item)}`"
-          >{{ phaseLabel(item.phase) }}</span
+          :class="`tooltip-overflow-row__phase--${colorForSession(row.item)}`"
+          >{{ phaseLabel(row.item.phase) }}</span
         >
         <!-- 提问可能很长：省略号截断，完整原文走 title。未上报提问时给一句占位，避免行内出现空洞。 -->
-        <span class="tooltip-overflow-row__prompt" :title="item.prompt ?? ''">{{ item.prompt ?? '（未上报提问）' }}</span>
+        <span class="tooltip-overflow-row__prompt" :title="row.item.prompt ?? ''">{{
+          row.item.prompt ?? '（未上报提问）'
+        }}</span>
       </div>
     </div>
 
@@ -206,13 +215,17 @@ async function dismissSession() {
     <div class="tooltip-row tooltip-row--head">
       <span class="tooltip-dot" :class="`tooltip-dot--${statusColor}`" aria-hidden="true" />
       <img
-        :src="providerIcon"
-        :alt="providerLabel"
+        v-if="provider.icon"
+        :src="provider.icon"
+        :alt="provider.label"
         class="tooltip-provider-icon"
-        :class="{ 'ufo-mono-icon': session.provider === 'codex' }"
+        :class="{ 'ufo-mono-icon': provider.mono }"
         aria-hidden="true"
       />
-      <span class="tooltip-row__value">{{ providerLabel }}</span>
+      <span v-else class="tooltip-provider-icon tooltip-provider-icon--fallback" aria-hidden="true">{{
+        providerFallbackMark(session.provider)
+      }}</span>
+      <span class="tooltip-row__value">{{ provider.label }}</span>
       <button
         class="tooltip-close"
         type="button"

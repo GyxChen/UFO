@@ -31,8 +31,8 @@ pub(crate) use hook::APP_IDENTIFIER;
 // model 子模块本身私有，但这些类型是跨模块协议（session_store 存档回填、前端快照），
 // 统一从这里 re-export，避免 session_store 直连 `status::model`。
 pub use model::{
-    now_ms, session_key, AgentEvent, Provider, SessionSnapshot, StatusSnapshot, StoredSeed,
-    TokenTotals,
+    now_ms, session_key, AgentEvent, AgentEventKind, Provider, SessionSnapshot, StatusSnapshot,
+    StoredSeed, TokenTotals,
 };
 // StatusCounts 仅 flow 测试构造 StatusSnapshot 时需要，生产路径不引用 → 只在测试构建下导出。
 #[cfg(test)]
@@ -51,6 +51,7 @@ use crate::modules::agent_status::endpoint_profiles::{
     EndpointProfileState, ENDPOINT_PROFILES_EVENT,
 };
 use crate::modules::agent_status::flow::FlowState;
+use crate::modules::agent_status::push::PushState;
 use crate::modules::agent_status::proxy::{ProxyResolverInfo, ProxyState, NONE_RESOLVER};
 use crate::modules::agent_status::session_store::{SessionStoreState, SESSION_RECORDS_EVENT};
 
@@ -69,6 +70,8 @@ pub struct StatusState {
     pub store: SessionStoreState,
     /// 信息卡拓展的流程脚本运行态：monitor 每轮调它做调度（只对存活会话涉及的 endpoint 跑脚本）。
     pub flow: FlowState,
+    /// 消息推送运行态：灯态真的变了才记信号，monitor 每轮调它做投递调度。
+    pub push: PushState,
 }
 
 impl StatusState {
@@ -80,6 +83,7 @@ impl StatusState {
         profiles: EndpointProfileState,
         store: SessionStoreState,
         flow: FlowState,
+        push: PushState,
     ) -> Self {
         Self {
             registry: Arc::new(Mutex::new(StatusRegistry::new())),
@@ -90,6 +94,7 @@ impl StatusState {
             profiles,
             store,
             flow,
+            push,
         }
     }
 
@@ -307,6 +312,10 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
         // 复用本轮已带上游信息的 snapshot；内部对同 endpoint 去抖 + 按间隔退避，空闲（无会话）时零入队。
         state.flow.tick(&snapshot, &state.profiles, now);
 
+        // 消息推送：把本轮攒下的灯态信号换成投递任务（同样只入队，发在 worker 线程）。
+        // 复用同一份带上游信息的快照；总开关关着 / 没有存活会话时它自己会早退，零出网。
+        state.push.tick(&snapshot, &state.flow, now);
+
         if now >= next_cleanup {
             let running_timeout = state
                 .running_timeout_ms
@@ -370,16 +379,23 @@ fn consume_inbox<R: Runtime>(
     let Ok(entries) = fs::read_dir(inbox) else {
         return false;
     };
-    let mut changed = false;
+    // 先把一批整体读出来，按**接收顺序**排好再逐条消费 —— `read_dir` 的顺序由文件系统
+    // 决定，与写入顺序无关。批内不排序会让迟到的「子代理收尾」先于更早的「开工」生效，
+    // 把一个仍在后台跑的执行者从活跃集合里抹掉。
+    let mut batch: Vec<(PathBuf, Option<AgentEvent>)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
             continue;
         }
-
         let parsed = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<AgentEvent>(&bytes).ok());
+        batch.push((path, parsed));
+    }
+
+    let mut changed = false;
+    for (path, parsed) in order_inbox_batch(batch) {
         match parsed {
             Some(event) => {
                 let _ = fs::remove_file(&path);
@@ -400,6 +416,37 @@ fn consume_inbox<R: Runtime>(
         }
     }
     changed
+}
+
+/// 把一批 inbox 事件排成消费顺序：**接收时刻**升序，同一毫秒按事件 id 兜底。
+///
+/// ⚠️ 排序只用接收时间，**不用** `occurred_at_ms`：那是平台自报的时间，可能缺失、
+/// 也可能与接收时间不是同一把尺子（跨机器 / 时钟偏移），拿它排序会把迟到的事件插到前面。
+/// 收件箱文件名是 `<pid>-<纳秒>`，字典序也不代表时间序，所以靠文件名同样不行。
+/// 认不出的文件（解析失败）排在最后，按路径兜底，跟着走隔离流程。
+///
+/// **局限**：平台事件多数不带 `sequence`，因此「同一执行者的先后」只能靠这里的接收顺序
+/// （加内核按 `agent_id` 分开的序号水位兜住带序号的那部分）。没有可靠源序号时，
+/// 批与批之间的乱序无法被识破 —— 这是链路上已知的边界，不假装已经 exactly-once。
+fn order_inbox_batch(
+    mut batch: Vec<(PathBuf, Option<AgentEvent>)>,
+) -> Vec<(PathBuf, Option<AgentEvent>)> {
+    batch.sort_by(|(left_path, left), (right_path, right)| {
+        let left_key = left
+            .as_ref()
+            .map(|event| (event.received_at_ms, event.event_id.clone()));
+        let right_key = right
+            .as_ref()
+            .map(|event| (event.received_at_ms, event.event_id.clone()));
+        match (left_key, right_key) {
+            (Some(left), Some(right)) => left.cmp(&right),
+            // 可解析的排在不可解析的前面：坏文件不参与顺序。
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => left_path.cmp(right_path),
+        }
+    });
+    batch
 }
 
 /// 把一条**规范事件**送进内核 —— 所有事件源的唯一入口。
@@ -426,11 +473,11 @@ fn apply_status_event<R: Runtime>(
     }
     // 只登记路径：真正的解析在 monitor 线程里增量做，
     // hook 进程每次事件都要快速返回，不能去读 MB 级的 transcript。
-    // （Codex 的 transcript 不由这里登记 —— 它的会话由 rollout 巡检器自己发现，见 codex_rollout.rs。）
-    // ⚠️ 只给 Claude 登记：Codex 的 transcript 是 rollout，由 `codex_rollout` 自己发现并读，
-    // 塞进 Claude 的 TokenTracker 只会白解析一遍（格式还不对）。Codex 的 hook 事件也带
-    // transcript_path（PermissionRequest 实测带），所以这里必须按 provider 分流。
-    if event.provider == Provider::Claude {
+    // ⚠️ 只登记「与 Claude 同构」的 transcript：Codex 的会话是 rollout，由 `codex_rollout`
+    // 自己发现并读，塞进 Claude 的 TokenTracker 只会白解析一遍（格式还不对）。Codex 的 hook
+    // 事件也带 transcript_path（PermissionRequest 实测带），所以这里必须按 provider 分流。
+    // Qoder 与 Claude 同构（同一个 `message.usage` 结构、同一套 subagents 目录），故一并登记。
+    if event.provider.uses_claude_transcript() {
         if let Some(transcript) = event.transcript_path.as_deref() {
             tokens.observe(&key, Path::new(transcript));
         }
@@ -442,11 +489,19 @@ fn apply_status_event<R: Runtime>(
         .lock()
         .map(|value| *value)
         .unwrap_or(30_000);
-    state
+    // 事件会被 `apply_event_with_seed` 移走，所以先记下它的语义（推送要用）。
+    let kind = event.kind;
+    let changed = state
         .registry
         .lock()
         .map(|mut registry| registry.apply_event_with_seed(event, retention, seed.as_ref()))
-        .unwrap_or(false)
+        .unwrap_or(false);
+    // 只有**灯真的变了**才给推送记一条信号：手机与悬浮窗因此不可能给出两个结论
+    // （推送层绝不自己判定灯态，见 `push` 模块文档）。
+    if changed {
+        state.push.note_change(&key, kind);
+    }
+    changed
 }
 
 fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, state: &StatusState) {
@@ -477,5 +532,75 @@ fn process_alive(session: &SessionSnapshot) -> Option<bool> {
             .status()
             .ok()?;
         Some(status.success())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::agent_status::status::model::{AgentEventKind, SCHEMA_VERSION};
+
+    fn event(id: &str, received_at_ms: i64) -> AgentEvent {
+        AgentEvent {
+            schema_version: SCHEMA_VERSION,
+            event_id: id.to_string(),
+            provider: Provider::Claude,
+            session_id: "s1".to_string(),
+            kind: AgentEventKind::Running,
+            event: String::new(),
+            sequence: None,
+            occurred_at_ms: None,
+            received_at_ms,
+            pid: None,
+            error_code: None,
+            outcome: None,
+            notification_type: None,
+            base_url: None,
+            prompt: None,
+            transcript_path: None,
+            waiting_reason: None,
+            agent_id: None,
+        }
+    }
+
+    /// 一批事件按**接收时刻**排序，与 `read_dir` 给出的顺序无关。
+    #[test]
+    fn inbox_batch_is_ordered_by_receive_time() {
+        let batch = vec![
+            (PathBuf::from("c.json"), Some(event("c", 300))),
+            (PathBuf::from("a.json"), Some(event("a", 100))),
+            (PathBuf::from("b.json"), Some(event("b", 200))),
+        ];
+        let ordered: Vec<String> = order_inbox_batch(batch)
+            .into_iter()
+            .filter_map(|(_, parsed)| parsed.map(|event| event.event_id))
+            .collect();
+        assert_eq!(ordered, vec!["a", "b", "c"]);
+    }
+
+    /// 同一毫秒按事件 id 兜底，保证顺序确定（不能用文件名：它是 `<pid>-<纳秒>`）。
+    #[test]
+    fn inbox_batch_ties_break_on_event_id() {
+        let batch = vec![
+            (PathBuf::from("999-9.json"), Some(event("z", 100))),
+            (PathBuf::from("1-1.json"), Some(event("a", 100))),
+        ];
+        let ordered: Vec<String> = order_inbox_batch(batch)
+            .into_iter()
+            .filter_map(|(_, parsed)| parsed.map(|event| event.event_id))
+            .collect();
+        assert_eq!(ordered, vec!["a", "z"]);
+    }
+
+    /// 认不出的文件排在最后（它不参与顺序），跟着走隔离流程。
+    #[test]
+    fn unparsable_inbox_files_are_ordered_last() {
+        let batch = vec![
+            (PathBuf::from("broken.json"), None),
+            (PathBuf::from("b.json"), Some(event("b", 200))),
+        ];
+        let ordered = order_inbox_batch(batch);
+        assert!(ordered[0].1.is_some(), "可解析的排前面");
+        assert!(ordered[1].1.is_none());
     }
 }

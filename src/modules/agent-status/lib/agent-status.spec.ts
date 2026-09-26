@@ -146,11 +146,25 @@ describe('isStatusSnapshot', () => {
     })).toBe(false)
   })
 
-  it('rejects session with invalid provider', () => {
-    expect(isStatusSnapshot({
+  it('accepts a session from an unregistered provider', () => {
+    // 这条锁住「接入新平台灯会亮」：早先这里是 claude/codex 白名单，未知 provider 的
+    // 每一帧都被**整帧**丢弃，而首帧走 invoke 不经此校验 —— 症状是灯冻结在首帧、永不更新，
+    // 比全盲更隐蔽。展示名/图标改由 provider 注册表降级，不再作为快照的准入条件。
+    const snapshot = {
       ...validSnapshot,
       sessions: [{ ...session('running'), provider: 'gpt' }],
-    })).toBe(false)
+    }
+    expect(isStatusSnapshot(snapshot)).toBe(true)
+    // 灯色只看 phase：新平台不必被认得也能出灯。
+    expect(colorForSession(snapshot.sessions[0])).toBe('green')
+  })
+
+  it('rejects session with a blank or absurdly long provider', () => {
+    // 放宽不等于不验：空串与超长串仍是脏数据（展示位放不下，也不可能是真平台名）。
+    expect(isStatusSnapshot({ ...validSnapshot, sessions: [{ ...session('running'), provider: '' }] })).toBe(false)
+    expect(
+      isStatusSnapshot({ ...validSnapshot, sessions: [{ ...session('running'), provider: 'x'.repeat(65) }] }),
+    ).toBe(false)
   })
 
   it('rejects session missing termination_confirmed', () => {

@@ -11,15 +11,14 @@
  * 原生对话框可能被拦掉，所以反馈一律走行内提示（role="status"）。
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { formatTokenCount, formatTokenMillions, tokenTotal, type Provider } from '../lib/agent-status'
+import { formatTokenCount, formatTokenMillions, tokenTotal } from '../lib/agent-status'
+import { providerFallbackMark, providerMeta } from '../lib/provider-registry'
 import { formatRecordTime, recordEndpoint, recordLocalNote, type SessionRecord } from '../lib/session-records'
 import { useAgentStatusStore } from '../stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { useSessionRecordsStore } from '../stores/sessionRecords'
 import { agentStatusSettings } from '../settings'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import claudeIcon from '@/assets/claude.svg'
-import codexIcon from '@/assets/codex.svg'
 import closeIcon from '@/assets/close.svg'
 
 const records = useSessionRecordsStore()
@@ -75,10 +74,12 @@ onMounted(() => {
   void records.start()
 })
 
-/** provider 的展示名。 */
-function providerLabel(provider: Provider): string {
-  return provider === 'claude' ? 'Claude' : 'Codex'
-}
+/**
+ * 列表行 + 各自的平台元信息，一次算好。
+ *
+ * 未登记平台要在「图标」与「首字符徽标」两种节点间分流，模板里现查两次注册表拿不到类型收窄。
+ */
+const recordRows = computed(() => records.records.map(record => ({ record, meta: providerMeta(record.provider) })))
 
 /** 按本组件配置里的单位格式化 token 总量；无统计值时返回空串（调用方省略该行）。 */
 function tokenDisplay(tokens: SessionRecord['tokens']): string {
@@ -145,7 +146,7 @@ function onClearAll() {
         还没有会话记录。会话活动后会自动存档，重启或 --resume 后也能恢复。
       </p>
       <ul v-else class="sr-list">
-        <li v-for="record in records.records" :key="record.key" class="sr-list__item">
+        <li v-for="{ record, meta } in recordRows" :key="record.key" class="sr-list__item">
           <button
             type="button"
             class="sr-list__row"
@@ -154,13 +155,17 @@ function onClearAll() {
             @click="selectedKey = record.key"
           >
             <span class="sr-list__line">
-              <!-- Codex 的图标是纯白单色，浅色主题下要反相；Claude 的橙不套。 -->
+              <!-- 平台图标与是否反相来自 provider 注册表；未登记平台退化成首字符徽标。 -->
               <img
-                :src="record.provider === 'claude' ? claudeIcon : codexIcon"
-                :alt="providerLabel(record.provider)"
+                v-if="meta.icon"
+                :src="meta.icon"
+                :alt="meta.label"
                 class="sr-list__icon"
-                :class="{ 'ufo-mono-icon': record.provider === 'codex' }"
+                :class="{ 'ufo-mono-icon': meta.mono }"
               />
+              <span v-else class="sr-list__icon sr-list__icon--fallback" aria-hidden="true">{{
+                providerFallbackMark(record.provider)
+              }}</span>
               <span v-if="liveKeys.has(record.key)" class="sr-list__live" aria-hidden="true" />
               <span class="sr-list__id">{{ record.session_id.slice(0, 8) }}</span>
               <span class="sr-list__time">{{ formatRecordTime(record.last_seen_at_ms) }}</span>
@@ -196,7 +201,7 @@ function onClearAll() {
       <div class="ufo-card__header">
         <h2 id="sr-detail-title" class="ufo-card__title">记录详情</h2>
         <span v-if="selected" class="ufo-card__hint">
-          {{ providerLabel(selected.provider) }} · {{ selected.session_id.slice(0, 12) }}
+          {{ providerMeta(selected.provider).label }} · {{ selected.session_id.slice(0, 12) }}
         </span>
       </div>
       <template v-if="selected">
