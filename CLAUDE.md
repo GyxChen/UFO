@@ -264,7 +264,7 @@ src-tauri/src/
 | 字段 | 来源 | 处理 |
 |---|---|---|
 | `base_url` | **配置文件优先**：`~/.claude/settings.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json` 的 `env.ANTHROPIC_BASE_URL`（后者覆盖前者，`cwd` 取自 hook payload）；**环境变量兜底**：`ANTHROPIC_BASE_URL`。codex 读 `$CODEX_HOME/config.toml`（见下「Codex」节），环境变量兜底 | 只按名字取该 key（`env` 块里的 token 绝不读取）；不脱敏，仅 trim；上限 4096 |
-| `prompt` | **仅** `UserPromptSubmit` payload 的 `prompt` 字段（`UserPromptExpansion` 的展开模板文本不认，否则会覆盖用户真正的提问） | trim + 截断；上限 4000 字符；同轮内后续事件继承，下次提交才覆盖 |
+| `prompt` | **仅** `UserPromptSubmit` payload 的 `prompt` 字段（`UserPromptExpansion` 的展开模板文本不认，否则会覆盖用户真正的提问）；Qoder 的 `/goal` 轮整段被换成平台模板，正文在 `<untrusted_objective>` 里 → 标签引擎 `extract` 只上报那段正文 | 先过通用标签引擎（`drop` 删标签连同内文 / `extract` 只留标签内正文），再 trim + 截断；上限 4000 字符；同轮内后续事件继承，下次提交才覆盖 |
 
 - 同轮内后续事件继承这两个值，下次提交/新事件才覆盖（`kernel.rs` 用 `.or(previous_*)`）。
 - ⚠️ 二者**明文写入** `%APPDATA%/<identifier>/status/inbox/*.json`（约 500ms 内消费删除）。提问可能含密钥或私有代码，这是已知代价。
@@ -363,7 +363,8 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 平台 hook payload ─▸ compat（status/compat/，按 provider 选适配器）─▸ AgentEvent{ kind, … } ─▸ kernel（status/kernel.rs）
 ```
 
-- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` / `qoder.rs` **互不引用**，各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取与裁剪、子代理 `agent_id`）—— 共用一张表会让改一个平台静默带偏另一个的灯。`compat/mod.rs` 只放与平台无关的通用工具（多别名取值、事件名归一化、未知事件兜底、错误短路判定、裁剪额度、`agent_id` / `transcript_path` 提取）。
+- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` / `qoder.rs` **互不引用**，各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取与裁剪、子代理 `agent_id`）—— 共用一张表会让改一个平台静默带偏另一个的灯。`compat/mod.rs` 只放与平台无关的通用工具（多别名取值、事件名归一化、未知事件兜底、错误短路判定、裁剪额度、`agent_id` / `transcript_path` 提取、**提问标签引擎** [`apply_tag_rules`]）。
+- **提问标签引擎：机制共用、策略各留各的**。平台会往 `prompt` 里塞自己的模板，两家的修法相反：Claude 是 `drop`（删 `<system-reminder>` 等标签连同内文），Qoder 是 `extract`（`/goal` 轮把 3282 字 harness 当提问上报，用户真正的目标只在 `<untrusted_objective>` 里，故只留标签内正文）。扫描/边界（成对、自闭合、未闭合、多字节安全、同名前缀不误命中）在 `compat/mod.rs`，「挑哪些动作」在平台文件里：`claude.rs::drop_rules()` 只取 `Drop` 与 `claude_*`，`qoder.rs::extract_rules()` 只取 `Extract` 与 `qoder_*` —— 拿错方向会连用户的提问一起删掉。标签集本身全平台共用一份，配置在 `.env`：`UFO_TAG_RULES`（`name:drop|name:extract`）优先，旧键 `UFO_STRIP_TAGS`（只写名字 = drop）其次，都没有就用内置默认；构建期由 `build.rs` 注入（hook 进程读不到仓库 `.env`，改完要重新构建）。`Extract` 规则默认带命中门槛（`untrusted_objective` 只在文本以 `A goal has been set.` 开头时生效）—— 没有门槛，普通提问会被判成「无正文」，提问从此不再更新。
 - **内核**：`status/kernel.rs` 只认 `AgentEventKind` **八种**语义（Running / TurnFinished / WaitingForUser / SessionFinished / SubagentStarted / SubagentStopped / Failed / Unknown）。灯态与是否绿闪由 `reduce_state` 推导（再经 `SessionState::to_phase` 与 `resolve_timing` 投影），**没有 `light_for_kind` 这个函数**。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
 - **接入新平台** = 新建 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支 —— 内核零改动，但**前端不是**：`Provider` 是闭包枚举，另有 `base_url_env_names` / `provider_base_url` / `AgentApp::from_provider` 三处穷尽 match 会编译报错点名要登记，前端展示名与图标在 `lib/provider-registry.ts` 加一行。完整改动清单、payload 契约与灯色退化档位见 `reference/doc/agent-status-platform-onboarding.md`。
 - **事件源目前有两个**：hook（inbox 里的规范 JSON）与 Codex rollout 补漏（`codex_rollout.rs` 合成 `Failed`）。两者都产出 `AgentEvent`，在 monitor 里走**同一条入口** `apply_status_event`（广播调试事件 → 登记 transcript → 取存档回填 → 进内核）。加第三个源时照着接这个函数，别绕开它。⚠️ inbox 一批事件按**接收时刻**（`received_at_ms`，同刻按事件 id）排序后再消费 —— `read_dir` 顺序由文件系统决定，批内乱序会让迟到的「子代理收尾」先于更早的「开工」生效；平台事件多数不带 `sequence`，批与批之间的乱序识别不了（已知边界）。

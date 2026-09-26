@@ -8,9 +8,9 @@ use std::{env, fs, path::{Path, PathBuf}};
 use serde_json::Value;
 
 use super::{
-    agent_id, base_url_env_names, fallback_kind, home_dir, is_user_prompt_submit,
-    normalize_base_url, normalize_event_name, number_field, payload_error, string_field,
-    transcript_path, truncate_prompt, AdaptContext, AdaptedEvent, HookAdapter,
+    agent_id, apply_tag_rules, base_url_env_names, fallback_kind, home_dir, is_user_prompt_submit,
+    normalize_base_url, normalize_event_name, number_field, payload_error, string_field, tag_rules,
+    transcript_path, truncate_prompt, AdaptContext, AdaptedEvent, HookAdapter, TagAction, TagRule,
     CLAUDE_BASE_URL_KEY,
 };
 use crate::modules::agent_status::status::model::{AgentEventKind, Provider};
@@ -243,116 +243,30 @@ fn user_prompt(event_name: &str, payload: &Value) -> Option<String> {
         .and_then(|value| normalize_prompt(&value))
 }
 
-/// 编译期由 `build.rs` 从仓库根 `.env` 注入的排除标签列表（逗号分隔）。
+/// 归一化提问内容：先剔除平台注入的元标签及其内容，再交给共用的裁剪（去空白 + 超长截断）。
 ///
-/// hook 是独立短命进程、cwd 为被监测 agent 的项目目录，运行时读不到 UFO 仓库的 `.env`，
-/// 因此列表在构建期注入；改 `.env` 需重新构建才生效。未注入时为 None。
-const STRIP_TAGS_FROM_ENV: Option<&str> = option_env!("UFO_STRIP_TAGS");
+/// 标签集与动作语法全平台共用一份（`.env` → [`super::tag_rules`]），**动作由本平台挑**：
+/// Claude 的注入是「连标签带内文一起删」，所以取 `Drop` 类；`Extract` 那类（正文只在标签里）
+/// 是别的平台的形态，在这里会被判成「没有正文」，必须挡掉。
+fn normalize_prompt(raw: &str) -> Option<String> {
+    let rules = drop_rules();
+    if rules.is_empty() {
+        return truncate_prompt(raw);
+    }
+    truncate_prompt(&apply_tag_rules(raw, &rules).unwrap_or_default())
+}
 
-/// `.env` 缺失 / 未配置时的兜底列表，与 `.env` 中的默认值保持一致。
-const DEFAULT_STRIP_TAGS: &str = "ide_opened_file,system-reminder,local-command,bash_input,bash_output,cli-message,command-message,command-name,command-args,allowed-prompts,env,permission_mode";
-
-/// 解析逗号分隔的标签名列表：去空白、丢空项、去掉误写的尖括号。
+/// 共用规则表里本适配器要用的那些 `Drop` 规则。
 ///
-/// 用户在 `.env` 里习惯写 `<ide_opened_file>`，因此 `<` / `>` 都当作分隔噪声剥掉，
-/// 只保留标签名本体；大小写原样保留（标签匹配本身大小写敏感）。
-fn parse_tag_names(raw: &str) -> Vec<String> {
-    raw.split(',')
-        .map(|item| item.trim().trim_matches(|c| c == '<' || c == '>').trim())
-        .filter(|item| !item.is_empty())
-        .map(ToString::to_string)
+/// 额外收 `claude_*` 前缀的规则（不论动作）：将来发现某个只有 Claude 会注入的标签，
+/// 在 `.env` 里加一条 `claude_xxx:drop` 就生效，不需要改代码，也不会影响别家。
+fn drop_rules() -> Vec<TagRule> {
+    tag_rules()
+        .into_iter()
+        .filter(|rule| rule.action == TagAction::Drop || rule.name.starts_with("claude_"))
         .collect()
 }
 
-/// 生效的排除标签列表：`.env`（构建期注入）优先，缺失或为空时回落到内置默认。
-fn tag_names() -> Vec<String> {
-    let from_env = STRIP_TAGS_FROM_ENV.map(parse_tag_names).unwrap_or_default();
-    if !from_env.is_empty() {
-        return from_env;
-    }
-    parse_tag_names(DEFAULT_STRIP_TAGS)
-}
-
-/// 判断 `rest`（以 `<` 开头的字节切片）是否为 `name` 的开始标签。
-///
-/// 命中条件：`<` 之后正好是 `name`，再后面紧跟 `>`、`/`（自闭合）或空白（属性位）。
-/// 这样 `<environment>` 不会被列表里的 `env` 误命中（`env` 后是 `i` 而非边界字符）。
-/// 返回 `name` 之后的字节偏移，未命中返回 None。
-fn matches_open_tag(rest: &str, name: &str) -> Option<usize> {
-    // 用 get 而非切片索引：`<` 后可能是多字节字符，按字节切会落在非字符边界上 panic。
-    let body = rest.get(1..1 + name.len())?;
-    if body != name {
-        return None;
-    }
-    let after_name = rest.get(1 + name.len()..)?;
-    let boundary = after_name.chars().next();
-    if matches!(boundary, Some('>') | Some('/')) || boundary.is_some_and(char::is_whitespace) {
-        Some(1 + name.len())
-    } else {
-        None
-    }
-}
-
-/// 计算从 `<`（`rest` 起点）开始要整段跳过的字节数，使标签及其包裹内容一并移除。
-///
-/// `after_open` 为 `<name` 之后的字节偏移（见 `matches_open_tag`）。
-/// - 优先找显式闭合 `</name>`，连同其 `>` 一起跳过 → 标签 + 内容全删。
-/// - 找不到闭合时退化为「只跳过 `<name...>` 这个起始标记」：
-///   覆盖自闭合 `<tag/>`，也避免把后面无法确认归属的正文吞掉。
-fn tag_skip_len(rest: &str, name: &str, after_open: usize) -> usize {
-    // ASCII 模式在 UTF-8 里做字节搜索是安全的：续字节恒 >= 0x80，不会误配。
-    let from = &rest[after_open..];
-    if let Some(rel) = from.find(&format!("</{name}")) {
-        let close_start = after_open + rel;
-        // 跳过 </name ...> —— 找到闭合标记后的第一个 `>`。
-        if let Some(gt) = rest[close_start..].find('>') {
-            return close_start + gt + 1;
-        }
-        return close_start;
-    }
-    // 无显式闭合：吃掉起始标记到第一个 `>`（含自闭合的 `/>`）。
-    match rest[after_open..].find('>') {
-        Some(gt) => after_open + gt + 1,
-        None => rest.len(),
-    }
-}
-
-/// 剔除 prompt 中所有「排除标签」及其包裹的整段内容（含标签内文字）。
-///
-/// 这些标签是 Claude Code 自己注入的元信息（IDE 打开的文件、系统提醒、环境说明等），
-/// 不是用户输入，会淹没真正的提问。单趟扫描：命中任一标签名即整段（标签+内容）跳过。
-/// 只处理列表中的名字，其它尖括号内容（代码里的 `<T>`、`<div>` 等）原样保留。
-fn strip_excluded_tags(text: &str, names: &[String]) -> String {
-    if text.is_empty() || names.is_empty() {
-        return text.to_string();
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while !rest.is_empty() {
-        // 找到下一个 `<` 处、且能匹配某个标签名的位置。
-        let found = rest
-            .match_indices('<')
-            .find_map(|(byte, _)| {
-                names
-                    .iter()
-                    .find_map(|name| matches_open_tag(&rest[byte..], name).map(|at| (byte, name.as_str(), at)))
-            });
-        let Some((open_at, name, after_open)) = found else {
-            out.push_str(rest);
-            break;
-        };
-        out.push_str(&rest[..open_at]);
-        let skip = tag_skip_len(&rest[open_at..], name, after_open);
-        rest = &rest[open_at + skip..];
-    }
-    out
-}
-
-/// 归一化提问内容：先剔除排除标签及其内容，再交给共用的裁剪（去空白 + 超长截断）。
-fn normalize_prompt(raw: &str) -> Option<String> {
-    let stripped = strip_excluded_tags(raw, &tag_names());
-    truncate_prompt(&stripped)
-}
 
 #[cfg(test)]
 mod tests {
@@ -368,10 +282,6 @@ mod tests {
         EventEnvelope, MAX_AGENT_ID_LEN, MAX_BASE_URL_LEN, MAX_PROMPT_CHARS,
         MAX_TRANSCRIPT_PATH_LEN,
     };
-
-    fn s(value: &str) -> String {
-        value.to_string()
-    }
 
     /// 用一份真实形态的 payload 跑一遍适配器 + 内核，断言最终灯态。
     fn light_for_payload(payload: Value, received_at_ms: i64) -> (SessionPhase, bool) {
@@ -749,66 +659,62 @@ mod tests {
         assert!(!result.ends_with('…'));
     }
 
-    #[test]
-    fn parse_tag_names_strips_brackets_and_whitespace() {
-        // .env 里通常写 <name>，尖括号与空白都要被剥掉，只留标签名。
-        let names = parse_tag_names(" <ide_opened_file> , system-reminder ,, <env> ");
-        assert_eq!(names, vec![s("ide_opened_file"), s("system-reminder"), s("env")]);
-    }
-
-    #[test]
-    fn parse_tag_names_empty_yields_nothing() {
-        assert!(parse_tag_names("").is_empty());
-        assert!(parse_tag_names("  ,,  ").is_empty());
+    /// 逐条平移自本文件旧实现的边界用例：被测函数搬到了共用引擎里，断言值一个都没改 ——
+    /// Claude 侧「删标签」的行为必须与迁移前完全一致。
+    fn drop_tags(raw: &str, names: &[&str]) -> String {
+        let rules: Vec<TagRule> = names.iter().map(|name| TagRule::drop(name)).collect();
+        apply_tag_rules(raw, &rules).unwrap_or_default()
     }
 
     #[test]
     fn strip_removes_tag_and_its_wrapped_content() {
-        let names = vec![s("ide_opened_file"), s("system-reminder")];
         let raw = "<ide_opened_file>The user opened the file hook.rs</ide_opened_file>\n请帮我排序";
-        assert_eq!(strip_excluded_tags(raw, &names), "\n请帮我排序");
+        assert_eq!(drop_tags(raw, &["ide_opened_file", "system-reminder"]), "\n请帮我排序");
     }
 
     #[test]
     fn strip_handles_multiple_and_interleaved_tags() {
-        let names = vec![s("ide_opened_file"), s("system-reminder"), s("env")];
         let raw = "A<system-reminder>x</system-reminder>B<env>y</env>C<ide_opened_file>z</ide_opened_file>D";
-        assert_eq!(strip_excluded_tags(raw, &names), "ABCD");
+        assert_eq!(drop_tags(raw, &["ide_opened_file", "system-reminder", "env"]), "ABCD");
     }
 
     #[test]
     fn strip_leaves_unlisted_tags_intact() {
         // 代码里常见的 <T>、<div> 不在列表中，绝不能被吞掉。
-        let names = vec![s("env")];
         let raw = "泛型 <T> 和 <div class=\"x\"> 原样保留";
-        assert_eq!(strip_excluded_tags(raw, &names), raw);
+        assert_eq!(drop_tags(raw, &["env"]), raw);
     }
 
     #[test]
     fn strip_requires_boundary_so_prefix_does_not_over_match() {
         // 列表里有 env，但 <environment> 不是 env 标签：前缀不能误命中。
-        let names = vec![s("env")];
         let raw = "看 <environment> 这段";
-        assert_eq!(strip_excluded_tags(raw, &names), raw);
+        assert_eq!(drop_tags(raw, &["env"]), raw);
     }
 
     #[test]
     fn strip_handles_self_closing_and_unclosed_open_tag() {
-        let names = vec![s("tag")];
         // 自闭合：整段标记吃掉，其后的文字保留。
-        assert_eq!(strip_excluded_tags("<tag/>keep", &names), "keep");
+        assert_eq!(drop_tags("<tag/>keep", &["tag"]), "keep");
         // 带属性的起始标记。
-        assert_eq!(strip_excluded_tags("<tag a=1>keep", &names), "keep");
+        assert_eq!(drop_tags("<tag a=1>keep", &["tag"]), "keep");
         // 未闭合（prompt 被截断）：只吃起始标记，不吞正文。
-        assert_eq!(strip_excluded_tags("<tag>keep me", &names), "keep me");
+        assert_eq!(drop_tags("<tag>keep me", &["tag"]), "keep me");
     }
 
     #[test]
     fn strip_is_safe_on_multibyte_content() {
         // `<` 后紧跟多字节字符时不能 panic（按字节切片需落在字符边界）。
-        let names = vec![s("env")];
         let raw = "中文 <漢> 更多 <env>drop</env> tail";
-        assert_eq!(strip_excluded_tags(raw, &names), "中文 <漢> 更多  tail");
+        assert_eq!(drop_tags(raw, &["env"]), "中文 <漢> 更多  tail");
+    }
+
+    #[test]
+    fn drop_rules_ignore_extract_tags() {
+        // 「正文只在标签里」那类是别的平台的形态：Claude 侧只取 Drop 规则，
+        // 否则一段正常提问会被按别人的模板解包，判成「没有正文」。
+        assert!(drop_rules().iter().all(|rule| rule.action == TagAction::Drop));
+        assert!(drop_rules().iter().any(|rule| rule.name == "system-reminder"));
     }
 
     #[test]

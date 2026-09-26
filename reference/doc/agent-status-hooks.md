@@ -174,6 +174,7 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 ```
 
 - 上限 4000 字符，超出截断并加 `…`（按字符计数，不截断 UTF-8）。
+- **先过通用标签引擎再裁剪**：注入内容按规则表处理，`drop` = 删标签连同内文（本平台的 `system-reminder` / `ide_opened_file` 等），`extract` = 只留标签内正文（别家平台的形态，见下方 Qoder 节）。规则表全平台共用一份（`.env` 的 `UFO_TAG_RULES` > 旧键 `UFO_STRIP_TAGS` > 内置默认），**动作由各适配器自己挑**：`claude.rs` 只取 `drop` 与 `claude_*`，`qoder.rs` 只取 `extract` 与 `qoder_*`。
 - **只认 `UserPromptSubmit`**：同轮内后续事件（`PreToolUse` 等）本就不带 `prompt`，由内核继承该值；下一次 `UserPromptSubmit` 才覆盖。即提示窗始终显示**最近一次用户手输**的提问。
 - ⚠️ `UserPromptExpansion` 紧随 `UserPromptSubmit` 触发、**同样携带 `prompt`**，但那是斜杠命令展开后的模板文本，不是用户输入。UFO 不放行它 —— 否则展开内容会立刻把用户真正的提问覆盖掉。
 
@@ -368,7 +369,9 @@ ufo --status-hook --provider qoder
 与 Claude Code **同名**，所以 UFO 侧的取法完全一致：`session_id`、`hook_event_name`、`transcript_path`、`cwd`、`prompt`（仅 `UserPromptSubmit`）、`agent_id`、`notification_type`、`reason`。Qoder 另带的字段 UFO 不采：`model`、`permission_mode`、`tool_use_id`、`tool_input`、`tool_response`、`stop_hook_active`、`last_assistant_message`、`request_set_id`、`details`、`agent_transcript_path`。
 
 - **子代理**：与 Claude 同 —— 子代理事件与主会话**共用 `session_id`**，只有 `agent_id`（实测形如 `aExplore-d2ed3f773d36e2d1`、`aPlan-a495c2600931ca7f`）分得开，主线程事件不带。内核靠它维护活跃集合。
-- **`prompt` 就是用户原文**：实测 687 条真实 `UserPromptSubmit` payload，`prompt` 里没有任何元信息标签（Qoder 的注入内容走别的通道，不混进这个字段），所以 UFO 侧只做 trim + 超长截断，**不**套用 Claude 那套元标签剔除。两个平台的适配器也因此互不引用 —— 哪天 Qoder 开始往提问里塞标签，在 `compat/qoder.rs` 里补自己的一份。
+- **`prompt` 绝大多数情况就是用户原文，但 `/goal` 那一轮不是**：实测本机 18 条真实 `UserPromptSubmit` payload，17 条与用户输入逐字符相同（Qoder 的 reminder 走别的通道，不混进这个字段）；剩下那条是**设置目标**的轮次 —— `prompt` 被整个换成 3282 字的 harness 模板（`A goal has been set.` 开头、结尾还带 `Goal state: turns used 0/20`），用户真正的目标写在 `<untrusted_objective>…</untrusted_objective>` 里。
+  UFO 侧因此在裁剪前先过通用标签引擎（见上文「prompt 的来源」），本平台取 `untrusted_objective:extract`：**只上报标签内的正文**，模板一个字都不外泄（推送与提示窗都受影响）。该规则带「文本以 `A goal has been set.` 开头」的命中门槛 —— 普通提问没有那个标签，没门槛就会被判成「无正文」，提问从此不再更新；门槛命中却仍找不到标签（模板改版 / 截断到只剩脚手架）时也判「无正文」，由内核沿用上一条用户提问，而不是把平台模板当提问推给用户。
+  ⚠️ 两个平台的适配器仍互不引用：共用的是**不认识平台的扫描机制**（`compat/mod.rs`），「删哪些标签、用什么动作」这份策略留在各自文件里。
 - **`Notification.message`**：等人时那句理由（实测如「Tool AskUserQuestion requires confirmation」），UFO 走 `waiting_reason` 显示在信息卡 head 行，**不**塞进 `prompt`。
 - **`SubagentStop.agent_transcript_path`**：子代理自己的 transcript（`<项目>/<session-id>/subagents/agent-<id>.jsonl`）。UFO 不看这个字段 —— transcript 按 `<session-id>/subagents/` 目录扫，与 Claude 同一套布局。
 

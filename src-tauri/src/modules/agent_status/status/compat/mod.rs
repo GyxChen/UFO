@@ -290,6 +290,283 @@ pub(crate) fn base_url_env_names(provider: Provider) -> &'static [&'static str] 
     }
 }
 
+/// 提问里标签的处理动作 —— 两种语义覆盖已观测到的全部形态。
+///
+/// 引擎本身不认识任何平台：动作、标签名、命中门槛都由规则表给（见 [`apply_tag_rules`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TagAction {
+    /// 删掉 `<t>…</t>` **连同内文**：平台注入的元信息（提醒、环境说明、命令模板）。
+    Drop,
+    /// 只保留 `<t>…</t>` **内的文本**，标签外一律丢弃：用户正文被平台包进标签里的形态。
+    ///
+    /// ⚠️ 与 `Drop` 恰好相反 —— 拿它删标签会连用户的提问一起丢掉，配错方向是看得见的事故。
+    Extract,
+}
+
+/// 一条标签规则。字段用 `String`：规则表要从 `.env` 注入的列表构造。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TagRule {
+    /// 标签名（不含尖括号），只允许 `[A-Za-z0-9_-]`。
+    pub name: String,
+    /// 命中后怎么处理。
+    pub action: TagAction,
+    /// 命中门槛：`None` = 任何时候都适用；`Some(前缀)` = 仅当文本以该前缀开头才适用。
+    ///
+    /// 门槛是给「正文被包进标签」那类形态用的：平台只在特定轮次（如设置目标）改写提问，
+    /// 普通轮次根本没有那个标签。没有门槛就会把普通提问整个判成「无正文」。
+    pub when_prefix: Option<String>,
+}
+
+#[cfg(test)]
+impl TagRule {
+    /// 无条件删除某标签及其内容。
+    pub(crate) fn drop(name: &str) -> Self {
+        Self { name: name.to_string(), action: TagAction::Drop, when_prefix: None }
+    }
+
+    /// 只保留某标签内的正文（不带门槛）；要门槛用 [`TagRule::when_starts_with`] 续上。
+    pub(crate) fn extract(name: &str) -> Self {
+        Self { name: name.to_string(), action: TagAction::Extract, when_prefix: None }
+    }
+
+    /// 挂上命中门槛：规则只处理以该前缀开头的文本。
+    pub(crate) fn when_starts_with(mut self, prefix: &str) -> Self {
+        self.when_prefix = Some(prefix.to_string());
+        self
+    }
+}
+
+/// 一次标签命中的结果（偏移都相对**传入的整段文本**，且恒落在字符边界上）。
+struct TagSpan {
+    /// 起始 `<` 的位置。
+    open_at: usize,
+    /// 起始标记结束后的位置（正文从这里开始）。
+    body_at: usize,
+    /// 显式闭合 `</name…>` 的起点；`None` = 没找到闭合。
+    close_at: Option<usize>,
+    /// 闭合标记之后的位置；`None` = 没找到闭合。
+    close_end: Option<usize>,
+    /// 自闭合（`<t/>`）：本来就没有正文。
+    self_closing: bool,
+}
+
+/// 标签名的合法字符集：ASCII 字母数字与 `_` `-`。
+fn is_tag_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            })
+}
+
+/// 判断 `rest`（以 `<` 开头）是否为 `name` 的开始标签，命中返回 `name` 之后的字节偏移。
+///
+/// 边界要求：`<name` 之后必须紧跟 ASCII 标点（`>`、`/`）或空白（属性位）。
+/// 这样 `<environment>` 不会被规则里的 `env` 误命中（`env` 之后是 `i`）。
+/// 用 `get` 而非裸切片：`<` 之后可能是多字节字符，按字节切会 panic。
+fn matches_open_tag(rest: &str, name: &str) -> Option<usize> {
+    let body = rest.get(1..1 + name.len())?;
+    if body != name {
+        return None;
+    }
+    let after = rest.get(1 + name.len()..)?;
+    if after
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_whitespace() || character.is_ascii_punctuation())
+    {
+        Some(1 + name.len())
+    } else {
+        None
+    }
+}
+
+/// 找到 `text` 里第一个 `<name…>` 标签，标出正文边界。
+///
+/// 起始标记以第一个 `>` 结束（`/>` 即自闭合）。「没有闭合」怎么办留给调用方，两家要的相反：
+/// - `Drop`：只跳过起始标记 —— 归属不明的正文不能顺手吞掉（删标签的既有语义）；
+/// - `Extract`：把起始标记之后全部当正文 —— 模板被截断时这是唯一一份正文。
+///
+/// ⚠️ 不支持标签内再套同名标签（实测无此形态）。`<` `>` `/` 与标签名都是 ASCII，
+/// 因此下面所有字节偏移都落在字符边界上；多字节正文只整体搬运，不按字节切。
+fn find_tag_span(text: &str, name: &str) -> Option<TagSpan> {
+    let mut offset = 0usize;
+    while let Some(relative) = text[offset..].find('<') {
+        let open_at = offset + relative;
+        let rest = &text[open_at..];
+        if let Some(after_name) = matches_open_tag(rest, name) {
+            let head = match rest[after_name..].find('>') {
+                Some(at) => after_name + at + 1,
+                // 起始标记本身被截断（没有 `>`）：后面全是正文。
+                None => rest.len(),
+            };
+            let self_closing = rest.as_bytes().get(head.saturating_sub(2)) == Some(&b'/');
+            let closing = format!("</{name}");
+            // 下面两个偏移一律换算回 text 的坐标系：调用方直接拿它们切 text 才保证字符边界。
+            let close_at = rest[head..].find(&closing).map(|at| open_at + head + at);
+            // 闭合标记自身没有 `>`（畸形输入）时停在它前面，至少标签外的正文还在。
+            let close_end = close_at.map(|at| match text[at..].find('>') {
+                Some(gt) => at + gt + 1,
+                None => at,
+            });
+            return Some(TagSpan { open_at, body_at: open_at + head, close_at, close_end, self_closing });
+        }
+        offset = open_at + 1;
+    }
+    None
+}
+
+/// 按规则表处理一段文本里的标签，返回「处理后的正文」；`None` = 没有可用正文。
+///
+/// 规则**按顺序**应用（例如先 `Drop` 掉提醒标签，再 `Extract` 正文标签）。
+/// `Extract` 是终局动作 —— 它定义了「正文在哪」，命中就直接返回，后面的规则不再跑。
+/// 规则名非法（空 / 含标签字符集外的字符）整条跳过，绝不 panic（release 是 `panic = "abort"`）。
+pub(crate) fn apply_tag_rules(text: &str, rules: &[TagRule]) -> Option<String> {
+    let mut current = text.to_string();
+    for rule in rules {
+        if !is_tag_name(&rule.name) {
+            continue;
+        }
+        // 命中门槛不满足 → 整条跳过（普通提问不能被 Extract 判成「无正文」）。
+        if rule
+            .when_prefix
+            .as_ref()
+            .is_some_and(|prefix| !current.trim_start().starts_with(prefix.as_str()))
+        {
+            continue;
+        }
+        match rule.action {
+            TagAction::Drop => current = drop_tag(&current, &rule.name),
+            TagAction::Extract => {
+                // 门槛命中却找不到标签：模板改版或被截断到只剩脚手架，
+                // 这时上报的不会是用户的话，判为「没有可用正文」。
+                return extract_tag(&current, &rule.name).filter(|body| !body.trim().is_empty());
+            }
+        }
+    }
+    (!current.trim().is_empty()).then_some(current)
+}
+
+/// 删掉文本里所有 `<name…>…</name>`（连同内文），其余原样保留。
+fn drop_tag(text: &str, name: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(span) = find_tag_span(rest, name) {
+        out.push_str(&rest[..span.open_at]);
+        // 没有显式闭合时只跳过起始标记（`body_at`），把归属不明的正文留给下一轮。
+        let next = span.close_end.unwrap_or(span.body_at);
+        rest = &rest[next.min(rest.len())..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// 取出文本里所有 `<name…>…</name>` 的内文，按出现顺序用换行拼接；一个都没有返回 None。
+fn extract_tag(text: &str, name: &str) -> Option<String> {
+    let mut pieces: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(span) = find_tag_span(rest, name) {
+        let body = match (span.close_at, span.self_closing) {
+            // 自闭合：本来就没有正文。
+            (_, true) => "",
+            (Some(close_at), false) => rest[span.body_at..close_at].trim(),
+            // 没有闭合：起始标记之后全是正文（被截断的模板）。
+            (None, false) => rest[span.body_at..].trim(),
+        };
+        if !body.is_empty() {
+            pieces.push(body.to_string());
+        }
+        let Some(next) = span.close_end else {
+            break; // 没有闭合就没有下一个标签了。
+        };
+        if next >= rest.len() {
+            break;
+        }
+        rest = &rest[next..];
+    }
+    (!pieces.is_empty()).then(|| pieces.join("\n"))
+}
+
+/// 构建期由 `build.rs` 从仓库根 `.env` 注入的配置（都是逗号分隔）。
+///
+/// hook 是独立短命进程、cwd 为被监测 agent 的项目目录，运行时读不到 UFO 仓库的 `.env`，
+/// 因此列表在构建期注入；改 `.env` 需重新构建才生效。未注入时为 None。
+const TAG_RULES_FROM_ENV: Option<&str> = option_env!("UFO_TAG_RULES");
+const STRIP_TAGS_FROM_ENV: Option<&str> = option_env!("UFO_STRIP_TAGS");
+
+/// 内置兜底：drop 的是实测会混进提问的平台元信息，extract 的是「正文被包进标签」的形态。
+const DEFAULT_DROP_TAGS: &str = "ide_opened_file,system-reminder,local-command,bash_input,bash_output,cli-message,command-message,command-name,command-args,allowed-prompts,env,permission_mode";
+const DEFAULT_EXTRACT_RULES: &str = "untrusted_objective:extract";
+
+/// 正文只在标签里、且只在特定轮次出现的标签：配上「以该前缀开头」才生效的门槛。
+///
+/// 没有门槛，普通提问（不带这个标签）就会被判成「无正文」，提问从此再也不更新。
+const GATED_EXTRACT_TAGS: &[(&str, &str)] = &[("untrusted_objective", "A goal has been set.")];
+
+/// 解析规则表文本：`name`（默认 `drop`）或 `name:drop` / `name:extract`。
+///
+/// 逗号分隔、忽略空白、剥掉误写的尖括号；非法项（动作名不认识、名字含标签字符集外的字符）
+/// 整项丢弃但不影响其它项 —— 一个坏配置不该让提问采集整个失效。
+pub(crate) fn parse_tag_rules(raw: &str) -> Vec<TagRule> {
+    let mut rules = Vec::new();
+    for item in raw.split(',') {
+        let item = item.trim().trim_matches(|c| c == '<' || c == '>').trim();
+        if item.is_empty() {
+            continue;
+        }
+        let (name, action) = match item.split_once(':') {
+            Some((name, action)) => match action.trim() {
+                "" | "drop" => (name.trim(), TagAction::Drop),
+                "extract" => (name.trim(), TagAction::Extract),
+                // 动作名写错：丢掉整项，别猜用户想干什么。
+                _ => continue,
+            },
+            None => (item, TagAction::Drop),
+        };
+        if is_tag_name(name) {
+            rules.push(TagRule { name: name.to_string(), action, when_prefix: None });
+        }
+    }
+    rules
+}
+
+/// 生效的标签规则表（所有平台共用这一份，标签集本就互不相干）。
+///
+/// 优先级：`UFO_TAG_RULES`（完整语法）> `UFO_STRIP_TAGS`（只写名字 = drop 的旧写法）>
+/// 内置默认。拿到表后做两件事：给需要门槛的 `Extract` 补上前缀，再把 `Drop` 排在前面
+/// （`Extract` 是终局动作，先跑就会挡住后面的删除规则）。
+pub(crate) fn tag_rules() -> Vec<TagRule> {
+    let mut rules = match TAG_RULES_FROM_ENV.map(parse_tag_rules) {
+        Some(from_env) if !from_env.is_empty() => from_env,
+        // 只配了旧键（清一色 drop）时，解包那类仍用内置默认 —— 否则「配了删除」会把解包能力整丢掉。
+        _ => {
+            let mut defaults = match STRIP_TAGS_FROM_ENV.map(parse_tag_rules) {
+                Some(legacy) if !legacy.is_empty() => legacy,
+                _ => parse_tag_rules(DEFAULT_DROP_TAGS),
+            };
+            defaults.extend(parse_tag_rules(DEFAULT_EXTRACT_RULES));
+            defaults
+        }
+    };
+    for rule in &mut rules {
+        if rule.action != TagAction::Extract || rule.when_prefix.is_some() {
+            continue;
+        }
+        if let Some((_, prefix)) = GATED_EXTRACT_TAGS
+            .iter()
+            .find(|(name, _)| *name == rule.name.as_str())
+        {
+            rule.when_prefix = Some((*prefix).to_string());
+        }
+    }
+    rules.sort_by_key(|rule| match rule.action {
+        TagAction::Drop => 0,
+        TagAction::Extract => 1,
+    });
+    rules
+}
+
 /// 解析用户主目录，用于定位用户级配置与代理解析器（`~/.cc-switch`）。
 ///
 /// 与 `default_status_dir` 一样直接读环境变量，不引入 dirs 依赖。
@@ -426,6 +703,159 @@ mod tests {
                 adapter.adapt(&payload, &ctx).expect("不报错").is_some(),
                 "{name} 不该被 Qoder 适配器忽略"
             );
+        }
+    }
+
+    #[test]
+    fn drop_removes_tag_and_its_wrapped_content() {
+        let rules = [TagRule::drop("system-reminder")];
+        assert_eq!(
+            apply_tag_rules("A<system-reminder>x</system-reminder>B", &rules).as_deref(),
+            Some("AB")
+        );
+        // 同名多个标签全部删掉。
+        assert_eq!(
+            apply_tag_rules("<system-reminder>a</system-reminder>keep<system-reminder>b</system-reminder>", &rules).as_deref(),
+            Some("keep")
+        );
+    }
+
+    #[test]
+    fn drop_requires_a_boundary_so_a_name_prefix_does_not_over_match() {
+        // 规则 `env` 不该命中 `<environment>`：`env` 之后是 `i`，不是边界字符。
+        let rules = [TagRule::drop("env")];
+        let text = "<environment>x</environment>";
+        assert_eq!(apply_tag_rules(text, &rules).as_deref(), Some(text));
+    }
+
+    #[test]
+    fn drop_handles_self_closing_and_unclosed_open_tag() {
+        let rules = [TagRule::drop("tag")];
+        assert_eq!(apply_tag_rules("<tag/>keep", &rules).as_deref(), Some("keep"));
+        assert_eq!(apply_tag_rules("<tag a=1>keep", &rules).as_deref(), Some("keep"));
+        assert_eq!(apply_tag_rules("<tag>keep me", &rules).as_deref(), Some("keep me"));
+    }
+
+    #[test]
+    fn drop_is_safe_on_multibyte_content() {
+        // 偏移全按 ASCII 标记算：中文再多也不能把切片切到非字符边界上（panic 会带走整个进程）。
+        let rules = [TagRule::drop("tag")];
+        assert_eq!(
+            apply_tag_rules("中文 <tag>内嵌</tag> 更多 汉字", &rules).as_deref(),
+            Some("中文  更多 汉字")
+        );
+    }
+
+    #[test]
+    fn extract_keeps_only_the_tagged_body() {
+        let text = "平台前言\n\n<obj>\n真正的提问\n</obj>\n\n后面的模板说明";
+        assert_eq!(apply_tag_rules(text, &[TagRule::extract("obj")]).as_deref(), Some("真正的提问"));
+    }
+
+    #[test]
+    fn extract_joins_multiple_tags_in_order() {
+        let text = "前<a>一</a>中<a>二</a>后";
+        assert_eq!(apply_tag_rules(text, &[TagRule::extract("a")]).as_deref(), Some("一\n二"));
+    }
+
+    #[test]
+    fn extract_gate_prefix_decides_whether_the_rule_applies() {
+        let rule = TagRule::extract("obj").when_starts_with("A goal has been set.");
+        // 前缀不命中 → 原样返回（普通提问不能被判成「无正文」）。
+        let plain = "帮我改个 bug";
+        assert_eq!(apply_tag_rules(plain, &[rule.clone()]).as_deref(), Some(plain));
+        // 前缀命中且标签在 → 只留标签内正文。
+        let wrapped = "A goal has been set.\n<obj>目标正文</obj>\nturns used 0/20";
+        assert_eq!(apply_tag_rules(wrapped, &[rule.clone()]).as_deref(), Some("目标正文"));
+        // 前缀命中但标签没了（模板改版 / 被截断）→ 判为没有可用正文，不把脚手架当提问。
+        assert_eq!(apply_tag_rules("A goal has been set.\n只剩模板", &[rule]), None);
+    }
+
+    #[test]
+    fn extract_treats_unclosed_open_tag_as_body_to_the_end() {
+        // 提问被上游额度截断时闭合标签会消失：取开标签之后全部，比丢掉整条提问更有用。
+        assert_eq!(
+            apply_tag_rules("模板\n<obj>正文开头", &[TagRule::extract("obj")]).as_deref(),
+            Some("正文开头")
+        );
+        // 只有闭标签：边界判不出，返回 None（调用方沿用上一次的值）。
+        assert_eq!(apply_tag_rules("正文</obj>", &[TagRule::extract("obj")]), None);
+    }
+
+    #[test]
+    fn rules_apply_in_order_and_extract_is_terminal() {
+        // Drop 先**整体**清扫（正文里同名的标签也一并删掉），Extract 最后取正文；
+        // 反过来排就会错：Extract 一命中即返回，后面的 Drop 永远轮不到。
+        let rules = [TagRule::drop("note"), TagRule::extract("obj")];
+        assert_eq!(
+            apply_tag_rules("<note>提醒</note><obj>正文 <note>也该删</note></obj>", &rules).as_deref(),
+            Some("正文")
+        );
+    }
+
+    #[test]
+    fn invalid_tag_names_are_skipped_without_panicking() {
+        let junk = [
+            TagRule::drop(""),
+            TagRule { name: "a<b".to_string(), action: TagAction::Drop, when_prefix: None },
+            TagRule { name: "中文".to_string(), action: TagAction::Extract, when_prefix: None },
+        ];
+        let text = "原样返回";
+        assert_eq!(apply_tag_rules(text, &junk).as_deref(), Some(text));
+    }
+
+    #[test]
+    fn empty_rules_pass_the_text_through() {
+        assert_eq!(apply_tag_rules("  提问  ", &[]).as_deref(), Some("  提问  "));
+        // 只剩空白 → 没有可用正文。
+        assert_eq!(apply_tag_rules("   \n ", &[]), None);
+    }
+
+    #[test]
+    fn parse_tag_rules_strips_brackets_and_defaults_to_drop() {
+        // `.env` 里习惯写 <name>：尖括号与空白都是分隔噪声，只留标签名本体。
+        let rules = parse_tag_rules(" <ide_opened_file> , system-reminder ,, <env> ");
+        assert_eq!(
+            rules,
+            vec![TagRule::drop("ide_opened_file"), TagRule::drop("system-reminder"), TagRule::drop("env")]
+        );
+        assert!(parse_tag_rules("").is_empty());
+        assert!(parse_tag_rules("  ,,  ").is_empty());
+    }
+
+    #[test]
+    fn parse_tag_rules_reads_actions_and_discards_bad_items() {
+        let rules = parse_tag_rules("note:extract, junk:shred, <env>, 中文tag:drop");
+        // 认得的动作生效、不认得的整项丢掉、非法标签名也丢掉，但**不影响同表其它项**。
+        assert_eq!(rules, vec![TagRule::extract("note"), TagRule::drop("env")]);
+    }
+
+    #[test]
+    fn tag_rules_gates_extract_tags_and_keeps_drop_first() {
+        let rules = tag_rules();
+        // 「正文只在标签里」那类必须带命中门槛，否则普通提问会被判成无正文。
+        let extract = rules
+            .iter()
+            .find(|rule| rule.name == "untrusted_objective")
+            .expect("默认表里有 untrusted_objective");
+        assert_eq!(extract.action, TagAction::Extract);
+        assert_eq!(extract.when_prefix.as_deref(), Some("A goal has been set."));
+        // 顺序：Drop 全在 Extract 之前（Extract 命中即返回，会挡住后面的删除规则）。
+        let first_extract = rules.iter().position(|rule| rule.action == TagAction::Extract).expect("有 Extract 规则");
+        assert!(rules[..first_extract].iter().all(|rule| rule.action == TagAction::Drop));
+        assert!(rules.iter().any(|rule| rule.name == "system-reminder"));
+    }
+
+    #[test]
+    fn engine_holds_no_platform_vocabulary() {
+        // 边界护栏：机制在共享层、策略在平台文件里 —— 引擎源码里出现任何平台名都说明搬错了。
+        let source = include_str!("mod.rs");
+        let engine = source
+            .split_once("/// 提问里标签的处理动作")
+            .and_then(|(_, rest)| rest.split_once("/// 解析用户主目录").map(|(body, _)| body))
+            .expect("标签引擎段落存在");
+        for platform in ["claude", "codex", "qoder", "Claude", "Qoder"] {
+            assert!(!engine.contains(platform), "引擎里不该出现平台名 {platform}");
         }
     }
 
