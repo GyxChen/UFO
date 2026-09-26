@@ -338,6 +338,23 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - **新命令注册三处**：`#[tauri::command]` + `permissions/status.toml` 的 `[[permission]]` + capability 文件。`get_session_records` 给三窗口（`default.json`），`delete_session_record`/`clear_session_records` 只在 `main-module-settings.json` 授权（仅 main）。
 - ⚠️ 会话记录面板同样**不能用 `window.alert`/`confirm`**（`tauri-plugin-prevent-default`），删除/清除都走两步确认 + `role="status"`。
 
+### 消息推送（ntfy / Bark，可扩展）
+
+灯态变化可以推到手机。设置页是「Agent 状态灯」的第四个二级分区「消息推送」（方案 A 版面：上半区总开关，下半区左列选服务、右列管该服务的收件方，与「信息卡拓展」同构）。
+
+- **模型只有两层**：`provider`（服务，代码注册，唯一可配字段是服务器地址）→ `channel[]`（一行「名字 + 主题」，用户增删）。Bark 的设备密钥**就是一个主题串**，与 ntfy 的可订阅主题落在同一层，因此**没有 `provider === 'bark'` 这类分支**，UI 也只有一套列表。开关是**与**关系：总开关 ∧ 服务；主题行**没有自己的开关**（不想发就删掉那一行）。
+- **服务差异只写在 provider 里**：加一个服务 = `push/providers/<id>.rs`（`server()` 给标签 / 官方默认 / 说明，`send()` 只管发）+ `build_providers()` 一行 + 前端 `lib/push-providers.ts` 一行文案，不写新组件、不改面板。⚠️ 原先的 `field_spec` 通用字段表（`FieldSpec` / `FieldKind` / `sanitize`）已删 —— 服务只剩一个地址、收件方固定两列，留着就是空转的抽象。`push-providers.spec.ts` 用 `?raw` 读 Rust 源断言两边同源，并断言 provider 里不再出现 `FieldSpec` / `secrets` / `Bearer`。
+- ⚠️ **只消费内核投影的事件语义**（`TurnFinished` / `WaitingForUser` / `Failed` / `SessionFinished`），且只在 `apply_status_event` 判定「灯真的变了」时记一条信号 —— 手机上的结论与悬浮窗的灯必然一致。推送层不得自己判定灯态。
+- **正文 = 固定一行状态 + 勾选的若干行**：`{平台} {事件}`（如「claude 在等你」）**固定发**，没有开关；`config.content` 可勾 `endpoint` / `prompt`（提问） / `script`（脚本内容） / `session_id` 四项，勾了才多一行 `标签: 值`，取不到值就整行不出现。标题前缀是常量 `PUSH_TITLE_PREFIX = "UFO"`，**不再可配**。
+- ⚠️ **四项默认全不勾**：ntfy 主题公开可订阅，提问与脚本结果可能含密钥或私有代码，出网后不受控；勾选处必须写明风险，不许做成默认值。`waiting_reason` 刻意不在选项里（它是平台注入的文案，比用户输入更易含敏感上下文）。
+- ⚠️ **二级分区别再重复左上角标题与说明**：二级 tabbar 已经说明是哪一区（`ExtensionsSection` / `RecordsSection` / `PushSection` 都只留 `aria-label`）。推送面板的版面是硬约定：上半区**按内容高**（`grid-template-rows: auto minmax(0, 1fr)`，曾写死 40%，控件删掉后会在中间留一片空白），下半区双栏吃满剩余高度、两列各自滚。
+- ⚠️ **放开卡片 `max-w-md` 必须用两个类权重**（`.push-panel > .push-master` / `.push-split > .ufo-card`，同 `.ufo-card.light-sound`）：模块 CSS 排在 `main.css` **之前**，单类覆盖与 `.ufo-card` 同权重、由加载顺序定胜负，写成 `.push-master { @apply max-w-none }` 会被压回去（实测上半区缩成 448px）。护栏：`agent-status-css.spec.ts` 扫全部 `max-w-none` 的选择器权重。
+- **主题行 = 名字 | 主题串 | 移除**（`.push-topic`，`grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto`，主题串等宽）。两个格子都是行内输入框、改完即存，所以行本身**不是 `<button>`**；移除复用「信息卡拓展」的 `.ep-list__remove` / `--armed` 两步确认。⚠️ **主题不是密钥**：它按用户要求明文显示、明文落配置，push 侧整套凭据路径（`set_push_secret` / `delete_push_secret` / `SecretView` / 级联清凭据 / `notice`）已删；`flow` 那边用自己的 `KeyringSecrets`，不受影响。代价与孤儿凭据见 guide §12。
+- **调度**：一次灯变 → 该服务下**每个主题各一条**；连续失败按主题行退避 `60s × 2^n` 封顶 600s；投递跑在专用 worker 线程串行队列。（节流与静默期已删 —— 去重靠内核的「灯变了」判定。）⚠️ agent 全停 = 零出网。
+- 地址策略与 flow **刻意不同**：push 的地址是用户显式填的固定字段，允许局域网自建服务器（flow 那边拦私网是因为跑用户脚本）。
+- 命令 2 个（`get_push_status` / `test_push_provider`）**只授权给主窗**（`main-module-settings.json` 的 `allow-manage-push`）；配置写回走外壳的 `updateModuleSettings`，不新增保存命令。`test_push_provider(provider_id)` 返回逐主题的 `PushTestOutcome`，必须是 `async` + `spawn_blocking`。
+- 契约、红线与验收见 `reference/doc/agent-status-push-guide.md`。
+
 ### 平台兼容层 / 内核层
 
 平台（Claude / Codex / …）的 hook 数据先经「兼容层」归一化，再入「内核」维护灯态；内核不认识任何平台词汇：

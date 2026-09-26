@@ -143,6 +143,12 @@ pub fn config_hook() -> ModuleConfigHook {
         }
         // 代理解析器选择也即时同步，切换后无需重启即可生效。
         status_state.proxy.set_selected(&settings.proxy_resolver);
+        // 推送配置：`push` 子块由推送模块自己解释（外壳与本文件都不认它的字段）。
+        // 主题串就存在这块里 —— 它按用户要求明文可见，不是凭据。
+        let push = crate::modules::agent_status::push::config::PushConfig::from_block(
+            config.module_settings.get(MODULE_ID),
+        );
+        status_state.push.configure(push);
     })
 }
 

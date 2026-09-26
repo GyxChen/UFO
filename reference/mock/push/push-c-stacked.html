@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 推送方案 C · 纵向堆叠卡片</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./push.css" />
+    <style>
+      /* 方案 C 特有：不做双栏，服务卡纵向堆叠、可分别展开，整页滚动（像「常规」那一页） */
+      .page { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #4f4f4f transparent; }
+      .page::-webkit-scrollbar { width: 8px; }
+      .page::-webkit-scrollbar-thumb { background: #4f4f4f; border-radius: 999px; }
+      .stack { display: grid; gap: 12px; }
+      .svc { display: grid; gap: 12px; }
+      .svc__head { display: flex; align-items: center; gap: 12px; }
+      .svc__name { margin: 0; font-size: 14px; font-weight: 600; }
+      .svc__sub { margin: 0; font-size: 11.5px; color: var(--ufo-faint); }
+      .svc__tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+      .item { display: grid; gap: 10px; padding: 12px; border-radius: 10px; border: 1px solid var(--ufo-border); background: var(--ufo-input); }
+      .item__head { display: flex; align-items: center; gap: 10px; }
+      .item__name { font-size: 13px; font-weight: 600; }
+      .item__hint { margin-left: auto; font-size: 11.5px; color: var(--ufo-faint); }
+      .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+      .collapsed .item { display: none; }
+      .collapsed .item--keep { display: grid; }
+      .secret { font-family: var(--font-mono); font-size: 12px; color: var(--ufo-muted); }
+    </style>
+  </head>
+  <body>
+    <div class="note">
+      <h1>方案 C · 纵向堆叠卡片（整页滚动）</h1>
+      <p>
+        最朴素的一版：总开关在上，两个服务各自一张卡、可分别展开收起，收件方在卡内继续往下堆。
+        窄窗口最稳，也容得下「两个服务同时摊开对照着配」。代价是配到第三个收件方就要滚动。
+        返回<a href="./push-index.html">四套方案对比</a>。
+      </p>
+    </div>
+
+    <div class="window">
+      <div class="titlebar">
+        <span class="titlebar__dot" aria-hidden="true"></span><span>UFO</span>
+        <button class="titlebar__close" type="button" aria-label="隐藏到托盘">—</button>
+      </div>
+      <nav class="tabs-primary" aria-label="主导航">
+        <button type="button">悬浮窗设置</button>
+        <button type="button" aria-selected="true">Agent 状态灯</button>
+      </nav>
+      <nav class="tabs-secondary" aria-label="Agent 状态灯设置分区">
+        <button type="button">常规</button>
+        <button type="button">信息卡拓展</button>
+        <button type="button">会话记录</button>
+        <button type="button" aria-selected="true">消息推送</button>
+      </nav>
+
+      <div class="page">
+        <section class="card master" aria-labelledby="push-master">
+          <div class="master__head">
+            <span class="switch" role="switch" aria-checked="true" tabindex="0" aria-labelledby="push-master"></span>
+            <div class="master__text">
+              <h2 class="master__title" id="push-master">消息推送</h2>
+              <p class="master__sub">总开关。关掉后所有渠道一律不发，也不会碰网络。</p>
+            </div>
+            <span class="card__hint">2 个服务 · 4 个收件方</span>
+          </div>
+          <div class="master__body">
+            <div class="field">
+              <span class="field__label" id="push-events">哪些事发通知（可多选）</span>
+              <div class="chips" role="group" aria-labelledby="push-events">
+                <button type="button" class="chip" aria-pressed="true"><span class="dot dot--green" aria-hidden="true"></span>一轮跑完，等你输入</button>
+                <button type="button" class="chip" aria-pressed="true"><span class="dot dot--yellow" aria-hidden="true"></span>在等你授权 / 回答</button>
+                <button type="button" class="chip" aria-pressed="true"><span class="dot dot--red" aria-hidden="true"></span>本轮出错</button>
+                <button type="button" class="chip" aria-pressed="false"><span class="dot dot--grey" aria-hidden="true"></span>会话结束</button>
+              </div>
+            </div>
+            <div class="grid-3">
+              <div class="field">
+                <label class="field__label" for="push-throttle">同一会话重复提醒间隔</label>
+                <select id="push-throttle"><option>不限制</option><option selected>5 分钟</option><option>15 分钟</option></select>
+                <span class="field__help">防止「等你授权」反复弹导致手机被刷屏</span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="push-quiet">静默时段（本地时间）</label>
+                <input id="push-quiet" value="23:00 – 07:30" />
+                <span class="field__help">静默期内只记账不发送</span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="push-prefix">标题前缀</label>
+                <input id="push-prefix" value="UFO" class="mono" />
+                <span class="field__help">多设备 / 多人共用主题时用来区分来源</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="stack">
+          <section class="card svc" aria-labelledby="svc-ntfy">
+            <div class="svc__head">
+              <div>
+                <h3 class="svc__name" id="svc-ntfy">ntfy</h3>
+                <p class="svc__sub mono">服务器 https://ntfy.sh · 主题公开可读</p>
+              </div>
+              <div class="svc__tools">
+                <span class="tag tag--on">已启用</span>
+                <span class="switch" role="switch" aria-checked="true" tabindex="0" aria-label="启用服务 ntfy"></span>
+                <button type="button" class="btn btn--ghost btn--sm">收起</button>
+              </div>
+            </div>
+
+            <div class="item">
+              <div class="item__head">
+                <span class="item__name">家里电脑</span>
+                <span class="tag">优先级 4</span>
+                <span class="switch" role="switch" aria-checked="true" tabindex="0" aria-label="启用 家里电脑"></span>
+                <span class="item__hint">最近发送 12:31:04 · 成功</span>
+              </div>
+              <div class="form-grid">
+                <div class="field"><label class="field__label" for="c-n-1">收件名称</label><input id="c-n-1" value="家里电脑" /></div>
+                <div class="field"><label class="field__label" for="c-n-2">主题</label><input id="c-n-2" class="mono" value="ufo-gyx-home" /></div>
+                <div class="field"><label class="field__label" for="c-n-3">访问令牌</label><input id="c-n-3" class="mono" value="••••••••••3f9a" /><span class="field__help secret">只存凭据管理器，不落配置文件</span></div>
+              </div>
+              <div class="actions">
+                <button type="button" class="btn btn--sm">发一条测试</button>
+                <button type="button" class="btn btn--danger btn--sm">确认移除</button>
+                <span class="status-line status-line--ok" role="status">已发送（201，41 ms）</span>
+              </div>
+            </div>
+
+            <div class="item">
+              <div class="item__head">
+                <span class="item__name">公司群机器人</span>
+                <span class="tag">优先级 3</span>
+                <span class="switch" role="switch" aria-checked="false" tabindex="0" aria-label="启用 公司群机器人"></span>
+                <span class="item__hint">已停用</span>
+              </div>
+              <div class="form-grid">
+                <div class="field"><label class="field__label" for="c-n-4">收件名称</label><input id="c-n-4" value="公司群机器人" /></div>
+                <div class="field"><label class="field__label" for="c-n-5">主题</label><input id="c-n-5" class="mono" value="ufo-team-alerts" /></div>
+                <div class="field"><label class="field__label" for="c-n-6">访问令牌</label><input id="c-n-6" placeholder="留空 = 该主题不需要令牌" /></div>
+              </div>
+              <div class="actions">
+                <button type="button" class="btn btn--sm" disabled>发一条测试</button>
+                <button type="button" class="btn btn--ghost btn--sm">移除</button>
+              </div>
+            </div>
+
+            <div class="actions"><button type="button" class="btn btn--ghost btn--sm">＋ 添加 ntfy 收件方</button></div>
+          </section>
+
+          <section class="card svc collapsed" aria-labelledby="svc-bark">
+            <div class="svc__head">
+              <div>
+                <h3 class="svc__name" id="svc-bark">Bark</h3>
+                <p class="svc__sub mono">服务器 https://api.day.app · 一个令牌只对应一台设备</p>
+              </div>
+              <div class="svc__tools">
+                <span class="tag tag--on">已启用</span>
+                <span class="switch" role="switch" aria-checked="true" tabindex="0" aria-label="启用服务 Bark"></span>
+                <button type="button" class="btn btn--ghost btn--sm">展开（2）</button>
+              </div>
+            </div>
+            <div class="item item--keep">
+              <div class="item__head">
+                <span class="item__name">iPhone 15</span>
+                <span class="tag">铃声 alarm</span>
+                <span class="switch" role="switch" aria-checked="true" tabindex="0" aria-label="启用 iPhone 15"></span>
+                <span class="item__hint">最近发送 12:31:05 · 成功</span>
+              </div>
+              <p class="sub" style="margin:0">收起状态，点「展开」改设备令牌与铃声。</p>
+            </div>
+            <div class="item"><div class="item__head"><span class="item__name">iPad mini</span><span class="switch" role="switch" aria-checked="true" tabindex="0"></span></div></div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

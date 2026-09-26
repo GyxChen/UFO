@@ -8,11 +8,7 @@ import EndpointExtensionPanel from '../panels/EndpointExtensionPanel.vue'
 </script>
 
 <template>
-  <section class="module-page__section module-page__section--fill" aria-labelledby="agent-status-extension-title">
-    <h2 id="agent-status-extension-title" class="module-page__section-title">信息卡拓展</h2>
-    <p class="module-page__section-hint">
-      按 endpoint 配流程脚本，脚本返回值会作为扩展字段显示在状态灯的悬停信息卡上。
-    </p>
+  <section class="module-page__section module-page__section--fill" aria-label="信息卡拓展">
     <EndpointExtensionPanel />
   </section>
 </template>

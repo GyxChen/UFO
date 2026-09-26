@@ -1219,3 +1219,270 @@
   @apply m-0 text-[12px] leading-relaxed;
   color: var(--ufo-muted);
 }
+
+/*
+ * ── 消息推送面板（「Agent 状态灯」设置页的「消息推送」分区）──
+ *
+ * 版面 = 方案 A（`reference/mock/push/push-a-dual-pane.html`）：
+ * 上半区总开关按内容高，下半区双栏主从吃满剩余高度、两列各自滚。
+ * ⚠️ 占满高度靠完整的高度链：`.main-window--wide → .module-page--fill → .module-page__section--fill
+ * → .push-panel`，少一环就会退化成整页滚动、右列被挤出去（同 `.ep-panel` 的坑）。
+ */
+.push-panel {
+  @apply grid w-full min-h-0 flex-1 gap-3;
+  /* 上半区只剩总开关 + 两组勾选，按内容高就够了；剩余高度全给双栏（那里才是要滚的列表）。 */
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-auto-rows: max-content;
+}
+
+/* 卡片基类带 max-w-md（给单列表单用），这里两栏都要撑满自己的网格列。
+   ⚠️ 与 `.ufo-card.light-sound`（见上文）同一条规矩：放开限宽的选择器必须有两类权重 ——
+   模块 CSS 排在 `main.css` **之前**，单类 `.push-master` 与 `.ufo-card` 同权重会被后者压回去，
+   实际结果就是上半区缩回 448px 而下半区两栏正常（它们本来就是 `.push-split > .ufo-card`）。 */
+.push-panel > .push-master,
+.push-split > .ufo-card {
+  @apply max-w-none;
+}
+
+.push-split {
+  @apply grid min-h-0 items-stretch gap-3;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 1.6fr);
+}
+
+@media (max-width: 720px) {
+  .push-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── 上半区：总开关 ── */
+/* 同下面两张卡：`content-start` 让标题行与勾选区贴顶排，不被 grid 的 stretch 拉开。 */
+.push-master {
+  @apply my-0 flex flex-col content-start gap-3;
+}
+
+.push-master__head {
+  @apply flex flex-wrap items-center gap-3;
+}
+
+.push-master__text {
+  @apply grid min-w-0 gap-0.5;
+}
+
+.push-master__title {
+  @apply m-0 text-[14px] font-semibold;
+  color: var(--ufo-text);
+}
+
+.push-master__sub {
+  @apply m-0 text-[12px];
+  color: var(--ufo-muted);
+}
+
+/* 「N 个服务 · M 个收件方」贴到行尾，窄栏时整体换行而不是挤压文案。 */
+.push-master__meta {
+  @apply ml-auto text-right text-[11.5px];
+  color: color-mix(in srgb, var(--ufo-muted) 78%, transparent);
+}
+
+.push-master__body {
+  @apply grid gap-3 border-t pt-3;
+  border-color: var(--ufo-border);
+}
+
+/* 总开关关掉时全局条件仍可编辑（用户常常先配好再打开），只压一点对比度提示「现在不发」。 */
+.push-master__body--dim {
+  opacity: 0.55;
+}
+
+/* 事件勾选：颜色点 + 文字（⚠️ 不只靠颜色传达语义）。 */
+.push-chips {
+  @apply flex flex-wrap gap-2;
+}
+
+.push-chip {
+  @apply flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] transition-colors duration-150 ease-out;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border-strong);
+  color: var(--ufo-muted);
+}
+
+.push-chip[aria-pressed='true'] {
+  background: var(--ufo-accent-soft);
+  border-color: transparent;
+  color: var(--ufo-text);
+}
+
+.push-dot {
+  @apply inline-block h-2 w-2 shrink-0 rounded-full;
+  background: color-mix(in srgb, var(--ufo-muted) 78%, transparent);
+}
+
+.push-dot--green {
+  background: var(--ufo-status-green);
+}
+
+.push-dot--yellow {
+  background: var(--ufo-status-yellow);
+}
+
+.push-dot--red {
+  background: var(--ufo-status-red);
+}
+
+.push-dot--grey {
+  background: color-mix(in srgb, var(--ufo-muted) 78%, transparent);
+}
+
+/* ── 下半区左列：服务列表 ── */
+/* ⚠️ `content-start` 不是可有可无：卡片基类 `.ufo-card` 是 grid，且 `main.css` 排在模块 CSS **之后**，
+   所以这里的 `flex` 实际没争过它（同文件头那两条限宽规矩）；而 grid 的 `align-content: normal`
+   会把自动行 stretch 开，标题行与内容之间就被拉出一大片空白。钉成贴顶排（flex 下也无害）。 */
+.push-list-card,
+.push-detail {
+  @apply my-0 flex min-h-0 min-w-0 flex-col content-start;
+}
+
+.push-list {
+  @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
+  @apply grid content-start gap-1.5;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
+}
+
+.push-list__item {
+  @apply flex items-stretch;
+}
+
+/* 行 = 可点的选择区 + 服务开关；开关不能嵌在 button 里，所以行本身是 div。 */
+.push-list__row {
+  @apply flex min-w-0 flex-1 items-center gap-2 rounded-[10px] border px-3 py-2;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+}
+
+.push-list__row--active {
+  border-color: var(--ufo-accent);
+  background: color-mix(in srgb, var(--ufo-accent) 8%, var(--ufo-surface-2));
+}
+
+.push-list__pick {
+  @apply grid min-w-0 flex-1 cursor-pointer gap-0.5 border-0 bg-transparent p-0 text-left;
+  color: inherit;
+}
+
+.push-list__name {
+  @apply truncate text-[13px] font-semibold;
+  color: var(--ufo-text);
+}
+
+.push-list__sub {
+  @apply truncate text-[11.5px];
+  color: color-mix(in srgb, var(--ufo-muted) 78%, transparent);
+}
+
+.push-list__side {
+  @apply flex shrink-0 items-center gap-2;
+}
+
+.push-tag {
+  @apply whitespace-nowrap rounded-full border px-2 py-0.5 text-[10.5px] font-semibold;
+  background: var(--ufo-surface);
+  border-color: var(--ufo-border);
+  color: var(--ufo-muted);
+}
+
+.push-list__empty,
+.push-list__foot {
+  @apply m-0 text-[12px];
+  color: color-mix(in srgb, var(--ufo-muted) 78%, transparent);
+}
+
+.push-list__foot {
+  @apply shrink-0 pt-2;
+}
+
+/* 列表与底部说明不参与压缩：只有列表自身在固定高度内滚。 */
+.push-list-card > :not(.push-list) {
+  @apply shrink-0;
+}
+
+/* ── 下半区右列：服务器地址 + 主题列表（整列自滚） ── */
+.push-detail {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
+}
+
+/* 卡片头一行：左边标题与说明，右边是整块的「统一测试」。
+   ⚠️ 基类 `.ufo-card__header` 是 `items-baseline`（为「标题 + 一行文字提示」设计的），
+   塞进按钮后要改成垂直居中；用双类提权，别指望文件顺序（同 `.ufo-card.light-sound`）。 */
+.ufo-card__header.push-detail__head {
+  @apply items-center;
+}
+
+.push-detail__heading {
+  @apply grid min-w-0 gap-0.5;
+}
+
+.push-detail__body {
+  @apply grid min-h-0 content-start gap-3;
+}
+
+/* 主题列表：一行三列 —— 名字 | 主题串 | 删除。
+   主题串给最宽的份额（它最长、要逐字核对），名字其次，删除按钮按内容。 */
+.push-topics {
+  @apply m-0 grid list-none content-start gap-2 p-0;
+}
+
+/* 三格等高：行**不设** `align-items: center`（grid 默认就是 stretch），否则右侧删除按钮
+   只会按自身内容高缩成一小块，占不满整行。 */
+.push-topic {
+  @apply grid gap-2 rounded-[10px] border p-2;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border);
+}
+
+/* 名字与主题串都是行内输入框（改完即存），所以行本身不是 button —— 按钮里不能套交互控件。 */
+.push-topic input {
+  @apply min-w-0 rounded-[10px] border px-2.5 py-2 text-[13px];
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border-strong);
+  color: var(--ufo-text);
+}
+
+.push-topic input:focus {
+  border-color: var(--ufo-accent);
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 1px;
+}
+
+/* 主题串用等宽：它是一串标识符（Bark 还是凭据形状的密钥），等宽才看得清有没有粘进空格。
+   ⚠️ 必须带 `.push-topic input` 前缀：上面那条元素选择器是 (0,1,1)，单类 `.push-topic__value` 只有
+   (0,1,0)，会被「继承来的字体」压回去（mock 里实测到过）。 */
+.push-topic input.push-topic__value {
+  @apply truncate;
+  font-family: var(--font-mono);
+}
+
+.push-detail__foot {
+  @apply flex items-center gap-2;
+}
+
+/* ── 行内反馈（禁用原生对话框，一律 role=status） ── */
+.push-status {
+  @apply m-0 min-h-[18px] text-[12px];
+  color: var(--ufo-muted);
+}
+
+.push-status--ok {
+  color: var(--ufo-accent);
+}
+
+.push-status--err {
+  color: var(--ufo-danger);
+}

@@ -61,6 +61,20 @@ function decl(body: string, property: string): string {
   return match ? match[1].trim() : ''
 }
 
+/**
+ * 定位某个位置所属规则的选择器（用于「按声明反查选择器」的护栏）。
+ * 往回找到最近的 `{`，再往前取到上一个 `}` / `{`（`@media` 块头）之间的文本，注释剥掉。
+ */
+function selectorAt(css: string, index: number): string {
+  const open = css.lastIndexOf('{', index)
+  if (open < 0) return ''
+  const start = Math.max(css.lastIndexOf('}', open), css.lastIndexOf('{', open - 1), -1)
+  return css
+    .slice(start + 1, open)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .trim()
+}
+
 describe('模块样式 · Agent 状态灯一格放得下', () => {
   it('fills the cell with the status light, bigger than the badge', () => {
     const css = agentStatusCss()
@@ -309,6 +323,78 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
       )
       // 放大后仍要留在格子里。
       expect(ring).toBeLessThanOrEqual(100)
+    }
+  })
+})
+
+/**
+ * 设置页「卡片撑满列宽」护栏。
+ *
+ * 卡片基类 `.ufo-card`（`src/assets/main.css`）自带 `max-w-md`，而模块 CSS 打包时排在入口 CSS
+ * **之前**（见构建产物里 `.ufo-card{…max-width:var(--container-md)…}` 的位置）。
+ * 于是单类覆盖（`.push-master`）与它同权重、由加载顺序决定胜负 —— 实测「消息推送」上半区
+ * 就这样缩回 448px，而下半区两栏正常（它们本来就是 `.push-split > .ufo-card`）。
+ * 用户明确要求过「上面的板块占满全部宽度」，所以把权重口径钉在这里，不让它靠顺序碰运气。
+ */
+describe('模块样式 · 设置页卡片必须真的撑满列宽', () => {
+  it('gives every max-w-none override at least two class tokens', () => {
+    // 注释里也写着选择器与类名，先剥掉再扫，否则会把注释文字当成选择器。
+    const css = agentStatusCss().replace(/\/\*[\s\S]*?\*\//g, '')
+    const weak: string[] = []
+    let overrides = 0
+
+    for (const match of css.matchAll(/max-w-none/g)) {
+      overrides += 1
+      const selector = selectorAt(css, match.index)
+      const list = selector
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean)
+      // 「两类权重」= 选择器里至少两个类令牌（`.ufo-card.xxx` 或「容器 > .ufo-card」）。
+      if (!list.length || list.some(item => (item.match(/\./g) ?? []).length < 2)) {
+        weak.push(selector || '<找不到选择器>')
+      }
+    }
+
+    // 用例本身别退化成「一条都没扫到」的空断言。
+    expect(overrides, '模块 CSS 里应有放开卡片限宽的覆盖').toBeGreaterThanOrEqual(4)
+    expect(weak, `这些 max-w-none 撑不过 .ufo-card 的限宽：${weak.join(' / ')}`).toEqual([])
+  })
+
+  it('keeps the push master card full width and the two-zone row split', () => {
+    const css = agentStatusCss()
+    // 上半区（总开关那块）必须是「容器 > 卡片」形式才撑得满（见上一条权重用例）。
+    const override = blockAfter(css, '.push-panel > .push-master,')
+    expect(override, '推送上半区必须有 .push-panel > .push-master 的限宽覆盖').toContain('max-w-none')
+
+    // 上半区按内容高：它只剩两组勾选，写死 40% 会在中间留一大片空白。
+    expect(decl(ruleBody(css, '.push-panel'), 'grid-template-rows')).toBe('auto minmax(0, 1fr)')
+  })
+
+  it('lays the topic rows out as name / topic / remove', () => {
+    const css = agentStatusCss()
+    // 三列：名字 | 主题串 | 删除按钮。用户要求「左边名字、右边主题值」，顺序反了就错。
+    // 三格等高：行不能写 `align-items: center`，否则右侧删除按钮按自身内容高缩成一小块、占不满整行。
+    const topic = ruleBody(css, '.push-topic')
+    expect(decl(topic, 'grid-template-columns')).toBe('minmax(0, 1fr) minmax(0, 1.4fr) auto')
+    expect(decl(topic, 'align-items'), '删除按钮要靠 grid 默认的 stretch 占满行高').not.toBe('center')
+    // 主题串等宽：要能逐字核对（也便于发现粘进去的空格）。
+    // ⚠️ 选择器必须带 `.push-topic input` 前缀才压得住那条元素选择器（(0,1,1) > 单类 (0,1,0)），
+    // 写成单类就是「声明看着对、渲染没生效」—— mock 里踩过。
+    expect(decl(ruleBody(css, '.push-topic input.push-topic__value'), 'font-family')).toBe(
+      'var(--font-mono)'
+    )
+  })
+
+  it('pins the push cards to the top instead of stretching their rows', () => {
+    const css = agentStatusCss()
+    // 卡片基类 `.ufo-card` 是 grid，而 `main.css` 排在模块 CSS **之后**：卡里写的 `flex` 争不过它。
+    // grid 的 `align-content` 默认是 normal（= stretch），两行内容会被拉出一大片空白 ——
+    // 所以三张卡都必须显式钉 `content-start`。
+    for (const header of ['.push-master {', '.push-list-card,']) {
+      const body = blockAfter(css, header)
+      expect(body, `${header} 规则必须存在`).not.toBe('')
+      expect(body, `${header} 必须钉住 content-start（否则 grid 会把行拉开）`).toContain('content-start')
     }
   })
 })

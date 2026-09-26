@@ -40,7 +40,10 @@ use crate::modules::agent_status::endpoint_profiles::{
 use crate::modules::agent_status::proxy::{endpoint_identity, is_loopback_endpoint};
 use crate::modules::agent_status::status::{now_ms, SessionSnapshot, StatusSnapshot};
 
-pub use api::{HttpFetch, KeyringSecrets, SecretSource, UreqFetch};
+pub use api::{HttpFetch, HttpRequest, KeyringSecrets, SecretSource, UreqFetch};
+// HttpResponse 只被推送 / 流程的测试假件用来构造响应，生产路径不引用 → 只在测试构建下导出。
+#[cfg(test)]
+pub use api::HttpResponse;
 pub use config::{validate_secret_name, FlowConfig};
 pub use runner::{FlowField as RunnerField, RunOutcome as RunnerOutcome, SessionContext};
 
@@ -196,6 +199,19 @@ impl FlowState {
             .get(endpoint_id)?
             .outcome
             .clone()
+    }
+
+    /// 读某个会话当前的脚本结果（推送正文用）。
+    ///
+    /// 只查这一个 key —— ⚠️ 别改用 [`snapshot()`]：那会整表 clone 含脚本正文，
+    /// 而调用方每轮都要跑一次（与 tick 同频），纯浪费。
+    pub fn session_fields(&self, session_key: &str) -> Option<Vec<FlowField>> {
+        let inner = self.inner.lock().ok()?;
+        let endpoint_id = inner.session_endpoints.get(session_key)?;
+        let state = inner.endpoints.get(endpoint_id)?;
+        // 与 build_snapshot 同一口径：只有「成功且有字段」才算有结果。
+        let outcome = state.outcome.as_ref().filter(|outcome| outcome.ok)?;
+        (!outcome.fields.is_empty()).then(|| outcome.fields.clone())
     }
 
     /// 取共享的 KV 缓存句柄（worker 建 FlowHost 时用，跨运行复用）。

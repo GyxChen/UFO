@@ -32,6 +32,9 @@ use modules::agent_status::{
         set_flow_secret, spawn_worker, FlowState, KeyringSecrets, UreqFetch,
     },
     proxy::ProxyState,
+    push::{
+        get_push_status, spawn_worker as spawn_push_worker, test_push_provider, PushState,
+    },
     session_store::{
         clear_session_records, delete_session_record, get_session_records, SessionStoreState,
     },
@@ -110,6 +113,12 @@ pub fn run() {
             // 信息卡拓展的流程脚本运行态：HTTP/密钥用生产实现；worker 线程消费调度队列。
             let (flow_state, flow_rx) =
                 FlowState::new(Arc::new(UreqFetch), Arc::new(KeyringSecrets));
+            // 消息推送运行态：只注入 HTTP 后端（主题不是密钥，没有凭据要管），投递跑在自己的 worker 线程。
+            // 启动初值直接从已存配置取（与 flow 一样，配置钩子此刻还空转）。
+            let (push_state, push_rx) = PushState::with_production_backends();
+            push_state.configure(modules::agent_status::push::config::PushConfig::from_block(
+                module_state.snapshot().module_settings.get("agent-status"),
+            ));
             let status_state = StatusState::new(
                 status_dir,
                 agent_status_settings.completed_retention_ms,
@@ -118,16 +127,19 @@ pub fn run() {
                 profile_state.clone(),
                 session_store.clone(),
                 flow_state.clone(),
+                push_state.clone(),
             );
             app.manage(status_state.clone());
             app.manage(profile_state);
             app.manage(session_store);
             app.manage(module_state);
             app.manage(flow_state.clone());
+            app.manage(push_state.clone());
             app.manage(WeatherState::default());
             app.manage(TodoState::default());
             spawn_monitor(app.handle().clone(), status_state);
             spawn_worker(app.handle().clone(), flow_state, flow_rx);
+            spawn_push_worker(app.handle().clone(), push_state, push_rx);
 
             let show = MenuItemBuilder::with_id(SHOW_MENU_ITEM, "打开主体").build(app)?;
             let hide = MenuItemBuilder::with_id(HIDE_MENU_ITEM, "隐藏主体").build(app)?;
@@ -232,6 +244,8 @@ pub fn run() {
             run_flow_test,
             set_flow_secret,
             delete_flow_secret,
+            get_push_status,
+            test_push_provider,
             get_session_records,
             delete_session_record,
             clear_session_records,

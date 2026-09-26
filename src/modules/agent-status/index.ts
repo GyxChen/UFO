@@ -11,6 +11,7 @@ import AgentStatusModule from './AgentStatusModule.vue'
 import AgentStatusTooltip from './AgentStatusTooltip.vue'
 import ExtensionsSection from './sections/ExtensionsSection.vue'
 import GeneralSection from './sections/GeneralSection.vue'
+import PushSection from './sections/PushSection.vue'
 import RecordsSection from './sections/RecordsSection.vue'
 import { agentStatusDemand } from './demand'
 // 模块自己的视图 / 信息卡 / 设置面板样式（从 src/assets/main.css 切出来），随模块一起加载。
@@ -33,17 +34,18 @@ export const agentStatusModule: FloatingModuleDefinition = {
   component: AgentStatusModule,
   demand: agentStatusDemand,
   /**
-   * 设置页分三个分区，主窗口会把它渲染成组件页顶部的二级 tabbar。
+   * 设置页分四个分区，主窗口会把它渲染成组件页顶部的二级 tabbar。
    * 顺序 = tab 顺序；第一个（常规）是点齿轮 / 点悬浮窗进来时落到的默认分区。
    *
    * 切法不是「一个配置项一个 tab」，而是按**版面**切：短表单全收在「常规」一页，
-   * 需要占满高度、左右各自滚动的两个面板各占一个 tab（`fill: true`）。
+   * 需要占满高度、左右各自滚动的三个面板各占一个 tab（`fill: true`）。
    */
   settings: {
     sections: [
       { id: 'general', label: '常规', component: GeneralSection },
       { id: 'extensions', label: '信息卡拓展', component: ExtensionsSection, fill: true },
       { id: 'records', label: '会话记录', component: RecordsSection, fill: true },
+      { id: 'push', label: '消息推送', component: PushSection, fill: true },
     ],
   },
   /**

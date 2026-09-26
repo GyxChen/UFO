@@ -31,8 +31,8 @@ pub(crate) use hook::APP_IDENTIFIER;
 // model 子模块本身私有，但这些类型是跨模块协议（session_store 存档回填、前端快照），
 // 统一从这里 re-export，避免 session_store 直连 `status::model`。
 pub use model::{
-    now_ms, session_key, AgentEvent, Provider, SessionSnapshot, StatusSnapshot, StoredSeed,
-    TokenTotals,
+    now_ms, session_key, AgentEvent, AgentEventKind, Provider, SessionSnapshot, StatusSnapshot,
+    StoredSeed, TokenTotals,
 };
 // StatusCounts 仅 flow 测试构造 StatusSnapshot 时需要，生产路径不引用 → 只在测试构建下导出。
 #[cfg(test)]
@@ -51,6 +51,7 @@ use crate::modules::agent_status::endpoint_profiles::{
     EndpointProfileState, ENDPOINT_PROFILES_EVENT,
 };
 use crate::modules::agent_status::flow::FlowState;
+use crate::modules::agent_status::push::PushState;
 use crate::modules::agent_status::proxy::{ProxyResolverInfo, ProxyState, NONE_RESOLVER};
 use crate::modules::agent_status::session_store::{SessionStoreState, SESSION_RECORDS_EVENT};
 
@@ -69,6 +70,8 @@ pub struct StatusState {
     pub store: SessionStoreState,
     /// 信息卡拓展的流程脚本运行态：monitor 每轮调它做调度（只对存活会话涉及的 endpoint 跑脚本）。
     pub flow: FlowState,
+    /// 消息推送运行态：灯态真的变了才记信号，monitor 每轮调它做投递调度。
+    pub push: PushState,
 }
 
 impl StatusState {
@@ -80,6 +83,7 @@ impl StatusState {
         profiles: EndpointProfileState,
         store: SessionStoreState,
         flow: FlowState,
+        push: PushState,
     ) -> Self {
         Self {
             registry: Arc::new(Mutex::new(StatusRegistry::new())),
@@ -90,6 +94,7 @@ impl StatusState {
             profiles,
             store,
             flow,
+            push,
         }
     }
 
@@ -307,6 +312,10 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
         // 复用本轮已带上游信息的 snapshot；内部对同 endpoint 去抖 + 按间隔退避，空闲（无会话）时零入队。
         state.flow.tick(&snapshot, &state.profiles, now);
 
+        // 消息推送：把本轮攒下的灯态信号换成投递任务（同样只入队，发在 worker 线程）。
+        // 复用同一份带上游信息的快照；总开关关着 / 没有存活会话时它自己会早退，零出网。
+        state.push.tick(&snapshot, &state.flow, now);
+
         if now >= next_cleanup {
             let running_timeout = state
                 .running_timeout_ms
@@ -480,11 +489,19 @@ fn apply_status_event<R: Runtime>(
         .lock()
         .map(|value| *value)
         .unwrap_or(30_000);
-    state
+    // 事件会被 `apply_event_with_seed` 移走，所以先记下它的语义（推送要用）。
+    let kind = event.kind;
+    let changed = state
         .registry
         .lock()
         .map(|mut registry| registry.apply_event_with_seed(event, retention, seed.as_ref()))
-        .unwrap_or(false)
+        .unwrap_or(false);
+    // 只有**灯真的变了**才给推送记一条信号：手机与悬浮窗因此不可能给出两个结论
+    // （推送层绝不自己判定灯态，见 `push` 模块文档）。
+    if changed {
+        state.push.note_change(&key, kind);
+    }
+    changed
 }
 
 fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, state: &StatusState) {
