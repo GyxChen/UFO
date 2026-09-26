@@ -83,6 +83,11 @@ struct WatchedSession {
     files: HashMap<PathBuf, FileCursor>,
     /// 最近一次产出的灯态：只在变化时产出事件。
     last_kind: Option<AgentEventKind>,
+    /// 正在等待用户回答的 `request_user_input` 调用 id。
+    ///
+    /// 等回答期间文件仍可能追加 reasoning / token_count 等普通活动；只要这个 id 还在，
+    /// 就不能用「文件在长 = 绿灯」兜底，必须等配对的 `function_call_output` 回来。
+    pending_user_input_call_id: Option<String>,
     /// 最近一次产出事件的时间（毫秒）。
     last_emit_ms: i64,
     /// 活动类事件的序号：保证 `event_id` 唯一（内核按 `provider:session:event_id` 去重）。
@@ -151,6 +156,7 @@ impl CodexRolloutWatcher {
                     base_url: None,
                     files: HashMap::new(),
                     last_kind: None,
+                    pending_user_input_call_id: None,
                     last_emit_ms: now,
                     activity_seq: 0,
                     tokens: TokenTotals::default(),
@@ -185,13 +191,25 @@ impl CodexRolloutWatcher {
         let mut identity: Option<codex::CodexSessionMeta> = None;
         let mut totals: Option<TokenTotals> = None;
         let mut seeded_prompt: Option<String> = None;
+        let mut pending_user_input_call_id = session.pending_user_input_call_id.clone();
         cursor.lines.read_appended(path, |line| {
-            if !codex::cares(line) {
+            let waiting_output = pending_user_input_call_id
+                .as_deref()
+                .is_some_and(|call_id| codex::is_function_call_output_for(line, call_id));
+            if !codex::cares(line) && !waiting_output {
                 return;
             }
             let Some(record) = codex::classify_rollout_line(line) else {
                 return;
             };
+            if record.name == "request_user_input" {
+                pending_user_input_call_id = record.call_id.clone();
+            }
+            if record.name == "user_input_output"
+                && pending_user_input_call_id.as_deref() == record.call_id.as_deref()
+            {
+                pending_user_input_call_id = None;
+            }
             if let Some(meta) = record.session {
                 identity = Some(meta);
             }
@@ -206,6 +224,7 @@ impl CodexRolloutWatcher {
             }
         });
         cursor.tokens = totals;
+        session.pending_user_input_call_id = pending_user_input_call_id;
         session.prompt = seeded_prompt.or_else(|| session.prompt.clone());
         // ⚠️ 刻意**不**用历史定灯态基线：`session_meta` 本身就映射成「绿」，若拿它当基线，
         // 会话里第一条新记录（`task_started` → 绿）会被当成重复而吃掉，新会话的灯永远不出来。
@@ -228,6 +247,8 @@ impl CodexRolloutWatcher {
             let mut saw_lifecycle = false;
             // 本轮的提问：**独立于 `observed`**，因为它常与生命周期记录同轮出现（见字段注释）。
             let mut prompt: Option<String> = None;
+            // 本文件的等待状态：闭包里还要借用 `session.files`，先用局部变量承载，扫完再写回。
+            let mut pending_user_input_call_id = session.pending_user_input_call_id.clone();
             let mut grew = false;
             let mut vanished: Vec<PathBuf> = Vec::new();
 
@@ -246,12 +267,23 @@ impl CodexRolloutWatcher {
                 cursor.lines.read_appended(path, |line| {
                     // 文件在长 = 有活动（大记录不必解析，见 compat::codex::cares）。
                     grew = true;
-                    if !codex::cares(line) {
+                    let waiting_output = pending_user_input_call_id
+                        .as_deref()
+                        .is_some_and(|call_id| codex::is_function_call_output_for(line, call_id));
+                    if !codex::cares(line) && !waiting_output {
                         return;
                     }
                     let Some(record) = codex::classify_rollout_line(line) else {
                         return;
                     };
+                    if record.name == "request_user_input" {
+                        pending_user_input_call_id = record.call_id.clone();
+                    }
+                    if record.name == "user_input_output"
+                        && pending_user_input_call_id.as_deref() == record.call_id.as_deref()
+                    {
+                        pending_user_input_call_id = None;
+                    }
                     if let Some(meta) = record.session {
                         identity = Some(meta);
                     }
@@ -281,6 +313,7 @@ impl CodexRolloutWatcher {
                     session.base_url = codex::codex_base_url(meta.cwd.as_deref().map(Path::new));
                 }
             }
+            session.pending_user_input_call_id = pending_user_input_call_id;
 
             if !vanished.is_empty() {
                 for path in &vanished {
@@ -319,7 +352,11 @@ impl CodexRolloutWatcher {
             //   长命令期间 Codex 一条记录都不写，不续命会被内核的「执行中超时」清掉；
             //   即便本批有生命周期记录，只要它没构成新灯态（基线已相同）也要续这条命。
             if emitting.is_empty() {
-                if grew && !saw_lifecycle && session.last_kind != Some(AgentEventKind::Running) {
+                if session.pending_user_input_call_id.is_none()
+                    && grew
+                    && !saw_lifecycle
+                    && session.last_kind != Some(AgentEventKind::Running)
+                {
                     emitting.push(Observed {
                         kind: AgentEventKind::Running,
                         name: "activity",
@@ -580,6 +617,29 @@ mod tests {
         record(serde_json::json!({"type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": turn, "reason": "interrupted"}}))
     }
 
+    fn request_user_input(call_id: &str) -> String {
+        record(serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "request_user_input",
+                "call_id": call_id,
+                "arguments": "{\"questions\":[]}",
+            },
+        }))
+    }
+
+    fn function_call_output(call_id: &str) -> String {
+        record(serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": "{\"answers\":[]}",
+            },
+        }))
+    }
+
     fn token_count(input: u64, cached: u64, output: u64) -> String {
         record(serde_json::json!({"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {
             "input_tokens": input, "cached_input_tokens": cached, "cache_write_input_tokens": 0,
@@ -699,6 +759,94 @@ mod tests {
         assert_eq!(updates.events[0].event, "task_started");
         assert_eq!(updates.events[1].kind, AgentEventKind::WaitingForUser);
         assert_eq!(updates.events[1].event, "turn_aborted");
+    }
+
+    #[test]
+    fn request_user_input_keeps_waiting_until_matching_output() {
+        let (mut watcher, path, _temp, _home) = watched(&session_meta(SESSION, None));
+        append(&path, &task_started("t1"));
+        assert_eq!(watcher.poll_at(2_000).events[0].kind, AgentEventKind::Running);
+
+        append(&path, &request_user_input("call-ask-1"));
+        let waiting = watcher.poll_at(2_500);
+        assert_eq!(waiting.events.len(), 1);
+        assert_eq!(waiting.events[0].kind, AgentEventKind::WaitingForUser);
+        assert_eq!(waiting.events[0].event, "request_user_input");
+        assert_eq!(
+            watcher.sessions[&session_key(Provider::Codex, SESSION)]
+                .pending_user_input_call_id
+                .as_deref(),
+            Some("call-ask-1")
+        );
+
+        // 输出正文里提到等待中的 call id，不代表这就是它的 output；必须精确匹配 call_id 字段。
+        append(
+            &path,
+            &record(serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call-other",
+                    "output": "mentions call-ask-1 in the body",
+                },
+            })),
+        );
+        assert!(watcher.poll_at(2_650).events.is_empty());
+        assert_eq!(
+            watcher.sessions[&session_key(Provider::Codex, SESSION)]
+                .pending_user_input_call_id
+                .as_deref(),
+            Some("call-ask-1")
+        );
+
+        // 等待回答期间会继续写 reasoning / token_count 等普通活动，不能兜底刷绿。
+        append(&path, &token_count(100, 0, 10));
+        assert!(watcher.poll_at(2_700).events.is_empty());
+
+        // 其它 tool call 的输出不能解除这次等待。
+        append(&path, &function_call_output("call-other"));
+        assert!(watcher.poll_at(2_800).events.is_empty());
+        assert_eq!(
+            watcher.sessions[&session_key(Provider::Codex, SESSION)]
+                .pending_user_input_call_id
+                .as_deref(),
+            Some("call-ask-1")
+        );
+
+        // 同一个 call_id 的输出才代表用户回答已回来，继续执行。
+        append(&path, &function_call_output("call-ask-1"));
+        let resumed = watcher.poll_at(2_900);
+        assert_eq!(resumed.events.len(), 1);
+        assert_eq!(resumed.events[0].kind, AgentEventKind::Running);
+        assert_eq!(resumed.events[0].event, "user_input_output");
+        assert_eq!(
+            watcher.sessions[&session_key(Provider::Codex, SESSION)]
+                .pending_user_input_call_id,
+            None
+        );
+    }
+
+    #[test]
+    fn request_user_input_and_output_in_one_poll_keep_order() {
+        let (mut watcher, path, _temp, _home) = watched(&session_meta(SESSION, None));
+        append(&path, &task_started("t1"));
+        assert_eq!(watcher.poll_at(2_000).events[0].kind, AgentEventKind::Running);
+
+        append(&path, &request_user_input("call-ask-1"));
+        append(&path, &function_call_output("call-ask-1"));
+        let updates = watcher.poll_at(2_500);
+        let kinds: Vec<_> = updates
+            .events
+            .iter()
+            .map(|event| (event.kind, event.event.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (AgentEventKind::WaitingForUser, "request_user_input"),
+                (AgentEventKind::Running, "user_input_output"),
+            ]
+        );
     }
 
     /// 中断后用户接着发了下一条、且「恢复执行 + 一轮跑完」落在同一次巡检里：

@@ -124,6 +124,8 @@ pub(crate) struct CodexRecord {
     pub name: &'static str,
     /// turn 级记录带的轮 id（去重键）；非 turn 级记录为 None。
     pub turn_id: Option<String>,
+    /// 工具调用的唯一 id：`request_user_input` 用它配对自己的 `function_call_output`。
+    pub call_id: Option<String>,
     /// `task_complete` 的错误正文。
     pub error_code: Option<String>,
     /// `user_message` 的提问文本。
@@ -145,7 +147,7 @@ pub(crate) fn cares(line: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(line) else {
         return false;
     };
-    const MARKERS: [&str; 7] = [
+    const MARKERS: [&str; 8] = [
         "\"session_meta\"",
         "\"task_started\"",
         "\"task_complete\"",
@@ -155,14 +157,46 @@ pub(crate) fn cares(line: &[u8]) -> bool {
         "\"user_message\"",
         "\"UserMessage\"",
         "\"token_count\"",
+        // Codex 向用户提问时写的是 response_item/function_call，不是 event_msg。
+        // 少认这一个标记，等待回答期间就会被当成普通活动刷回绿灯。
+        "\"request_user_input\"",
     ];
     MARKERS.iter().any(|marker| text.contains(marker))
+}
+
+/// 轻量判断：这一行是否是某个等待中 tool call 的 `function_call_output`。
+///
+/// 普通函数输出可能很大，不能直接进 [`cares`] 的全量解析集合；只有当前会话确实在等
+/// `request_user_input` 时，才先做一次子串检查，命中后再交给完整 JSON 解析确认。
+pub(crate) fn is_function_call_output_for(line: &[u8], call_id: &str) -> bool {
+    let Ok(text) = std::str::from_utf8(line) else {
+        return false;
+    };
+    if !text.contains("\"function_call_output\"") || !text.contains(call_id) {
+        return false;
+    }
+    let Ok(record) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    record.get("type").and_then(Value::as_str) == Some("response_item")
+        && record
+            .get("payload")
+            .and_then(|payload| payload.get("type"))
+            .and_then(Value::as_str)
+            == Some("function_call_output")
+        && record
+            .get("payload")
+            .and_then(|payload| payload.get("call_id"))
+            .and_then(Value::as_str)
+            == Some(call_id)
 }
 
 /// 把一行 rollout 记录归一化成 [`CodexRecord`]；认不出返回 None。
 ///
 /// 灯态映射（与 CLAUDE.md 的指示灯约定一致）：
 /// - `session_meta` / `task_started` / `user_message` → 🟢 Running
+/// - `request_user_input` → 🟡 WaitingForUser（等用户回答，不应显示绿灯）
+/// - 配对的 `function_call_output` → 🟢 Running（用户回答后继续执行）
 /// - `task_complete` 无 error → 🟢 绿闪 → 🟡 Waiting（一轮正常结束，对话未结束）
 /// - `task_complete` 带 error → 🔴 Failed
 /// - `turn_aborted` → 🟡 Waiting 不闪（用户中断，等你下一条）
@@ -173,6 +207,16 @@ pub(crate) fn classify_rollout_line(line: &[u8]) -> Option<CodexRecord> {
     let record: Value = serde_json::from_slice(line).ok()?;
     let outer = record.get("type").and_then(Value::as_str)?;
     let payload = record.get("payload");
+    let simple = |kind: AgentEventKind, name: &'static str| CodexRecord {
+        kind: Some(kind),
+        name,
+        turn_id: None,
+        call_id: None,
+        error_code: None,
+        prompt: None,
+        session: None,
+        tokens: None,
+    };
 
     if outer == "session_meta" {
         let payload = payload?;
@@ -180,6 +224,7 @@ pub(crate) fn classify_rollout_line(line: &[u8]) -> Option<CodexRecord> {
             kind: Some(AgentEventKind::Running),
             name: "session_meta",
             turn_id: None,
+            call_id: None,
             error_code: None,
             prompt: None,
             session: Some(CodexSessionMeta {
@@ -189,21 +234,30 @@ pub(crate) fn classify_rollout_line(line: &[u8]) -> Option<CodexRecord> {
         });
     }
 
+    if outer == "response_item" {
+        let payload = payload?;
+        let item_type = payload.get("type").and_then(Value::as_str)?;
+        if item_type == "function_call"
+            && payload.get("name").and_then(Value::as_str) == Some("request_user_input")
+        {
+            let mut record = simple(AgentEventKind::WaitingForUser, "request_user_input");
+            record.turn_id = string_at(payload, "turn_id");
+            record.call_id = string_at(payload, "call_id");
+            return Some(record);
+        }
+        if item_type == "function_call_output" {
+            let mut record = simple(AgentEventKind::Running, "user_input_output");
+            record.call_id = string_at(payload, "call_id");
+            return Some(record);
+        }
+        return None;
+    }
+
     if outer != "event_msg" {
         return None;
     }
     let payload = payload?;
     let inner = payload.get("type").and_then(Value::as_str)?;
-
-    let simple = |kind: AgentEventKind, name: &'static str| CodexRecord {
-        kind: Some(kind),
-        name,
-        turn_id: None,
-        error_code: None,
-        prompt: None,
-        session: None,
-        tokens: None,
-    };
 
     match inner {
         // 桌面端的提问走这里：`item_completed` 里包一个 `UserMessage` item，
@@ -568,6 +622,39 @@ mod tests {
     }
 
     #[test]
+    fn request_user_input_waits_for_the_user_and_carries_call_id() {
+        let raw = line(serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "request_user_input",
+                "call_id": "call-ask-1",
+                "arguments": "{\"questions\":[]}",
+            },
+        }));
+        let record = classify_rollout_line(&raw).expect("认得出");
+        assert_eq!(record.kind, Some(AgentEventKind::WaitingForUser));
+        assert_eq!(record.name, "request_user_input");
+        assert_eq!(record.call_id.as_deref(), Some("call-ask-1"));
+    }
+
+    #[test]
+    fn function_call_output_is_running_and_carries_call_id() {
+        let raw = line(serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call-ask-1",
+                "output": "{\"answers\":[]}",
+            },
+        }));
+        let record = classify_rollout_line(&raw).expect("认得出");
+        assert_eq!(record.kind, Some(AgentEventKind::Running));
+        assert_eq!(record.name, "user_input_output");
+        assert_eq!(record.call_id.as_deref(), Some("call-ask-1"));
+    }
+
+    #[test]
     fn token_count_carries_totals_without_moving_the_light() {
         let raw = line(serde_json::json!({
             "type": "event_msg",
@@ -624,6 +711,10 @@ mod tests {
             line(serde_json::json!({"type": "event_msg", "payload": {"type": "task_complete"}})),
             line(serde_json::json!({"type": "event_msg", "payload": {"type": "turn_aborted"}})),
             line(serde_json::json!({"type": "event_msg", "payload": {"type": "token_count"}})),
+            line(serde_json::json!({
+                "type": "response_item",
+                "payload": {"type": "function_call", "name": "request_user_input", "call_id": "c1"},
+            })),
         ] {
             assert!(cares(&raw), "{:?}", String::from_utf8_lossy(&raw));
         }
