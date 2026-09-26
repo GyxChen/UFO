@@ -464,11 +464,11 @@ fn apply_status_event<R: Runtime>(
     }
     // 只登记路径：真正的解析在 monitor 线程里增量做，
     // hook 进程每次事件都要快速返回，不能去读 MB 级的 transcript。
-    // （Codex 的 transcript 不由这里登记 —— 它的会话由 rollout 巡检器自己发现，见 codex_rollout.rs。）
-    // ⚠️ 只给 Claude 登记：Codex 的 transcript 是 rollout，由 `codex_rollout` 自己发现并读，
-    // 塞进 Claude 的 TokenTracker 只会白解析一遍（格式还不对）。Codex 的 hook 事件也带
-    // transcript_path（PermissionRequest 实测带），所以这里必须按 provider 分流。
-    if event.provider == Provider::Claude {
+    // ⚠️ 只登记「与 Claude 同构」的 transcript：Codex 的会话是 rollout，由 `codex_rollout`
+    // 自己发现并读，塞进 Claude 的 TokenTracker 只会白解析一遍（格式还不对）。Codex 的 hook
+    // 事件也带 transcript_path（PermissionRequest 实测带），所以这里必须按 provider 分流。
+    // Qoder 与 Claude 同构（同一个 `message.usage` 结构、同一套 subagents 目录），故一并登记。
+    if event.provider.uses_claude_transcript() {
         if let Some(transcript) = event.transcript_path.as_deref() {
             tokens.observe(&key, Path::new(transcript));
         }

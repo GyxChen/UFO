@@ -346,7 +346,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 平台 hook payload ─▸ compat（status/compat/，按 provider 选适配器）─▸ AgentEvent{ kind, … } ─▸ kernel（status/kernel.rs）
 ```
 
-- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` 各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取、子代理 `agent_id`）。跨平台共用的（字段多别名取值、事件名归一化、提问裁剪、`agent_id` 判定…）放 `compat/mod.rs`。
+- **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` / `qoder.rs` **互不引用**，各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取与裁剪、子代理 `agent_id`）—— 共用一张表会让改一个平台静默带偏另一个的灯。`compat/mod.rs` 只放与平台无关的通用工具（多别名取值、事件名归一化、未知事件兜底、错误短路判定、裁剪额度、`agent_id` / `transcript_path` 提取）。
 - **内核**：`status/kernel.rs` 只认 `AgentEventKind` **八种**语义（Running / TurnFinished / WaitingForUser / SessionFinished / SubagentStarted / SubagentStopped / Failed / Unknown）。灯态与是否绿闪由 `reduce_state` 推导（再经 `SessionState::to_phase` 与 `resolve_timing` 投影），**没有 `light_for_kind` 这个函数**。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
 - **接入新平台** = 新建 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支 —— 内核零改动，但**前端不是**：`Provider` 是闭包枚举，另有 `base_url_env_names` / `provider_base_url` / `AgentApp::from_provider` 三处穷尽 match 会编译报错点名要登记，前端展示名与图标在 `lib/provider-registry.ts` 加一行。完整改动清单、payload 契约与灯色退化档位见 `reference/doc/agent-status-platform-onboarding.md`。
 - **事件源目前有两个**：hook（inbox 里的规范 JSON）与 Codex rollout 补漏（`codex_rollout.rs` 合成 `Failed`）。两者都产出 `AgentEvent`，在 monitor 里走**同一条入口** `apply_status_event`（广播调试事件 → 登记 transcript → 取存档回填 → 进内核）。加第三个源时照着接这个函数，别绕开它。⚠️ inbox 一批事件按**接收时刻**（`received_at_ms`，同刻按事件 id）排序后再消费 —— `read_dir` 顺序由文件系统决定，批内乱序会让迟到的「子代理收尾」先于更早的「开工」生效；平台事件多数不带 `sequence`，批与批之间的乱序识别不了（已知边界）。

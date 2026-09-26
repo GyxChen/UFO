@@ -154,7 +154,7 @@ $exe = "E:\workspace\AIProjects\ufo\src-tauri\target\debug\tauri-app.exe"
 
 想不污染真实状态目录，加 `--status-dir <临时目录>`；⚠️ 但 `hook-debug.log` 仍写在**默认**目录（见 §1 的 📌）。
 
-反例自查：`--provider <还没登记进 UFO 的名字>` 期望 **exit 1** 并打印 `missing --provider claude|codex`。这说明 `Provider` 是闭包枚举 —— 新平台必须先按 §8 登记，光配 hook 是接不进来的。
+反例自查：`--provider <还没登记进 UFO 的名字>` 期望 **exit 1**，并把传入值原样回显成 `unknown --provider "qcoder"`（报错不列举平台清单 —— 那份清单每接一个平台就会失真一次）。这说明 `Provider` 是闭包枚举 —— 新平台必须先按 §8 登记，光配 hook 是接不进来的。
 
 ---
 

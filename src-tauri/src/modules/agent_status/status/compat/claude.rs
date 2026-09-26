@@ -167,6 +167,9 @@ fn provider_base_url(provider: Provider, cwd: Option<&Path>) -> Option<String> {
             CLAUDE_BASE_URL_KEY,
         ),
         Provider::Codex => None,
+        // 穷尽 match 强制的分支（`Provider` 是闭包枚举）。Qoder 的 endpoint 不由这里读：
+        // 它没有可配的 endpoint 字段，走 `compat::qoder` 自己的身份常量。本文件与它互不引用。
+        Provider::Qoder => None,
     };
 
     from_settings

@@ -33,12 +33,14 @@ const LOOPBACK_CANONICAL: &str = "127.0.0.1";
 
 /// 把一个 agent provider 归一成解析器可用的 app 标识。
 ///
-/// 目前只有 claude / codex 两路（与 [`Provider`] 一一对应），
-/// 用独立枚举而非复用 Provider，方便解析器按需支持更多 agent app 而不改状态协议。
+/// 用独立枚举而非复用 [`Provider`]，方便解析器按需支持更多 agent app 而不改状态协议。
+/// ⚠️ 「有这一路」≠「一定被某款代理接管」：如 Qoder 由自己的云网关路由，cc-switch 里
+/// 没有它的行，解析器对它只能返回 None（见 `ccswitch::app_key`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AgentApp {
     Claude,
     Codex,
+    Qoder,
 }
 
 impl AgentApp {
@@ -46,6 +48,7 @@ impl AgentApp {
         match provider {
             Provider::Claude => Self::Claude,
             Provider::Codex => Self::Codex,
+            Provider::Qoder => Self::Qoder,
         }
     }
 }

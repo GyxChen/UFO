@@ -69,10 +69,15 @@ fn chrono_local_now() -> String {
 }
 
 fn run_status_hook(args: &[String]) -> Result<(), String> {
-    let provider = argument_value(args, "--provider")
-        .or_else(|| argument_value(args, "--status-hook"))
-        .and_then(|value| Provider::parse(&value))
-        .ok_or_else(|| "missing --provider claude|codex".to_string())?;
+    // 报错文案刻意不列举已接入平台（`claude|codex|…`）：那份清单每接一个平台就会失真一次，
+    // 而把用户实际写的值原样回显出来，对排障更管用（拼错 vs 没登记，一眼分得开）。
+    let requested = argument_value(args, "--provider").or_else(|| argument_value(args, "--status-hook"));
+    let provider = requested
+        .as_deref()
+        .and_then(Provider::parse)
+        .ok_or_else(|| {
+            format!("unknown --provider {:?}", requested.unwrap_or_else(|| "<missing>".to_string()))
+        })?;
     let status_dir = argument_value(args, "--status-dir")
         .map(PathBuf::from)
         .or_else(|| env::var_os("UFO_STATUS_DIR").map(PathBuf::from))

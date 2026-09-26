@@ -7,6 +7,7 @@ pub const SCHEMA_VERSION: u16 = 1;
 pub enum Provider {
     Claude,
     Codex,
+    Qoder,
 }
 
 impl Provider {
@@ -14,18 +15,30 @@ impl Provider {
         match value.to_ascii_lowercase().as_str() {
             "claude" | "claude-code" => Some(Self::Claude),
             "codex" | "codex-cli" => Some(Self::Codex),
+            "qoder" | "qoder-cli" => Some(Self::Qoder),
             _ => None,
         }
     }
 
-    /// provider 的稳定字符串写法（`"claude"` / `"codex"`）。
+    /// provider 的稳定字符串写法（`"claude"` / `"codex"` / `"qoder"`）。
     ///
     /// 会话 key、存档表里的 `provider` 列都用它，避免各处各写一份 match。
     pub fn as_str(&self) -> &'static str {
         match self {
             Provider::Claude => "claude",
             Provider::Codex => "codex",
+            Provider::Qoder => "qoder",
         }
+    }
+
+    /// 该平台的会话日志是否与 Claude Code 的 transcript 同构（能直接喂给 `TokenTracker`）。
+    ///
+    /// Qoder 实测共用同一套记录字段（`type` = assistant、`message.usage` 的四个 token 键名）
+    /// 与同一套目录布局（`<项目>/<session-id>.jsonl` + `<session-id>/subagents/*.jsonl`），
+    /// 所以 token 统计复用同一个解析器，不必另写一套。
+    /// Codex 的会话是 rollout 文件、格式不同，由 `codex_rollout` 自己读，**不得**登记进来。
+    pub fn uses_claude_transcript(&self) -> bool {
+        matches!(self, Provider::Claude | Provider::Qoder)
     }
 }
 
@@ -280,6 +293,9 @@ mod tests {
         assert_eq!(Provider::parse("codex"), Some(Provider::Codex));
         assert_eq!(Provider::parse("codex-cli"), Some(Provider::Codex));
         assert_eq!(Provider::parse("CODEX"), Some(Provider::Codex));
+        assert_eq!(Provider::parse("qoder"), Some(Provider::Qoder));
+        assert_eq!(Provider::parse("qoder-cli"), Some(Provider::Qoder));
+        assert_eq!(Provider::parse("QODER"), Some(Provider::Qoder));
     }
 
     #[test]
@@ -293,6 +309,15 @@ mod tests {
     fn session_key_includes_provider_namespace() {
         assert_eq!(session_key(Provider::Claude, "abc"), "claude:abc");
         assert_eq!(session_key(Provider::Codex, "abc"), "codex:abc");
+        assert_eq!(session_key(Provider::Qoder, "abc"), "qoder:abc");
+    }
+
+    #[test]
+    fn only_claude_shaped_transcripts_go_to_the_token_tracker() {
+        // Qoder 的会话日志与 Claude 同构，复用 TokenTracker；Codex 是 rollout，格式不同。
+        assert!(Provider::Claude.uses_claude_transcript());
+        assert!(Provider::Qoder.uses_claude_transcript());
+        assert!(!Provider::Codex.uses_claude_transcript());
     }
 
     #[test]

@@ -6,11 +6,11 @@ export const AGENT_STATUS_EVENT = 'agent-status'
 /**
  * 事件来源平台。
  *
- * 保留 `'claude' | 'codex'` 两个字面量拿到补全，同时容纳尚未登记进
+ * 列出已接入平台的字面量拿到补全，同时容纳尚未登记进
  * {@link providerMeta} 的新平台串（`(string & {})` 是"宽口径但仍列得出已知项"的写法）。
  * ⚠️ 展示名/图标一律走注册表，不要在这里加字面量后又在视图里写三元。
  */
-export type Provider = 'claude' | 'codex' | (string & {})
+export type Provider = 'claude' | 'codex' | 'qoder' | (string & {})
 export type SessionPhase = 'running' | 'waiting' | 'error' | 'unknown' | 'completed'
 export type StatusColor = 'green' | 'yellow' | 'red'
 

@@ -74,7 +74,11 @@ impl CcSwitchResolver {
 
     /// 取该 app 的代理状态；过期 / 无缓存时读库刷新并写回。
     fn proxy_info(&self, db: &Path, app: AgentApp) -> AppProxyInfo {
-        let key = app_key(app);
+        // cc-switch 的库里只有 claude / codex 两类 app 行；不由它接管的 agent（Qoder）
+        // 没有可反查的对象，读一次库也是白读，直接放弃。
+        let Some(key) = app_key(app) else {
+            return AppProxyInfo { listen_addr: None, upstream: None };
+        };
         if let Ok(cache) = self.cache.lock() {
             if let Some(entry) = cache.get(key) {
                 if entry.fetched_at.elapsed() < CACHE_TTL {
@@ -82,7 +86,7 @@ impl CcSwitchResolver {
                 }
             }
         }
-        let info = self.read_proxy_info(db, app);
+        let info = self.read_proxy_info(db, app, key);
         if let Ok(mut cache) = self.cache.lock() {
             cache.insert(
                 key,
@@ -96,7 +100,9 @@ impl CcSwitchResolver {
     }
 
     /// 从 SQLite 读取该 app 的监听地址与当前上游；读不到一律 None 字段。
-    fn read_proxy_info(&self, db: &Path, app: AgentApp) -> AppProxyInfo {
+    ///
+    /// `app_type` 是调用方已解析好的库内 app 标识（见 [`app_key`]），传进来避免再判一次。
+    fn read_proxy_info(&self, db: &Path, app: AgentApp, app_type: &str) -> AppProxyInfo {
         // 只读：cc-switch 应用持有该库，用 READ_ONLY 避免争写锁。
         let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
         let Ok(conn) = Connection::open_with_flags(db, flags) else {
@@ -104,8 +110,6 @@ impl CcSwitchResolver {
         };
         // 快速失败：库被占时不长时间阻塞热路径。
         let _ = conn.busy_timeout(Duration::from_millis(200));
-
-        let app_type = app_key(app);
         // ① 该 app 的代理是否启用、监听在哪个 host:port。
         // 语义来自 cc-switch 源码（`src-tauri/src/database/schema.rs` + `services/proxy.rs`）：
         //   - `proxy_enabled`：**全局服务器开关**（三行同值，服务器起来才为 1）。
@@ -149,22 +153,29 @@ impl CcSwitchResolver {
 }
 
 /// app 在 cc-switch 库里的 `app_type` 取值 / 缓存键。
-fn app_key(app: AgentApp) -> &'static str {
+///
+/// 返回 None = 这个 agent 不由 cc-switch 接管（目前是 Qoder：它走自己的云网关，
+/// 库里既没有它的行、也就没有「本地代理 → 上游」可反查）。
+fn app_key(app: AgentApp) -> Option<&'static str> {
     match app {
-        AgentApp::Claude => "claude",
-        AgentApp::Codex => "codex",
+        AgentApp::Claude => Some("claude"),
+        AgentApp::Codex => Some("codex"),
+        AgentApp::Qoder => None,
     }
 }
 
 /// 从 provider 的 `settings_config` JSON 里取上游 endpoint，按 app 分流。
 ///
-/// 两个 app 在 cc-switch 里的存法不同（实测）：
+/// 各 app 在 cc-switch 里的存法不同（实测）：
 /// - `claude`：`{"env":{"ANTHROPIC_BASE_URL":"…"}}`
 /// - `codex`：`{"auth":…,"config":"<TOML 文本>"}` —— 没有 `env` 块，base_url 埋在 TOML 里
 fn upstream_from_settings(app: AgentApp, raw: &str) -> Option<String> {
     match app {
         AgentApp::Claude => claude_base_url_from_settings(raw),
         AgentApp::Codex => codex_base_url_from_settings(raw),
+        // 走到这里说明该 app 不由 cc-switch 接管（调用方已按 [`app_key`] 挡掉），
+        // 保留这一分支只为让枚举穷尽，语义上没有可读的字段。
+        AgentApp::Qoder => None,
     }
 }
 

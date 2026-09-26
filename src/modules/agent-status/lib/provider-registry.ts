@@ -1,5 +1,6 @@
 import claudeIcon from '@/assets/claude.svg'
 import codexIcon from '@/assets/codex.svg'
+import qoderIcon from '@/assets/qoder.svg'
 
 /**
  * ── provider 展示元信息注册表 ──
@@ -24,6 +25,8 @@ const PROVIDER_REGISTRY: Record<string, ProviderMeta> = {
   claude: { label: 'Claude', icon: claudeIcon, mono: false },
   // Codex 的图标是纯白单色，浅色主题下要反相；Claude 的橙反相会变青蓝，不套。
   codex: { label: 'Codex', icon: codexIcon, mono: true },
+  // Qoder 的 mark 同样是纯白单色（`src/assets/qoder.svg`），要反相。
+  qoder: { label: 'Qoder', icon: qoderIcon, mono: true },
 }
 
 /**

@@ -23,6 +23,7 @@
 
 pub(crate) mod claude;
 pub(crate) mod codex;
+pub(crate) mod qoder;
 
 use std::{env, path::PathBuf};
 
@@ -128,6 +129,8 @@ pub(crate) fn adapter_for(provider: Provider) -> Option<&'static dyn HookAdapter
         // Codex 走 rollout（`status::codex_rollout`），hook 只保留一个极窄的补充：
         // `PermissionRequest` —— 那是 rollout 里唯一拿不到的状态。见 `compat::codex` 的模块文档。
         Provider::Codex => Some(&codex::CodexPermissionAdapter),
+        // Qoder（CLI 与 IDE 共用同一份 hook 配置）走完整 hook 链路，不需要第二个事件源。
+        Provider::Qoder => Some(&qoder::QoderAdapter),
     }
 }
 
@@ -281,6 +284,9 @@ pub(crate) fn base_url_env_names(provider: Provider) -> &'static [&'static str] 
     match provider {
         Provider::Claude => &[CLAUDE_BASE_URL_KEY],
         Provider::Codex => &["OPENAI_BASE_URL", "OPENAI_API_BASE"],
+        // Qoder 由云端网关按登录态路由：`settings.json` 没有 `env` 块，环境变量里也没有
+        // endpoint 类变量（实测）。它的 Endpoint 行来自 `compat::qoder` 自己的身份常量。
+        Provider::Qoder => &[],
     }
 }
 
@@ -394,6 +400,33 @@ mod tests {
             base_url_env_names(Provider::Codex),
             &["OPENAI_BASE_URL", "OPENAI_API_BASE"]
         );
+        // Qoder 没有 endpoint 类环境变量（云端网关按登录态路由），故为空。
+        assert!(base_url_env_names(Provider::Qoder).is_empty());
+    }
+
+    /// Qoder 与 Claude 同形：**每个事件都归一出结果**，没有一个要像 Codex 那样被忽略。
+    ///
+    /// 反向护栏 —— 哪天有人给 Qoder 也加「只认几个事件」的收窄，未列出的事件会静默不落盘，
+    /// 表现是灯在某些节点死活不动。
+    #[test]
+    fn qoder_adapter_is_registered_and_accepts_every_event() {
+        let adapter = adapter_for(Provider::Qoder).expect("Qoder 有适配器");
+        let ctx = AdaptContext { cwd: None };
+        for name in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "Notification",
+            "Stop",
+            "SessionEnd",
+        ] {
+            let payload = serde_json::json!({"session_id": "s1", "hook_event_name": name});
+            assert!(
+                adapter.adapt(&payload, &ctx).expect("不报错").is_some(),
+                "{name} 不该被 Qoder 适配器忽略"
+            );
+        }
     }
 
     #[test]

@@ -1,11 +1,11 @@
 # UFO Agent 状态 Hook 接入指南
 
-> **本篇是「已接入平台」的实录**：Claude Code 的 hook 配置与 payload 字段、Codex 的 rollout 读法，以及 UFO 内部怎么解析它们。
+> **本篇是「已接入平台」的实录**：Claude Code 与 Qoder 的 hook 配置及 payload 字段、Codex 的 rollout 读法，以及 UFO 内部怎么解析它们。
 > **要接入一个新平台，从 `agent-status-platform-onboarding.md` 开始** —— 那里有跨平台通用的 payload 契约、最小事件集、以及 UFO 侧的完整改动清单。本篇的字段表只描述 Claude 一家，别名表各平台自己写，不要照抄成通用约定。
 
 UFO 从两条链路获取 agent 的生命周期事件：
 
-- **Claude Code**：本地 CLI hook（本文档第 1 节）。hook 进程必须快速返回，只写入一个小事件文件，不能等待 GUI。
+- **Claude Code / Qoder**：本地 CLI hook（本文档同名两节）。hook 进程必须快速返回，只写入一个小事件文件，不能等待 GUI。
 - **Codex**：**读 rollout**，不用 hook（见文末「Codex」节）。
 
 ## Claude Code
@@ -316,6 +316,67 @@ rollout 里**没有**审批的任何记录（记录类型、`item_completed` 的
 
 - **「等你授权」**：批准/拒绝在 rollout 里**没有**结构化记录（记录类型、item 字段、output 正文都查过）。唯一线索是「`function_call` 很久没有 output」，而那与「命令跑得久」无法区分 —— 所以 Codex 上这个状态退化为绿灯。
 - **子代理**：子线程有自己的 rollout（带 `parent_thread_id` + `source.subagent`），天然不会污染父会话的灯 —— 不需要 Claude 那条 `agent_id` 守卫。
+
+## Qoder
+
+CLI 与 IDE 共用同一套 hook（**同一份配置同时点亮两端**），payload 与 Claude Code 同构，所以走完整 hook 链路、不需要第二个事件源。命令格式：
+
+```text
+ufo --status-hook --provider qoder
+```
+
+配置写在 `~/.qoder/settings.json` 的 `hooks` 块（项目级 `<项目>/.qoder/settings.json`、`<项目>/.qoder/settings.local.json` 同样有效）。建议每个事件带 `async: true` 与短 `timeout`：
+
+```json
+{
+  "hooks": {
+    "SessionStart":      [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "UserPromptSubmit":  [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "PreToolUse":        [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "PostToolUse":       [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "PostToolUseFailure":[{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "Notification":      [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "SubagentStart":     [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "SubagentStop":      [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "Stop":              [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "StopFailure":       [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }],
+    "SessionEnd":        [{ "hooks": [{ "type": "command", "command": "ufo --status-hook --provider qoder", "async": true, "timeout": 3 }] }]
+  }
+}
+```
+
+### Qoder Hook 事件一览（实测）
+
+下表的事件都在真实会话里抓到过 payload（`~/.qoder/logs/runs/*/qodercli.log` 的 `hook_input=` 行），除 `PermissionRequest` / `StopFailure` —— 它们可配但本次未触发，语义按事件名推。
+
+| 事件 | 触发时机 | 灯 |
+|---|---|---|
+| `SessionStart` | 会话开始（`source: "startup"`） | 🟢 Running |
+| `UserPromptSubmit` | 用户提交提问（带 `prompt`） | 🟢 Running |
+| `PreToolUse` / `PostToolUse` | 工具调用前后 | 🟢 Running |
+| `PostToolUseFailure` | **工具**调用失败（带 `error` / `error_type`） | 🟢 Running（见下「三处差异」①） |
+| `PermissionRequest` | 工具调用待授权（等人操作） | 🟡 Waiting（不闪） |
+| `Notification` | 通知（看 `notification_type`） | 等待类 → 🟡，其余 🟢 |
+| `SubagentStart` / `SubagentStop` | 子代理起止 | 记账，按主线程态分流 |
+| `Stop` | 一轮回复跑完、等下一句 | 🟢 闪 → 🟡 |
+| `StopFailure` | 本轮 API/模型出错 | 🔴 Error |
+| `SessionEnd` | 会话终止（字段 `reason`，实测 `"other"`） | 🟢 闪后移除 |
+
+### Payload 字段
+
+与 Claude Code **同名**，所以 UFO 侧的取法完全一致：`session_id`、`hook_event_name`、`transcript_path`、`cwd`、`prompt`（仅 `UserPromptSubmit`）、`agent_id`、`notification_type`、`reason`。Qoder 另带的字段 UFO 不采：`model`、`permission_mode`、`tool_use_id`、`tool_input`、`tool_response`、`stop_hook_active`、`last_assistant_message`、`request_set_id`、`details`、`agent_transcript_path`。
+
+- **子代理**：与 Claude 同 —— 子代理事件与主会话**共用 `session_id`**，只有 `agent_id`（实测形如 `aExplore-d2ed3f773d36e2d1`、`aPlan-a495c2600931ca7f`）分得开，主线程事件不带。内核靠它维护活跃集合。
+- **`prompt` 就是用户原文**：实测 687 条真实 `UserPromptSubmit` payload，`prompt` 里没有任何元信息标签（Qoder 的注入内容走别的通道，不混进这个字段），所以 UFO 侧只做 trim + 超长截断，**不**套用 Claude 那套元标签剔除。两个平台的适配器也因此互不引用 —— 哪天 Qoder 开始往提问里塞标签，在 `compat/qoder.rs` 里补自己的一份。
+- **`Notification.message`**：等人时那句理由（实测如「Tool AskUserQuestion requires confirmation」），UFO 走 `waiting_reason` 显示在信息卡 head 行，**不**塞进 `prompt`。
+- **`SubagentStop.agent_transcript_path`**：子代理自己的 transcript（`<项目>/<session-id>/subagents/agent-<id>.jsonl`）。UFO 不看这个字段 —— transcript 按 `<session-id>/subagents/` 目录扫，与 Claude 同一套布局。
+
+### 三处与 Claude 的差异
+
+1. **工具失败不是会话失败**。`PostToolUseFailure` 的 `error` 是普通工具报错正文（实测如「Path does not exist: …」「Exit code 2 …」）。通用规则「有 `error_code` 即判失败」会让用户每敲错一次路径就看见一次红灯，而 agent 只是重试一次 —— 所以 UFO 的 Qoder 适配器对**这一个事件**不读错误字段，灯保持绿；真正的本轮出错仍由 `StopFailure` 转红。
+2. **拿不到真实 endpoint**。`~/.qoder/settings.json` 没有 `env` 块，模型目录（`~/.qoder/.models/*/catalog-v6`）是加密的，BYOK 走 `/model` 向导且不落明文配置；环境变量里也没有 endpoint 类变量。实测模型流量发往 `api3.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation`，但那个 host 由服务端按区域下发（`center.qoder.sh/api/*/service/region/endpoints`），换区域 / 换版本就会变，不适合当档案键。因此 UFO 给 Qoder 会话送一个**稳定身份常量** `compat::qoder::QODER_ENDPOINT`：它不可请求、不代表任何用户配置，只为让「信息卡拓展」的 endpoint 档案有键可用。⚠️ 代价是 tooltip 的 Endpoint 行显示的就是这个常量本身。
+3. **transcript 的 token 数值恒为 0**。记录结构与 Claude 同构（`type` = assistant、`message.usage` 的 `input_tokens` / `cache_creation_input_tokens` / `cache_read_input_tokens` / `output_tokens` 四个键名都在，实测 326 个 usage 块），但网关不回填数值（只有 `credits` / `original_credits` / `context_usage_ratio` 非 0）。所以 Qoder 与 Claude 共用同一个 transcript 解析器（`status/tokens.rs` 的 `TokenTracker`）：解析出 0，前端 `tokenCount > 0` 自然不渲染那一行；哪天网关开始回填，这里就自动出数。
 
 ## 状态目录
 
