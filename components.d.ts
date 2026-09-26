@@ -31,6 +31,7 @@ declare module 'vue' {
     ScriptEditorFrame: typeof import('./src/components/ui/ScriptEditorFrame.vue')['default']
     ScriptEditorModal: typeof import('./src/components/ui/ScriptEditorModal.vue')['default']
     SettingsField: typeof import('./src/components/ui/SettingsField.vue')['default']
+    SettingsHint: typeof import('./src/components/ui/SettingsHint.vue')['default']
     TooltipRow: typeof import('./src/components/floating/tooltip/TooltipRow.vue')['default']
     TooltipSection: typeof import('./src/components/floating/tooltip/TooltipSection.vue')['default']
     TooltipWindow: typeof import('./src/components/TooltipWindow.vue')['default']

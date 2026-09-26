@@ -707,6 +707,16 @@ html.is-tooltip-window #app {
   color: var(--ufo-muted);
 }
 
+/*
+ * 「标题 + 说明角标」同一行（角标见 `ui/SettingsHint.vue`）。
+ * ⚠️ 角标不能塞进标题元素里面：设置页大量用 `aria-labelledby` 指向标题，标题的无障碍名称会
+ * 把按钮的名字一起读出来（「窗口格子 说明」）。所以标题保持纯文本，角标做它的兄弟节点。
+ * 允许换行：窄栏里宁可角标掉到第二行，也不挤压标题文本。
+ */
+.ufo-heading-row {
+  @apply flex min-w-0 flex-wrap items-baseline gap-x-2;
+}
+
 /* 「关于」页：整页只有一条信息，所以居中一张窄卡，不铺满内容区宽度。 */
 .about-panel {
   @apply mx-auto flex w-full max-w-md flex-col gap-3;

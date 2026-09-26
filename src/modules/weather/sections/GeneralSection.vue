@@ -6,6 +6,7 @@ import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSegmentedControl from '@/components/ui/BaseSegmentedControl.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import SettingsField from '@/components/ui/SettingsField.vue'
+import SettingsHint from '@/components/ui/SettingsHint.vue'
 import { weatherSettings, type WeatherSettings } from '../settings'
 import { useWeatherStore, type CityLookupItem } from '../stores/weather'
 
@@ -193,16 +194,21 @@ const locationModeOptions = [
   <div class="general-cards">
     <!-- 左卡：API 授权与基础服务 -->
     <section class="ufo-card p-4 space-y-4">
-      <header class="border-b border-[var(--ufo-border)] pb-2">
+      <header class="ufo-heading-row border-b border-[var(--ufo-border)] pb-2">
         <h3 class="text-sm font-semibold text-[var(--ufo-text)]">API 授权与服务</h3>
-        <p class="text-xs text-[var(--ufo-muted)]">API Key 将安全存储在系统凭据管理器中，不进入配置文件</p>
+        <SettingsHint text="API Key 将安全存储在系统凭据管理器中，不进入配置文件" />
       </header>
 
       <!-- 遵循规范第 5.3 & 9.4 节：密钥管理专属交互 -->
       <SettingsField
         label="API Key"
         label-for="weather-api-key"
-        :hint="weatherStore.hasSavedKey ? '当前状态：已保存至凭据管理器。输入新值点击保存可替换。' : '当前状态：未保存。请输入和风天气控制台生成的 Key。'"
+        :state="weatherStore.hasSavedKey ? '已保存至凭据管理器' : '未保存'"
+        :hint="
+          weatherStore.hasSavedKey
+            ? '输入新值后点「保存密钥」即可替换现有 Key。'
+            : '请到和风天气控制台生成 API Key 后填入，保存后才会开始拉取数据。'
+        "
       >
         <div class="space-y-2">
           <BaseInput
@@ -302,9 +308,9 @@ const locationModeOptions = [
 
     <!-- 右卡：地理定位与城市选择 -->
     <section class="ufo-card p-4 space-y-4">
-      <header class="border-b border-[var(--ufo-border)] pb-2">
+      <header class="ufo-heading-row border-b border-[var(--ufo-border)] pb-2">
         <h3 class="text-sm font-semibold text-[var(--ufo-text)]">地理位置</h3>
-        <p class="text-xs text-[var(--ufo-muted)]">选择自动基于网络 IP 定位或精确指定城市</p>
+        <SettingsHint text="选择自动基于网络 IP 定位或精确指定城市" />
       </header>
 
       <SettingsField
@@ -326,7 +332,10 @@ const locationModeOptions = [
         <SettingsField
           label="当前指定城市"
           label-for="weather-city-search"
-          :hint="manualLocationNameInput ? `已选中: ${manualLocationNameInput} (ID: ${manualLocationInput})` : '尚未选择城市，请在下方搜索'"
+          :state="
+            manualLocationNameInput ? `已选中: ${manualLocationNameInput} (ID: ${manualLocationInput})` : '尚未选择城市'
+          "
+          hint="在下面的输入框里搜索并选中城市或区县（如「海淀」「杭州」）"
         >
           <div class="flex gap-2">
             <BaseInput

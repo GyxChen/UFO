@@ -203,7 +203,7 @@ function clampInt(value: number, min: number, max: number): number {
       <div class="flow-editor__row">
         <div class="flow-editor__toggle">
           <span>启用</span>
-          <BaseSwitch v-model="draft.enabled" aria-label="启用流程脚本" title="启用该 endpoint 的流程脚本" />
+          <BaseSwitch v-model="draft.enabled" aria-label="启用流程脚本" />
         </div>
         <label class="flow-editor__num">
           <span>间隔（秒）</span>

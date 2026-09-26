@@ -1266,18 +1266,9 @@
   @apply flex flex-wrap items-center gap-3;
 }
 
-.push-master__text {
-  @apply grid min-w-0 gap-0.5;
-}
-
 .push-master__title {
   @apply m-0 text-[14px] font-semibold;
   color: var(--ufo-text);
-}
-
-.push-master__sub {
-  @apply m-0 text-[12px];
-  color: var(--ufo-muted);
 }
 
 /* 「N 个服务 · M 个收件方」贴到行尾，窄栏时整体换行而不是挤压文案。 */
@@ -1394,17 +1385,12 @@
   color: var(--ufo-muted);
 }
 
-.push-list__empty,
-.push-list__foot {
+.push-list__empty {
   @apply m-0 text-[12px];
   color: color-mix(in srgb, var(--ufo-muted) 78%, transparent);
 }
 
-.push-list__foot {
-  @apply shrink-0 pt-2;
-}
-
-/* 列表与底部说明不参与压缩：只有列表自身在固定高度内滚。 */
+/* 列表与卡片里的其它块不参与压缩：只有列表自身在固定高度内滚。 */
 .push-list-card > :not(.push-list) {
   @apply shrink-0;
 }

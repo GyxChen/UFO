@@ -20,7 +20,7 @@ import { useFloatingModulesStore } from '@/stores/floatingModules'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseSlider from '@/components/ui/BaseSlider.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
-import SettingsField from '@/components/ui/SettingsField.vue'
+import SettingsHint from '@/components/ui/SettingsHint.vue'
 import gearIcon from '@/assets/gear.svg'
 
 const emit = defineEmits<{
@@ -156,7 +156,10 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
     <div class="module-catalog__column">
       <section class="ufo-card module-catalog__list" aria-labelledby="module-catalog-title">
         <div class="ufo-card__header">
-          <h2 id="module-catalog-title" class="ufo-card__title">悬浮窗组件</h2>
+          <div class="ufo-heading-row">
+            <h2 id="module-catalog-title" class="ufo-card__title">悬浮窗组件</h2>
+            <SettingsHint text="拖动行首的手柄排序，焦点在手柄上时也能用上下方向键；行尾的齿轮打开该组件自己的设置页。" />
+          </div>
           <span class="ufo-card__hint">{{ enabledCount }} / {{ definitions.length }} 已启用</span>
         </div>
 
@@ -208,7 +211,6 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
               type="button"
               class="module-row__handle"
               aria-label="拖拽排序（或用上下方向键）"
-              title="拖拽排序（或用上下方向键）"
               draggable="true"
               @dragstart="onDragStart(definition, $event)"
               @dragend="onDragEnd"
@@ -230,35 +232,37 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
       -->
       <section class="ufo-card module-catalog__cell-card" aria-labelledby="module-cell-size-title">
         <div class="ufo-card__header">
-          <h2 id="module-cell-size-title" class="ufo-card__title">格子大小</h2>
+          <div class="ufo-heading-row">
+            <h2 id="module-cell-size-title" class="ufo-card__title">格子大小</h2>
+            <SettingsHint
+              text="每一格的边长；横条 / 竖条按格数成倍放大，方形与四角保持正方形。拖动时预览实时变化，松手后悬浮窗按新尺寸重新吸附。"
+            />
+          </div>
           <span class="ufo-card__hint">所有组件共用</span>
         </div>
 
-        <SettingsField
-          hint="每一格的边长；横条 / 竖条按格数成倍放大，方形与四角保持正方形。拖动时预览实时变化，松手后悬浮窗按新尺寸重新吸附。"
-        >
-          <div class="module-catalog__cell-size">
-            <BaseSlider
-              v-model="cellPxInput"
-              :min="MIN_CELL_PX"
-              :max="MAX_CELL_PX"
-              :step="1"
-              aria-labelledby="module-cell-size-title"
-              :aria-value-text="`${cellPxInput} 像素`"
-              @change="commitCellPx"
-            />
-            <span class="module-catalog__cell-value">{{ cellPxInput }}px</span>
-            <BaseButton
-              variant="ghost"
-              size="sm"
-              :disabled="cellPxInput === FLOATING_BASE_CELL_PX"
-              title="恢复默认格子大小"
-              @click="resetCellPx"
-            >
-              默认
-            </BaseButton>
-          </div>
-        </SettingsField>
+        <!-- 说明已挂到卡片标题的角标上，这里只剩控件本身：卡片是 grid + gap，不需要再套一层字段壳。 -->
+        <div class="module-catalog__cell-size">
+          <BaseSlider
+            v-model="cellPxInput"
+            :min="MIN_CELL_PX"
+            :max="MAX_CELL_PX"
+            :step="1"
+            aria-labelledby="module-cell-size-title"
+            :aria-value-text="`${cellPxInput} 像素`"
+            @change="commitCellPx"
+          />
+          <span class="module-catalog__cell-value">{{ cellPxInput }}px</span>
+          <BaseButton
+            variant="ghost"
+            size="sm"
+            :disabled="cellPxInput === FLOATING_BASE_CELL_PX"
+            title="恢复默认格子大小"
+            @click="resetCellPx"
+          >
+            默认
+          </BaseButton>
+        </div>
       </section>
     </div>
 

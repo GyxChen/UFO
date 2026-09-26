@@ -27,6 +27,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
 import SettingsField from '@/components/ui/SettingsField.vue'
+import SettingsHint from '@/components/ui/SettingsHint.vue'
 import closeIcon from '@/assets/close.svg'
 
 const push = usePushStore()
@@ -218,9 +219,10 @@ async function onRemove(topic: ChannelView) {
           aria-label="消息推送总开关"
           @update:model-value="onMaster"
         />
-        <div class="push-master__text">
+        <!-- 外壳的标题行：标题 + 说明角标同一行（角标不进标题，否则 aria-labelledby 把它一起读进标题） -->
+        <div class="ufo-heading-row">
           <h3 id="push-master-title" class="push-master__title">消息推送</h3>
-          <p class="push-master__sub">总开关。关掉后所有主题一律不发，也不会碰网络。</p>
+          <SettingsHint text="总开关。关掉后所有主题一律不发，也不会碰网络。" />
         </div>
         <span class="push-master__meta">{{ summary }}</span>
       </div>
@@ -268,7 +270,10 @@ async function onRemove(topic: ChannelView) {
     <div class="push-split">
       <section class="ufo-card push-list-card" aria-labelledby="push-provider-title">
         <div class="ufo-card__header">
-          <h3 id="push-provider-title" class="ufo-card__title">推送服务</h3>
+          <div class="ufo-heading-row">
+            <h3 id="push-provider-title" class="ufo-card__title">推送服务</h3>
+            <SettingsHint text="每个服务自带开关：服务关掉时，它下面的主题一条都不发。" />
+          </div>
           <span class="ufo-card__hint">{{ providers.length }} 个</span>
         </div>
 
@@ -308,7 +313,6 @@ async function onRemove(topic: ChannelView) {
             </div>
           </li>
         </ul>
-        <p class="push-list__foot">每个服务自带开关：服务关掉时，它下面的主题一条都不发。</p>
       </section>
 
       <section class="ufo-card push-detail" aria-labelledby="push-detail-title">

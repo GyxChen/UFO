@@ -23,6 +23,7 @@ import BaseSelect from '@/components/ui/BaseSelect.vue'
 import BaseSlider from '@/components/ui/BaseSlider.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
 import SettingsField from '@/components/ui/SettingsField.vue'
+import SettingsHint from '@/components/ui/SettingsHint.vue'
 import {
   AGENT_MAX_CELL_STEPS,
   AGENT_STATUS_MODULE_ID,
@@ -222,10 +223,11 @@ async function saveTimeouts() {
         />
       </SettingsField>
 
+      <!-- 说明收进问号角标（`SettingsHint`）：取值范围与默认值是次要文案，常驻会把卡片撑高。 -->
       <SettingsField
         label="执行中超时（秒）"
         label-for="running-timeout-seconds"
-        hint="绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。"
+        hint="绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。慢 agent 可拉长。"
       >
         <BaseInput
           v-model.number="runningTimeoutInput"
@@ -234,7 +236,6 @@ async function saveTimeouts() {
           :min="MIN_RUNNING_TIMEOUT_SECONDS"
           :max="MAX_RUNNING_TIMEOUT_SECONDS"
           step="30"
-          title="Running 无新 hook 时移除绿灯；慢 agent 可拉长"
           @change="updateRunningTimeout"
         />
       </SettingsField>
@@ -270,14 +271,14 @@ async function saveTimeouts() {
     <div class="general-cards__column">
       <section class="ufo-card module-settings" aria-labelledby="agent-status-cells-title">
         <div class="ufo-card__header">
-          <h2 id="agent-status-cells-title" class="ufo-card__title">窗口格子</h2>
+          <div class="ufo-heading-row">
+            <h2 id="agent-status-cells-title" class="ufo-card__title">窗口格子</h2>
+            <SettingsHint
+              text="有几个会话就显示几盏灯：上下贴边时横向排开、左右贴边时纵向排开、贴到四角时排成方块。这里限制的是「最多显示几盏」，超出的会话折叠成最后一格的 +N；只影响状态灯，不影响其它组件。"
+            />
+          </div>
           <span class="ufo-card__hint">最多 {{ currentMaxCells }} 盏灯</span>
         </div>
-
-        <p class="ufo-card__hint">
-          有几个会话就显示几盏灯：上下贴边时横向排开、左右贴边时纵向排开、贴到四角时排成方块。
-          这里限制的是「最多显示几盏」，超出的会话折叠成最后一格的 +N；只影响状态灯，不影响其它组件。
-        </p>
 
         <SettingsField label="最多显示" label-id="max-cells-label">
           <div class="module-settings__cap-row">
@@ -307,10 +308,10 @@ async function saveTimeouts() {
       -->
       <section class="ufo-card module-settings light-sound" aria-labelledby="light-sound-title">
         <div class="light-sound__text">
-          <h2 id="light-sound-title" class="ufo-card__title">状态音效</h2>
-          <p class="ufo-card__hint">
-            红灯 / 黄灯 / 完成绿闪各播一段提示音；绿常亮不发声，绿闪落成黄常亮也不重复响。
-          </p>
+          <div class="ufo-heading-row">
+            <h2 id="light-sound-title" class="ufo-card__title">状态音效</h2>
+            <SettingsHint text="红灯 / 黄灯 / 完成绿闪各播一段提示音；绿常亮不发声，绿闪落成黄常亮也不重复响。" />
+          </div>
           <p class="ufo-card__hint">
             换音频：把
             <span class="light-sound__path">goError.mp3</span> /
@@ -322,7 +323,6 @@ async function saveTimeouts() {
         <BaseSwitch
           v-model="soundEnabledInput"
           aria-label="状态音效"
-          title="红灯 / 黄灯 / 完成绿闪时播放提示音"
           @change="updateSoundEnabled"
         />
       </section>

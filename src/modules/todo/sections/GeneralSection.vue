@@ -7,6 +7,7 @@ import BaseLoadingOverlay from '@/components/ui/BaseLoadingOverlay.vue'
 import BaseSegmentedControl from '@/components/ui/BaseSegmentedControl.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import SettingsField from '@/components/ui/SettingsField.vue'
+import SettingsHint from '@/components/ui/SettingsHint.vue'
 import type { ContextMenuItem } from '@/lib/context-menu'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import {
@@ -643,17 +644,18 @@ function completedTime(task: TodoTaskItem, nowMs: number): string {
         卡片一旦成了滚动容器，遮罩就会跟着内容一起滚走。
       -->
       <div class="todo-auth-card__body">
-        <header class="border-b border-[var(--ufo-border)] pb-2">
+        <header class="ufo-heading-row border-b border-[var(--ufo-border)] pb-2">
           <h3 class="text-sm font-semibold text-[var(--ufo-text)]">API 授权与服务</h3>
-          <p class="text-xs text-[var(--ufo-muted)]">API Token 将安全存储在系统凭据管理器中，不进入配置文件</p>
+          <SettingsHint text="API Token 将安全存储在系统凭据管理器中，不进入配置文件" />
         </header>
 
         <SettingsField
           label="API Token"
           label-for="todo-api-token"
+          :state="todoStore.hasSavedToken ? '已保存至凭据管理器' : '未保存'"
           :hint="
             todoStore.hasSavedToken
-              ? '当前状态：已保存至凭据管理器。输入新值点击保存可替换。'
+              ? '输入新值后点「保存 Token」即可替换。'
               : '在滴答网页版「设置 → 账户 → API Token」生成后粘贴到这里。'
           "
         >
