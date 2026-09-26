@@ -81,6 +81,16 @@
 }
 
 /*
+ * 未登记平台的兜底徽标：注册表里没有 svg 时，在同一个徽章圆片里落一个首字符。
+ * 不留空 —— 空徽章会让人以为这盏灯坏了；字号按格子倍数走（与 __overflow 同一口径）。
+ */
+.agent-status-module__icon--fallback {
+  @apply grid place-items-center font-semibold leading-none;
+  font-size: calc(9px * var(--floating-cell-scale, 1));
+  color: var(--ufo-text);
+}
+
+/*
  * 状态灯 = 一格限制轴的 80%，是这一格里绝对的主体；四周留约 10% 当呼吸位
  * （用户要的「占满网格但留点 margin」）。旧版「52.5% 灯点 + 4% 间隙 + 42% 图标并排」
  * 已废弃，图标改为右下角徽章（见 __identity）。
@@ -429,6 +439,19 @@
 
 .tooltip-provider-icon {
   @apply block h-3.5 w-3.5 shrink-0 object-contain;
+}
+
+/*
+ * 未登记平台的兜底徽标（信息卡里的行内小图标位）。
+ * 提示窗是固定尺寸的另一块窗口、不参与格子缩放，所以字号写死即可（见 AGENTS.md「写死的设计像素」那条）。
+ */
+.tooltip-provider-icon--fallback {
+  @apply grid shrink-0 place-items-center rounded-full font-semibold leading-none;
+  width: 14px;
+  height: 14px;
+  font-size: 10px;
+  color: var(--ufo-text);
+  background: var(--ufo-input);
 }
 
 /* 提问区块：标签在上、正文在下，正文最多 4 行后省略。 */
@@ -1094,6 +1117,14 @@
 
 .sr-list__icon {
   @apply h-3.5 w-3.5 shrink-0;
+}
+
+/* 未登记平台的兜底徽标：列表行里占住图标位，避免新平台的行左边空一块看不出归属。 */
+.sr-list__icon--fallback {
+  @apply grid place-items-center rounded-full font-semibold leading-none;
+  font-size: 10px;
+  color: var(--ufo-text);
+  background: var(--ufo-surface-2);
 }
 
 /* 存活标记：与指示灯同色的实心小圆点，不写文字以免挤掉 session id。 */

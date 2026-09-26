@@ -708,7 +708,8 @@ mod tests {
     fn normalize_base_url_rejects_empty_and_oversized() {
         assert_eq!(normalize_base_url(""), None);
         assert_eq!(normalize_base_url("   "), None);
-        // 超长仍然丢弃：事件整体有 64KiB 上限，避免异常环境变量撑爆事件文件。
+        // 超长仍然丢弃：整体额度只有 hook stdin 的 4 MiB，单个字段再自己收一档，
+        // 避免异常环境变量把一个字段撑成整份事件。
         let long = format!("http://example.com/{}", "a".repeat(MAX_BASE_URL_LEN));
         assert_eq!(normalize_base_url(&long), None);
     }

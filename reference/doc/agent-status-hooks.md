@@ -1,5 +1,8 @@
 # UFO Agent 状态 Hook 接入指南
 
+> **本篇是「已接入平台」的实录**：Claude Code 的 hook 配置与 payload 字段、Codex 的 rollout 读法，以及 UFO 内部怎么解析它们。
+> **要接入一个新平台，从 `agent-status-platform-onboarding.md` 开始** —— 那里有跨平台通用的 payload 契约、最小事件集、以及 UFO 侧的完整改动清单。本篇的字段表只描述 Claude 一家，别名表各平台自己写，不要照抄成通用约定。
+
 UFO 从两条链路获取 agent 的生命周期事件：
 
 - **Claude Code**：本地 CLI hook（本文档第 1 节）。hook 进程必须快速返回，只写入一个小事件文件，不能等待 GUI。

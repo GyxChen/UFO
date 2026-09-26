@@ -347,8 +347,8 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 ```
 
 - **兼容层**：`status/compat/` 定义 `HookAdapter` trait + `adapter_for(provider)` 注册表；`claude.rs` / `codex.rs` 各独占自己平台的全部知识（字段别名、事件名表、base_url 来源、提问提取、子代理 `agent_id`）。跨平台共用的（字段多别名取值、事件名归一化、提问裁剪、`agent_id` 判定…）放 `compat/mod.rs`。
-- **内核**：`status/kernel.rs` 只认 `AgentEventKind` 六种语义（Running / TurnFinished / WaitingForUser / SessionFinished / Failed / Unknown），`light_for_kind` 把 kind 映射成灯态 + 是否绿闪。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
-- **接入新平台** = 新增 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支；内核与前端零改动。
+- **内核**：`status/kernel.rs` 只认 `AgentEventKind` **八种**语义（Running / TurnFinished / WaitingForUser / SessionFinished / SubagentStarted / SubagentStopped / Failed / Unknown）。灯态与是否绿闪由 `reduce_state` 推导（再经 `SessionState::to_phase` 与 `resolve_timing` 投影），**没有 `light_for_kind` 这个函数**。`AgentEvent.event` / `notification_type` 只是诊断字段，**内核不得据此转灯**。
+- **接入新平台** = 新建 `compat/<platform>.rs` 实现 `HookAdapter` + 在 `adapter_for()` 加一个 match 分支 —— 内核零改动，但**前端不是**：`Provider` 是闭包枚举，另有 `base_url_env_names` / `provider_base_url` / `AgentApp::from_provider` 三处穷尽 match 会编译报错点名要登记，前端展示名与图标在 `lib/provider-registry.ts` 加一行。完整改动清单、payload 契约与灯色退化档位见 `reference/doc/agent-status-platform-onboarding.md`。
 - **事件源目前有两个**：hook（inbox 里的规范 JSON）与 Codex rollout 补漏（`codex_rollout.rs` 合成 `Failed`）。两者都产出 `AgentEvent`，在 monitor 里走**同一条入口** `apply_status_event`（广播调试事件 → 登记 transcript → 取存档回填 → 进内核）。加第三个源时照着接这个函数，别绕开它。⚠️ inbox 一批事件按**接收时刻**（`received_at_ms`，同刻按事件 id）排序后再消费 —— `read_dir` 顺序由文件系统决定，批内乱序会让迟到的「子代理收尾」先于更早的「开工」生效；平台事件多数不带 `sequence`，批与批之间的乱序识别不了（已知边界）。
 - `AgentEvent.kind` 是 `#[serde(default)]` 新增字段，缺省 `Unknown`（**不得升 `SCHEMA_VERSION`**）；旧事件反序列化后为 Unknown = 不驱灯色，与「无法识别」一致。
 - **hook 输入上限 4 MiB**：Codex 的工具事件会把 `tool_input`（apply_patch 补丁等）原样带上，卡 64 KiB 会丢掉有效生命周期事件。落盘的 inbox 事件仍只带提取字段。
@@ -383,7 +383,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 | **等你授权** | rollout **没有**这个状态的任何记录（记录类型 / item 字段 / output 正文全查过）→ 只能靠 hook 的 `PermissionRequest` 补：它带 `tool_name` / `tool_input.command` / `tool_input.description`（Codex 自己写的审批理由）。映射为 WaitingForUser（黄灯不闪），理由进 `waiting_reason` 显示在 tooltip 的 head 行 |
 | 预筛 | `compat::codex::cares()` 先做子串扫描：97% 的字节是命令输出/消息正文（单条可达 100 KB），只有命中小标记的行才做 JSON 解析 |
 
-⚠️ 不要把 Codex 的 hook 适配器「顺手」补回来：两路同时驱动同一会话会让灯态互顶（`compat::tests::only_claude_uses_the_hook_adapter` 锁着这条）。
+⚠️ 不要把 Codex 的 hook 适配器「顺手」补回来：两路同时驱动同一会话会让灯态互顶（`status/compat/mod.rs` 的 `codex_adapter_only_accepts_permission_request` 与 `status/hook.rs` 的 `codex_hook_writes_only_permission_request` 锁着这条）。
 
 #### 取不到的东西
 
@@ -423,3 +423,4 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - ⚠️ **`AskUserQuestion`（选择框提问）不走 `PreToolUse`**：它走 `PermissionRequest` + `Notification(permission_prompt)`，作答后发 `PostToolUse`。不需要按工具名特判。
 - ⚠️ `notification_type` 的「等人操作」清单必须与 Claude Code 枚举对齐（详见 `reference/doc/agent-status-hooks.md`），**漏列会退化成绿色**。
 - 详情见 `reference/doc/agent-status-hooks.md`
+- **接入新平台的规范**（payload 契约、最小事件集、改动清单、验收）见 `reference/doc/agent-status-platform-onboarding.md`

@@ -11,9 +11,15 @@
 //!             kernel：只认 AgentEventKind，不解析任何平台事件名
 //! ```
 //!
-//! **接入新平台 = 新增一个 `compat/<platform>.rs` + 在 [`adapter_for`] 里加一行。**
+//! **接入新平台：新建一个 `compat/<platform>.rs` + 在 [`adapter_for`] 里加一行即可跑通事件链。**
 //! 适配器负责平台的全部知识（字段别名、事件名表、base_url 来源、提问提取…），
 //! hook 外壳（`super::hook`）只做与平台无关的信封活：读 stdin、补事件 id / pid / 接收时刻、落盘。
+//!
+//! ⚠️ 但「只改这两处」是不够的：`Provider` 是闭包枚举，另有 `base_url_env_names`（本文件）、
+//! `claude::provider_base_url`、`proxy::AgentApp::from_provider` 三处**穷尽 match 会编译报错**，
+//! 逐个点名要登记的地方（这是特性不是缺陷 —— 漏登记编译不过）。前端展示名/图标走
+//! `src/modules/agent-status/lib/provider-registry.ts` 加一行。
+//! 完整改动清单与验收见 `reference/doc/agent-status-platform-onboarding.md`。
 
 pub(crate) mod claude;
 pub(crate) mod codex;
@@ -201,7 +207,8 @@ pub(crate) fn is_user_prompt_submit(event_name: &str) -> bool {
 
 /// 提问内容长度上限（字符数）。
 ///
-/// 仅防止超大 prompt 撑爆事件文件（事件整体有 64KiB 上限），超出部分截断并加省略号。
+/// 仅防止超大 prompt 撑爆事件文件（hook 侧唯一的整体额度是 stdin 的 `MAX_HOOK_INPUT` = 4 MiB，
+/// 落盘的事件文件本身没有整体上限），超出部分截断并加省略号。
 pub(crate) const MAX_PROMPT_CHARS: usize = 4000;
 
 /// 归一化提问内容：去首尾空白，超长按**字符**截断并追加省略号；空白内容视为未提供。
@@ -222,7 +229,8 @@ pub(crate) fn truncate_prompt(raw: &str) -> Option<String> {
 
 /// base_url 长度上限。
 ///
-/// 这不是脱敏，只是防止异常环境变量把超大字符串写进事件文件（事件整体有 64KiB 上限）。
+/// 这不是脱敏，只是防止异常环境变量把超大字符串写进事件文件（整体额度只有 hook stdin 的
+/// `MAX_HOOK_INPUT` = 4 MiB，事件文件本身不再另设上限 —— 与 `MAX_PROMPT_CHARS` 同一口径）。
 pub(crate) const MAX_BASE_URL_LEN: usize = 4096;
 
 /// 归一化 base_url：仅去掉首尾空白。
@@ -242,9 +250,11 @@ pub(crate) const MAX_AGENT_ID_LEN: usize = 256;
 /// 提取子代理事件的来源标识。主线程事件不带此字段，返回 None。
 ///
 /// ⚠️ 两个平台都确认：子代理事件与主会话**共用同一个 `session_id`**，只有本字段能把两者
-/// 分开（Claude 与 Codex 均为主线程不带、子代理事件带 `agent_id`）。内核靠它把子代理事件
-/// 限制为「只刷存活时间、不驱灯色」，否则主线程 Waiting 会被仍在后台跑的子代理顶回
-/// Running（灯一直绿）。只透传标识，不做任何语义解释。
+/// 分开（Claude 与 Codex 均为主线程不带、子代理事件带 `agent_id`）。内核靠它维护「活跃子代理
+/// 集合」并按主线程所处状态分流：主线程在等用户操作（WaitingForUser）、或会话已结束 / 已出错
+/// 时，子代理事件**只**记账并刷新存活时间、不得转灯（否则审批黄灯会被顶回 Running）；只有主线程
+/// 已停、处于「等 prompt」空闲时，子代理活动才把灯拉回后台运行（对外绿常亮）。
+/// 子代理自己的 `Failed` 也不染红父灯。只透传标识，语义全在内核 `reduce_state`。
 pub(crate) fn agent_id(payload: &Value) -> Option<String> {
     string_field(payload, &["agent_id", "agentId"])
         .map(|value| value.trim().to_string())

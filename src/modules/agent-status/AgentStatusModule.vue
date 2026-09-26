@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, watch } from 'vue'
 import { colorForSession, colorLabel, type SessionSnapshot } from './lib/agent-status'
+import { providerFallbackMark, providerMeta } from './lib/provider-registry'
 import { lightClassesOf, transitionsBetween, type LightClass } from './lib/agent-sound'
 import { playLightSound, preloadLightSounds } from './lib/sound-player'
 import {
@@ -68,10 +69,19 @@ const overflowLabel = computed(() => {
  */
 const isEmpty = computed(() => partitioned.value.visible.length === 0 && partitioned.value.overflow === 0)
 
+/**
+ * 可见灯 + 各自的平台元信息，一次算好。
+ *
+ * 模板里不再按 provider 现查注册表：未登记平台没有图标（`meta.icon` 为 null），
+ * 要换成首字符徽标，两种节点得在同一个 `v-if` 下分流，取两次 `providerMeta()` 既啰嗦也拿不到收窄。
+ */
+const indicators = computed(() =>
+  partitioned.value.visible.map(session => ({ session, meta: providerMeta(session.provider) }))
+)
+
 /** 指示灯的读屏文案：provider + 会话 id 前 8 位 + 阶段。 */
 function labelFor(session: SessionSnapshot) {
-  const provider = session.provider === 'claude' ? 'Claude' : 'Codex'
-  return `${provider} ${session.session_id.slice(0, 8)}: ${session.phase}`
+  return `${providerMeta(session.provider).label} ${session.session_id.slice(0, 8)}: ${session.phase}`
 }
 
 /**
@@ -122,23 +132,30 @@ onMounted(preloadLightSounds)
       无障碍信息只走 aria-label（不产生可见提示），保证读屏仍能朗读 provider / phase。
     -->
     <span
-      v-for="session in partitioned.visible"
-      :key="session.key"
+      v-for="item in indicators"
+      :key="item.session.key"
       class="agent-status-module__item"
-      :class="[`agent-status-module__item--${colorForSession(session)}`, { 'is-flashing': session.is_flashing }]"
-      :aria-label="labelFor(session)"
-      @pointerenter="moduleApi?.reportHover(session.key)"
+      :class="[
+        `agent-status-module__item--${colorForSession(item.session)}`,
+        { 'is-flashing': item.session.is_flashing },
+      ]"
+      :aria-label="labelFor(item.session)"
+      @pointerenter="moduleApi?.reportHover(item.session.key)"
       @pointerleave="moduleApi?.reportHover(null)"
     >
       <span class="agent-status-module__dot" aria-hidden="true" />
       <span class="agent-status-module__identity" aria-hidden="true">
-        <!-- Codex 的图标是纯白单色，浅色主题下要反相；Claude 的橙反相会变青蓝，不套。 -->
+        <!-- 平台图标与是否反相都来自 provider 注册表；未登记平台没有图标，退化成首字符徽标（灯照常亮）。 -->
         <img
-          :src="session.provider === 'claude' ? claudeIcon : codexIcon"
-          :alt="session.provider"
+          v-if="item.meta.icon"
+          :src="item.meta.icon"
+          :alt="item.meta.label"
           class="agent-status-module__icon"
-          :class="{ 'ufo-mono-icon': session.provider === 'codex' }"
+          :class="{ 'ufo-mono-icon': item.meta.mono }"
         />
+        <span v-else class="agent-status-module__icon agent-status-module__icon--fallback">{{
+          providerFallbackMark(item.session.provider)
+        }}</span>
       </span>
     </span>
 
