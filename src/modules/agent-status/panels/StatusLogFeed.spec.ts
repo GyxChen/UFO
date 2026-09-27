@@ -45,6 +45,20 @@ function page(entries: StatusLogEntry[]): StatusLogPage {
 }
 
 /**
+ * 浮层宿主：主窗把内容区标成 `#main-content`（`MainWindow.vue`），浮层 `Teleport` 到那里。
+ * 测试环境没有主窗外壳，所以要自己摆一块 —— 目标不存在时 Teleport 会直接抛错。
+ */
+function ensureOverlayHost(): HTMLElement {
+  const existing = document.getElementById('main-content')
+  if (existing) return existing
+  const host = document.createElement('div')
+  host.id = 'main-content'
+  host.className = 'main-content'
+  document.body.append(host)
+  return host
+}
+
+/**
  * 挂上组件并把配置灌进外壳 store。
  *
  * ⚠️ 两点都是这个仓库里踩过的（写法照 `sections/GeneralSection.spec.ts`）：
@@ -52,6 +66,7 @@ function page(entries: StatusLogEntry[]): StatusLogPage {
  * ② invoke 的假实现必须在 `mount` 之前装好：组件挂载即发首帧 peek（watch immediate）。
  */
 async function mountFeed(on: boolean, entries = [entry(3), entry(2), entry(1)]) {
+  ensureOverlayHost()
   invokeMock.mockImplementation(async (command: string) => (command === 'get_status_log' ? page(entries) : undefined))
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -114,7 +129,11 @@ describe('StatusLogFeed', () => {
     await wrapper.find('.lg-inline__expand').trigger('click')
     await flushPromises()
     const modal = document.querySelector('.lg-modal')
-    expect(modal, '浮层 Teleport 到 body').not.toBeNull()
+    // ⚠️ 宿主必须是内容区 `#main-content`，不是 `body`：挂在 body 上时浮层按视口铺满，
+    // 实测会盖住一级 / 二级标签页，方角还伸出 `.main-shell` 的圆角之外（比窗口还大）。
+    expect(modal, '浮层要 Teleport 进主窗内容区宿主').not.toBeNull()
+    expect(modal?.parentElement?.id, '浮层的父节点必须是 #main-content').toBe('main-content')
+    expect(modal?.closest('.main-window'), '浮层不许落在滚动区里面').toBeNull()
     expect(modal.querySelectorAll('.lg-split > *').length).toBe(2, '左右两栏')
     expect(modal.textContent).toContain('seq')
     expect(modal.textContent).toContain('c4-1')

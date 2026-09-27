@@ -1061,17 +1061,31 @@
 /*
  * 左侧会话记录列表卡：与右侧详情高度分开算，卡片自身固定高度（同 ep-list-card），
  * 列表吃满剩余高度并内部滚动 —— 否则行多时会把底部「清除全部」挤出可视区。
+ * ⚠️ 选择器必须两类权重：`.ufo-card` 自带 `@apply grid`（未分层，见 `src/assets/main.css` 卡片基类
+ * 那条注释），单类 `.sr-list-card { @apply flex }` 压不过它 —— 真按 grid 渲染时卡里的 `flex-1`
+ * 全部失效，三行还被 `align-content: normal`（= stretch）平摊富余高度。同 `.ufo-card.light-sound`。
  */
-.sr-list-card {
+.ufo-card.sr-list-card {
   @apply flex flex-col;
 }
 
-/* 右侧详情独立滚动，左侧列表的滚动由 .sr-list 负责。 */
-.sr-detail {
+/*
+ * 右侧详情 = flex 列，按**卡片实际高度**分三块，不再各块写死高、整卡滚。
+ * 只有「最近提问」吃剩余高度（长提问在块内滚）；字段表与日志条目按内容高。
+ * ⚠️ 同样必须两类权重才打得过 `.ufo-card` 的 grid（原因见上面 `.sr-list-card` 的注释）。
+ * 保留 `overflow-y: auto` 只作矮窗口兜底：提问有 `min-height` 下限，撑不下时才整卡滚。
+ */
+.ufo-card.sr-detail {
+  @apply flex flex-col;
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
+}
+
+/* 提问块以外的一切（卡头 / 字段表 / 存活提醒 / 日志条目 / 空态）都不参与拉伸。 */
+.sr-detail > :not(.sr-detail__prompt) {
+  @apply shrink-0;
 }
 
 /*
@@ -1088,8 +1102,12 @@
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
+/* ⚠️ min-w-0 必须有：本行是 .sr-list（grid）的项，min-width 默认 auto 会让列轨停在
+   提问那句 nowrap 文本的固有宽度上（无头 Chrome 实测 224px 的列被顶到 761–1012px，随提问长度变）——
+   于是 .sr-list 出横向滚动条、而 .sr-list__prompt 的省略号永远不触发。
+   按钮自己带 min-w-0 不够，收缩要从网格项这一层放行。 */
 .sr-list__item {
-  @apply flex items-stretch gap-1;
+  @apply flex min-w-0 items-stretch gap-1;
 }
 
 /* 整行可点选（与信息卡拓展一致），两行内容：标识行 + 提问摘要。
@@ -1170,13 +1188,22 @@
   border-color: var(--ufo-border);
 }
 
-/* 详情：紧凑的 label / value 两列，长值按字符断行。 */
+/*
+ * 详情：紧凑的 label / value 两列，**一行一条**。
+ *
+ * ⚠️ 值走 `truncate` 而不是原来的「按字符断行」：字段表一旦多出一行（长 endpoint 断成两行、
+ * 或有/无 token 差一条），`flex-1` 的「最近提问」就少一行 —— 切会话时整卡跟着跳。
+ * 完整原文留在 `title`（Endpoint 那行含上游与本地代理两段，见面板里的 `endpointTitle`）。
+ */
 .sr-detail__fields {
-  @apply m-0 grid gap-1.5;
+  @apply m-0 grid min-w-0 gap-1.5;
 }
 
+/* ⚠️ min-w-0 逐层放行（同 `.sr-list__item` 那条）：grid 项的 `min-width` 默认 auto，
+   而 `dd` 那句 nowrap 文本的最小内容宽就是整条 URL 的宽 —— 不给 0，轨道会被顶到 392px 外，
+   详情卡出横向滚动条，滚动条再吃掉 10px 纵向高，「最近提问」于是又跟着数据跳。 */
 .sr-detail__fields > div {
-  @apply flex items-baseline gap-2;
+  @apply flex min-w-0 items-baseline gap-2;
 }
 
 .sr-detail__fields dt {
@@ -1185,8 +1212,7 @@
 }
 
 .sr-detail__fields dd {
-  @apply m-0 min-w-0 flex-1 text-[12.5px];
-  overflow-wrap: anywhere;
+  @apply m-0 min-w-0 flex-1 truncate text-[12.5px];
 }
 
 /* Endpoint 行的本地代理副标注：上游后面用小字灰显「经本地代理 <地址>」。 */
@@ -1197,8 +1223,10 @@
   overflow-wrap: normal;
 }
 
+/* 提问块是详情里唯一拉伸的一块：两行网格，正文那行吃满并内部滚。 */
 .sr-detail__prompt {
-  @apply grid gap-1 rounded-[10px] border p-2.5;
+  @apply grid min-h-[96px] flex-1 gap-1 rounded-[10px] border p-2.5;
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--ufo-input);
   border-color: var(--ufo-border);
 }
@@ -1209,17 +1237,32 @@
 }
 
 .sr-detail__prompt-text {
-  @apply m-0 max-h-[22vh] overflow-y-auto whitespace-pre-wrap text-[12.5px] leading-relaxed;
+  @apply m-0 min-h-0 overflow-y-auto whitespace-pre-wrap text-[12.5px] leading-relaxed;
   color: var(--ufo-text);
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
-/* 存活会话的提醒：说清「清除后该行还会回来」，避免被当成 bug。 */
-.sr-detail__note {
-  @apply m-0 text-[11px] leading-relaxed;
+/*
+ * 存活提醒：标题行里紧跟标题、把右侧的 provider · session 推到底边。
+ * ⚠️ 只能占一行（`mr-auto` + `truncate`）：它一旦换行，标题行长高一行、正文就少一行，
+ * 「最近提问」块又跟着跳高 —— 提醒从正文搬进卡头就是为了钉住那块的高度。
+ */
+.sr-detail__live {
+  @apply mr-auto min-w-0 truncate text-[11px];
   color: var(--ufo-status-yellow-text);
+}
+
+/*
+ * 标题行的另外两块不许跟着缩：flex 默认按可缩性分摊挤压，提醒那句最长，
+ * 结果右侧的 `provider · session id` 先被挤到换行（无头 Chrome 实测标题行 45.6 → 60.3px），
+ * 等于把跳高从正文搬回了卡头。只有 `.sr-detail__live` 一块该被挤（它自己 truncate）。
+ * ⚠️ 选择器要三类权重才压得住入口 CSS 里的 `.ufo-card__title` / `.ufo-card__hint`（模块 CSS 排在前面）。
+ */
+.sr-detail > .ufo-card__header > .ufo-card__title,
+.sr-detail > .ufo-card__header > .ufo-card__hint {
+  @apply shrink-0 whitespace-nowrap;
 }
 
 .sr-detail__placeholder {
@@ -1538,24 +1581,46 @@
   color: var(--ufo-status-yellow-text);
 }
 
-/* ══ 记录详情末尾那个可展开条目 ══ */
+/* ══ 记录详情末尾那个可展开条目 ══
+ *
+ * ⚠️ 整块定高：它是详情卡的最后一块，而「最近提问」是 `flex-1`（= 卡片高 − 其余各块）。
+ * 这块的行数按数据变（会话只有 1 条日志 → 摘要少一行；日志关闭 → 换成两行说明；导出后
+ * 多一行反馈），提问块就跟着忽高忽低 —— 实测四种状态 85.6 / 104 / 124.8 / 193.1px，
+ * 提问块因此在 158.7–242.1 之间跳。钉成 125px（最满那种状态的高），装不下的状态在块内滚。
+ */
 .lg-inline {
-  @apply grid content-start gap-1.5 rounded-[10px] border p-2.5;
+  @apply grid h-[125px] shrink-0 content-start gap-1.5 overflow-y-auto rounded-[10px] border p-2.5;
   background: var(--ufo-input);
   border-color: var(--ufo-border);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
+/* 卡头不许换行：`.lg-inline` 已经钉死 125px，标题一旦掉到第二行，
+   「导出本会话」与展开钮就会被块内滚动推出去（窄栏里尤其明显）。 */
 .lg-inline__head {
-  @apply flex flex-wrap items-center gap-2;
+  @apply flex flex-nowrap items-center gap-2;
+}
+
+/*
+ * 折叠块与提问块里的每一层 grid 项都要 `min-w-0`（同 `.sr-list__item`、`.sr-detail__fields > div`）。
+ * 留着默认的 `min-width: auto` 时，那行的最小内容宽 = 整条结论 / 整段 reason / 整条 URL 的宽，
+ * 单列轨道被顶宽 → 定高槽里再冒出横向滚动条，125px 的槽被吃掉一条，内容也就被裁了。
+ */
+.lg-inline > *,
+.lg-inline__rows > li,
+.sr-detail__prompt > * {
+  @apply min-w-0;
 }
 
 .lg-inline__label {
-  @apply m-0 text-[11px] font-medium;
+  @apply m-0 min-w-0 shrink truncate text-[11px] font-medium;
   color: var(--ufo-muted);
 }
 
 .lg-inline__count {
-  @apply ml-auto font-mono text-[10.5px];
+  @apply ml-auto shrink-0 font-mono text-[10.5px];
   color: var(--ufo-muted);
 }
 
@@ -1631,9 +1696,16 @@
   font-weight: 600;
 }
 
-/* ══ 整窗浮层：外壳照 `.jse-modal` 那一套（实色铺满、无 blur）══ */
+/* ══ 整窗浮层：外壳照 `.jse-modal` 那一套（实色铺满、无 blur）══
+ *
+ * ⚠️ `absolute` 而不是 `fixed`：本层由 `StatusLogOverlay` `Teleport` 到主窗的浮层宿主
+ * `#main-content`（标题栏以下、含两级 tabbar 那一整块），铺满的是**那块区域** ——
+ * 顶边落在关闭按钮下面，四周不越出 `.main-shell` 的圆角边框。
+ * 写成 `fixed inset-0` 时铺满的是整个 webview —— 实测既压住标题栏，
+ * 方角又伸出圆角之外（浮层看起来比窗口还大）。
+ */
 .lg-modal {
-  @apply fixed inset-0 z-50 flex flex-col;
+  @apply absolute inset-0 z-40 flex flex-col;
   background: var(--ufo-bg-main);
   color: var(--ufo-text);
 }

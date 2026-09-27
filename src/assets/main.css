@@ -336,6 +336,19 @@ html.is-tooltip-window #app {
   outline-offset: 2px;
 }
 
+/*
+ * 标题栏之下、`#main-content`：含两级 tabbar 与滚动区，既是布局容器，也是组件浮层的**宿主**。
+ *
+ * ⚠️ `position: relative` 是关键：浮层（`StatusLogOverlay` 一类）`Teleport` 到这里再写
+ * `absolute inset-0`，于是它的边界 = 标题栏以下那一整块 —— 展开时盖住 tabbar 是允许的
+ * （浮层自己有「完成」与 Esc 两个出口），但顶边落在关闭按钮下面、四周不越出 `.main-shell`
+ * 的圆角边框。挂在 `body` 上时铺的是**视口**：实测既盖住标题栏，又把方角画到圆角之外
+ * （浮层比窗还大）。外壳只提供这块区域，不认识任何在里面上演的组件。
+ */
+.main-content {
+  @apply relative flex min-h-0 flex-1 flex-col;
+}
+
 .main-window {
   @apply flex min-h-0 flex-1 flex-col items-center justify-start gap-4 overflow-x-hidden overflow-y-auto px-4 py-6;
   color: var(--ufo-text);
@@ -1146,8 +1159,13 @@ html.is-tooltip-window #app {
 }
 
 /* 整窗编辑弹窗：主窗是实色哑光面板，弹窗同 token（实色底、无 blur、细边框）。 */
+/*
+ * 整窗编辑弹层：铺满的是浮层宿主 `#main-content`（标题栏以下那一整块），不是视口 ——
+ * 所以 `absolute` 而不是 `fixed`（同 `.lg-modal`）。顶边落在关闭按钮下面，四周不越出
+ * `.main-shell` 的圆角边框，标题栏始终可点（拖窗 / 隐藏到托盘）。
+ */
 .jse-modal {
-  @apply fixed inset-0 z-50 flex flex-col;
+  @apply absolute inset-0 z-40 flex flex-col;
   background: var(--ufo-bg-main);
   color: var(--ufo-text);
 }

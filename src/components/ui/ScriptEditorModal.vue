@@ -65,7 +65,13 @@ defineExpose({ restoreCaret })
 </script>
 
 <template>
-  <Teleport to="body">
+  <!--
+    宿主是主窗的浮层区 `#main-content`（标题栏以下那一整块），不是 `body`：
+    挂在 body 上时铺的是视口 —— 既压住标题栏（拖窗 / 隐藏到托盘点不到），方角又伸出
+    `.main-shell` 的圆角之外（弹层看起来比窗口还大）。与 `StatusLogOverlay` 同一口径。
+    只有主窗用得到整窗编辑（`EndpointFlowEditor`），所以这个目标一定存在。
+  -->
+  <Teleport to="#main-content">
     <!--
       整窗弹窗：铺满窗口的实色哑光面板（与主窗同 token，不用毛玻璃）。
       @wheel.stop 拦住滚轮冒泡：否则光标停在标题栏上滚动时，滚的是背后的主窗内容。

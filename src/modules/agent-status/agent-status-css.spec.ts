@@ -420,6 +420,11 @@ describe('模块样式 · 设置页卡片必须真的撑满列宽', () => {
 
     const row = blockAfter(css, '.sr-list__row {')
     expect(row, '会话卡片要定高（行高一致才谈得上滚动位置可预测）').toContain('min-height: 52px')
+    // ⚠️ truncate 要生效，收缩必须从**网格项**这一层放行：`.sr-list` 是 grid，`.sr-list__item`
+    // 的 min-width 默认 auto 会把列轨钉在提问那句 nowrap 文本的固有宽度上（无头 Chrome 实测
+    // 224px 的列被顶到 1012px），结果是列表出横向滚动条、省略号永远不出现。
+    const item = blockAfter(css, '.sr-list__item {')
+    expect(item, '列表项必须 min-w-0，否则提问不会省略号而是把列表撑出横向滚动').toContain('min-w-0')
     const prompt = blockAfter(css, '.sr-list__prompt {')
     expect(prompt, '提问摘要只给一行').toContain('truncate')
     expect(prompt, '不许再把提问改回两行夹行高').not.toContain('line-clamp-2')
@@ -430,7 +435,104 @@ describe('模块样式 · 设置页卡片必须真的撑满列宽', () => {
     const modalBody = blockAfter(css, '.lg-modal__body {')
     expect(modalBody, '浮层主体要吃满剩余高度且允许收缩').toContain('min-h-0')
     expect(modalBody).toContain('flex-1')
+    // ⚠️ 浮层必须 `absolute`（宿主 = 主窗内容区 `#main-content`）：`fixed` 铺的是视口，
+    // 实测既盖住顶部两级标签页，又把方角画到 `.main-shell` 圆角之外（1000×750 的窗，
+    // 浮量到 1249×1221）。
+    const modal = blockAfter(css, '.lg-modal {')
+    expect(modal, '整窗浮层要贴着内容区铺，不许按视口').toContain('absolute')
+    expect(modal, '不许改回 fixed：那会盖住标签页并伸出窗口圆角').not.toContain('fixed')
     const split = blockAfter(css, '.lg-split {')
     expect(split, '浮层两栏都要能独立滚').toContain('min-h-0')
+  })
+
+  /**
+   * 「记录详情」卡的三块必须按**卡片实际高度**分配（用户反馈：三块都固定高，卡底空一片）。
+   *
+   * 口径：详情卡是 flex 列；只有「最近提问」拉伸（`flex-1` + `min-h-0`，长文在块内滚），
+   * 字段表 / 日志条目等一律按内容高。⚠️ 提问正文不许退回视口高的固定上限（原先那个
+   * `max-h` 夹的是视口的 22%）—— 那正是「卡很高、提问区却很矮、剩下全空白」的成因。
+   */
+  it('grows the record-detail prompt with the card instead of capping it to the viewport', () => {
+    const css = agentStatusCss()
+    // ⚠️ 两类权重：`.ufo-card` 的 `@apply grid` 未分层，单类 `.sr-detail { @apply flex }` 压不过它
+    // （见 `src/assets/main.css` 卡片基类注释）。写成单类时卡其实还是 grid，`flex-1` 全失效，
+    // 而且 `align-content: normal`（= stretch）会把富余高度平摊给每一行 —— 多一行 / 少一行
+    // 所有元素高度一起重算，就是「切会话时详情卡的块跳高」（无头 Chrome 实测四行 45.6/116.9/122.1/137.4）。
+    expect(/\.ufo-card\.sr-detail \{[^}]*@apply[^;]*\bflex flex-col\b/.test(css), '.sr-detail 必须两类权重才打得过 grid').toBe(
+      true
+    )
+    const fixed = blockAfter(css, '.sr-detail > :not(.sr-detail__prompt) {')
+    expect(fixed, '提问块以外的详情子项都不许被拉伸').toContain('shrink-0')
+
+    const prompt = blockAfter(css, '.sr-detail__prompt {')
+    expect(prompt).toContain('flex-1')
+    expect(prompt, '矮窗口要给提问留可视下限，否则会塌成一条线').toContain('min-h-[96px]')
+    expect(prompt, '正文那行才是一fr，标签行按内容高').toContain('auto minmax(0, 1fr)')
+
+    const text = blockAfter(css, '.sr-detail__prompt-text {')
+    expect(text).toContain('min-h-0')
+    expect(text, '滚动落在正文自己').toContain('overflow-y-auto')
+    expect(text, '不许再用 vh 把提问夹成视口的固定比例').not.toMatch(/vh/)
+  })
+
+  /**
+   * 存活提醒只能待在标题行，且只能占一行（用户要求：提醒移到标题旁，提问块高度按已归档那条定死）。
+   *
+   * 它原先是正文里的一个兄弟节点：flex 列里多一行 = 提问块少一行，选中「存活」与「已归档」
+   * 两类会话之间整卡跳高。搬进标题行后仍有一条新坑 —— 标题行是 flex，
+   * 提醒与右侧 `provider · session id` 都会跟着被挤，挤到换行就等于把跳高搬回卡头（实测 45.6 → 60.3px）。
+   * 所以：提醒自己 `min-w-0 truncate`，标题与右侧读数 `shrink-0 whitespace-nowrap` 锁死。
+   */
+  it('keeps the live-session reminder on the title line and one line tall', () => {
+    const css = agentStatusCss()
+    // 列表卡同一条 grid 权重规矩（它也是 `.ufo-card`）。
+    expect(/\.ufo-card\.sr-list-card \{[^}]*@apply[^;]*\bflex flex-col\b/.test(css), '.sr-list-card 必须两类权重').toBe(
+      true
+    )
+
+    const live = blockAfter(css, '.sr-detail__live {')
+    expect(live, '存活提醒规则必须存在').not.toBe('')
+    expect(live, '提醒要独占标题行的富余，且放得下不换行').toContain('mr-auto')
+    expect(live).toContain('min-w-0')
+    expect(live, '提醒只能截断，不能换行加高卡头').toContain('truncate')
+
+    const locked = blockAfter(css, '.sr-detail > .ufo-card__header > .ufo-card__title,')
+    expect(locked, '标题行的另外两块要锁死').toContain('shrink-0')
+    expect(locked).toContain('whitespace-nowrap')
+  })
+
+  /**
+   * 「最近提问」是 `flex-1`，高 = 卡片高 − 其余各块 ⇒ 要它固定，另外几块必须不随行数变。
+   *
+   * 用户反馈：切换选中会话时详情卡的元素高度会跳。两处成因（都按真实数据量过）：
+   * ① 字段表的「Token 累计」原来是 `v-if`（有无统计值差一行），且值按字符断行（长 endpoint 两行）；
+   * ② 转灯日志折叠块原来是内容高：日志关闭 / 只有 1 条 / 正常两条摘要 / 导出后带反馈，
+   *   四种状态实测 85.6 / 104 / 124.8 / 193.1px，把提问块在 158.7–242.1 之间顶来顶去。
+   * 口径：字段表一行一条（`truncate`，全文进 `title`），折叠块钉成定高槽、装不下在块内滚。
+   */
+  it('pins the blocks around the prompt so its height cannot move', () => {
+    const css = agentStatusCss()
+    const dd = blockAfter(css, '.sr-detail__fields dd {')
+    expect(dd, '字段表的值只占一行，否则提问块会被顶矮').toContain('truncate')
+    expect(dd, '不许再让长值断行加高字段表').not.toContain('overflow-wrap')
+
+    const inline = blockAfter(css, '.lg-inline {')
+    expect(inline, '折叠块要钉死高度').toMatch(/h-\[\d+px\]/)
+    expect(inline, '钉死的高度要允许块内滚，否则内容会被裁掉').toContain('overflow-y-auto')
+    expect(inline).toContain('shrink-0')
+    expect(blockAfter(css, '.lg-inline__head {'), '折叠块卡头不许换行（会把动作钮挤出定高槽）').toContain(
+      'flex-nowrap'
+    )
+
+    // ⚠️ 钉高只是前半段：nowrap 文本仍会把 grid 轨道顶宽（实测长 endpoint 把详情卡顶出
+    // 横向滚动条，滚动条再吃掉 10px 纵向高 → 提问块 202.8 ↔ 192.8）。收缩必须逐层放行。
+    expect(blockAfter(css, '.sr-detail__fields {'), '字段表自己要不许被内容顶宽').toContain('min-w-0')
+    expect(blockAfter(css, '.sr-detail__fields > div {'), '字段表的每一行要不许被内容顶宽').toContain('min-w-0')
+    const shrinkable = blockAfter(css, '.lg-inline > *,')
+    expect(shrinkable, '折叠块 / 提问块里的 grid 项都要 min-w-0').toContain('min-w-0')
+    // 选择器写在规则头而不是规则体里，所以要对着原文查这三条都在同一条规则上。
+    expect(css, '折叠块内的每一行摘要也要放行收缩').toMatch(
+      /\.lg-inline > \*,\s*\.lg-inline__rows > li,\s*\.sr-detail__prompt > \*/
+    )
   })
 })

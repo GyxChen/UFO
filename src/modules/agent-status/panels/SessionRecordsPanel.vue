@@ -47,6 +47,9 @@ const CLEARED_FEEDBACK = '已清除全部会话记录'
 /** 此刻还活着的会话 key 集合：按它给存档行打「存活」标记。 */
 const liveKeys = computed(() => new Set(agentStatus.sessions.map(session => session.key)))
 
+/** 存活提醒原文：显示在详情标题旁一行，放不下走省略号，完整原文留作 `title`。 */
+const LIVE_NOTE = '该会话此刻仍在运行：清除/移除只删除归档，它会在下一个事件后被重新记录。'
+
 /** 选中项；列表会因后端刷盘而变化，故按 key 现算而非缓存对象。 */
 const selected = computed<SessionRecord | null>(
   () => records.records.find(record => record.key === selectedKey.value) ?? null
@@ -91,13 +94,26 @@ onBeforeUnmount(() => {
  */
 const recordRows = computed(() => records.records.map(record => ({ record, meta: providerMeta(record.provider) })))
 
-/** 按本组件配置里的单位格式化 token 总量；无统计值时返回空串（调用方省略该行）。 */
+/** 按本组件配置里的单位格式化 token 总量；无统计值返回空串，由调用方显 `—` 占位。 */
 function tokenDisplay(tokens: SessionRecord['tokens']): string {
   if (!tokens) return ''
   const total = tokenTotal(tokens)
   return agentStatusSettings(modules.config).token_unit === 'm_tokens'
     ? formatTokenMillions(total)
     : formatTokenCount(total)
+}
+
+/**
+ * Endpoint 行的完整原文（反查出的上游 + 经手的本地代理），给该行的 `title`。
+ *
+ * 行本身只占一行（见 `.sr-detail__fields dd` 的 `truncate`）：字段表多出一行，
+ * `flex-1` 的「最近提问」就少一行 —— 详情卡里切换会话时整块跳高的成因之一。
+ */
+function endpointTitle(record: SessionRecord): string {
+  const endpoint = recordEndpoint(record)
+  const note = recordLocalNote(record)
+  if (!endpoint) return '—'
+  return note ? `${endpoint}（经本地代理 ${note}）` : endpoint
 }
 
 /**
@@ -214,6 +230,13 @@ function onClearAll() {
     <section class="ufo-card sr-detail" aria-labelledby="sr-detail-title">
       <div class="ufo-card__header">
         <h2 id="sr-detail-title" class="ufo-card__title">记录详情</h2>
+        <!-- 存活提醒挂在标题旁，不放正文：正文里多出一行会把 flex-1 的提问块压矮，
+             切换选中会话（存活 ↔ 已归档）时整卡元素跟着跳高。
+             ⚠️ 它是标题行的直接子节点，不能包进 `.ufo-heading-row` —— 那个容器允许换行，
+             提醒一掉到第二行，标题就长高一行，等于把跳高从正文搬到了卡头。 -->
+        <span v-if="selected && liveKeys.has(selected.key)" class="sr-detail__live" :title="LIVE_NOTE">
+          {{ LIVE_NOTE }}
+        </span>
         <span v-if="selected" class="ufo-card__hint">
           {{ providerMeta(selected.provider).label }} · {{ selected.session_id.slice(0, 12) }}
         </span>
@@ -226,7 +249,9 @@ function onClearAll() {
           </div>
           <div>
             <dt>Endpoint</dt>
-            <dd>
+            <!-- ⚠️ 值只占一行（`truncate`）：字段表多一行 = 提问块少一行。
+                 完整原文（上游 + 本地代理地址）留在 `title` 里。 -->
+            <dd :title="endpointTitle(selected)">
               {{ recordEndpoint(selected) || '—' }}
               <span
                 v-if="recordLocalNote(selected)"
@@ -237,9 +262,11 @@ function onClearAll() {
               </span>
             </dd>
           </div>
-          <div v-if="tokenDisplay(selected.tokens)">
+          <!-- Token 行常驻、没值时显 `—`：以前这里是 v-if，有/无 token 的会话之间字段表会差一行，
+               把 flex-1 的提问块顶得忽高忽低。 -->
+          <div>
             <dt>Token 累计</dt>
-            <dd>{{ tokenDisplay(selected.tokens) }}</dd>
+            <dd>{{ tokenDisplay(selected.tokens) || '—' }}</dd>
           </div>
           <div>
             <dt>最后活动</dt>
@@ -254,9 +281,6 @@ function onClearAll() {
           <span class="sr-detail__prompt-label">最近提问</span>
           <p class="sr-detail__prompt-text">{{ selected.prompt || '（无提问记录）' }}</p>
         </div>
-        <p v-if="liveKeys.has(selected.key)" class="sr-detail__note">
-          该会话此刻仍在运行：清除/移除只删除归档，它会在下一个事件后被重新记录。
-        </p>
       </template>
       <p v-else class="sr-detail__placeholder">先在左侧选择一条会话记录。</p>
 

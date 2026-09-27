@@ -186,6 +186,14 @@ onBeforeUnmount(() => {
       </button>
     </header>
 
+    <!--
+      浮层宿主（`#main-content`）：标题栏**以下**整块，含两级 tabbar。
+      组件浮层（`StatusLogOverlay` 一类）`Teleport` 到这里再写 `absolute inset-0`，
+      顶边正好落在关闭按钮下面 —— 展开时盖住 tabbar 是允许的（浮层自带「完成」与 Esc 两个出口），
+      但绝不越出 `.main-shell` 的圆角边框，也不碰标题栏：拖窗与隐藏到托盘照常可用。
+      外壳只提供这块区域，不认识任何在里面上演的组件。
+    -->
+    <div class="main-content" id="main-content">
     <!-- 一级：悬浮窗设置 / 各组件设置页 / 关于（下划线，见 .main-tabs 默认样式）。 -->
     <BaseTabs v-model="activeTab" id-prefix="main" aria-label="主窗口分区" :tabs="tabItems">
       <!-- 右端动作：切换深浅色。月亮 = 当前是深色，太阳 = 当前是浅色（点击切到另一个）。 -->
@@ -263,5 +271,6 @@ onBeforeUnmount(() => {
         <component :is="activeSection.component" />
       </section>
     </main>
+    </div>
   </div>
 </template>

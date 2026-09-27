@@ -6,6 +6,10 @@
  * `ScriptEditorModal.vue` —— 它模板里写死了 `ScriptEditorFrame` 与 `aria-label`，
  * 塞不进两栏内容；加 slot 会动到正在用的脚本编辑器，所以这里另写一个薄组件。
  *
+ * ⚠️ 浮层的宿主是主窗的 `#main-content`（不是 `body`）：那是标题栏以下、含两级 tabbar 的
+ * 一整块，所以顶边落在关闭按钮下面 —— 展开时盖住 tabbar 是允许的，圆角由 `.main-shell` 裁
+ * （为什么不能挂 body，见模板里的注释）。
+ *
  * 主从布局与「信息卡拓展 / 会话记录」同一套语言：左选一条，右看全字段。
  * ⚠️ 两处滚动都靠 `min-height: 0` 的高度链，少一环就退化成整页滚。
  */
@@ -203,7 +207,13 @@ function clock(tsMs: number) {
 </script>
 
 <template>
-  <Teleport to="body">
+  <!--
+    宿主是主窗的浮层区 `#main-content`（标题栏以下、含两级 tabbar 那一整块），不是 `body`：
+    挂在 body 上时铺的是视口 —— 实测既压住标题栏，方角又伸出窗口圆角之外。
+    挂进宿主后顶边正好落在关闭按钮下面：展开时盖住 tabbar 是允许的（本层有「完成」与 Esc），
+    但标题栏要留着 —— 拖窗与「隐藏到托盘」在浮层开着时也得能用。
+  -->
+  <Teleport to="#main-content">
     <div class="lg-modal" role="dialog" aria-modal="true" aria-label="转灯日志完整链路" @wheel.stop>
       <header class="lg-modal__bar">
         <h2 class="lg-modal__title">转灯日志 · {{ sessionKey }}</h2>
