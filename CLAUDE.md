@@ -339,6 +339,21 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - **新命令注册三处**：`#[tauri::command]` + `permissions/status.toml` 的 `[[permission]]` + capability 文件。`get_session_records` 给三窗口（`default.json`），`delete_session_record`/`clear_session_records` 只在 `main-module-settings.json` 授权（仅 main）。
 - ⚠️ 会话记录面板同样**不能用 `window.alert`/`confirm`**（`tauri-plugin-prevent-default`），删除/清除都走两步确认 + `role="status"`。
 
+### 转灯日志（全链路裁决账）
+
+「灯为什么不动 / 为什么乱跳」原先查不到：兼容层的静默忽略、内核的四条 `return false`、巡检器的六类丢弃，在外部都与「灯本来就不该动」同形。现在把每一次裁决落成一行 JSONL，让链路从「只能复现」变成「可以回查」。
+
+- **后端**：`src-tauri/src/modules/agent_status/status/log/`（`record` / `paths` / `sink` / `config` / `runtime` / `commands`），22 个 `LogStage` + 68 个 `LogReason` —— 理由必须是**具名枚举**（自由文本没法聚合也没法验收）。存储是 JSONL 而不是 SQLite：hook 短命进程也必须记账，而 hook 禁开 AppData 的库。贯穿键是 `trace_id`（hook 生成 `<pid>-<纳秒>`，同时是 inbox 文件名），⚠️ **不用** payload 可控的 `event_id` —— 拿它拼路径就是路径注入。
+- **界面落位（不新开二级分区）**：① 会话记录页顶部一张**占满宽度**的设置卡；② 日志本体是「记录详情」末尾的一个**可展开条目**（折叠态 = 一条结论 + 两行摘要 + 行尾「导出本会话」与展开图标钮）；③ 展开成**整窗两栏浮层**（左流水按 `key` 过滤、右 = 选中那条的全部字段）。外壳照 `.jse-modal` 那套类名，⚠️ 但**没有复用 `ScriptEditorModal.vue`** —— 它没有 slot。版面见 `reference/mock/status-log/`。
+- **一个 switch 是唯一入口**：关 = `{level:"off", hook_enabled:false}` 完全不记；开 = `{level:"verbose", hook_enabled:true}` 明细级 + hook 侧同记。四档分段控件与独立 hook 开关都不再出现在界面上，但 Rust `LogConfig` 的字段结构保留。⚠️ 两个字段必须**成对**写（只写 level 会留下 `hook_enabled:false`，hook 那一侧永远正是瞎的）；⚠️ 落盘走 `updateModuleSettings` 的**模块层浅合并**，`log` 必须整块提交，否则 `retention_days` 等未暴露字段被抹掉。
+- **默认关**：`DEFAULT_LEVEL = Off`。⚠️ 它与 `FALLBACK_LEVEL = Normal` 是**两个不同的回落**，不许合并成一个常量：没有 `log` 块 = 没人打开过开关 = 不记；块里 `level` 写坏 = 有人想记但写错了 = 落裁决级（静默变成「什么都不记」比少记一档更难查）。运行态测试要「正在记」时显式构造 `recording()`，别拿 `LogConfig::default()` 当「开着」。
+- ⚠️ **硬红线：关掉日志不得影响「会话记录 / 记录详情」里的提问、Endpoint、Token 等存档** —— 那是加日志之前就有的独立功能（`session_store.rs`）。由 `hook.rs` 的 `a_disabled_log_still_publishes_the_event_and_touches_nothing_else` 锁：off 时事件照常落 inbox、字段原样，而日志目录连建都不建。`hook-debug.log` 也归这个开关管：关了就零落盘。
+- **明细级会落用户文本**：`prompt` / `waiting_reason` 的截断摘录（`record::excerpt` ≤160 字符）。风险句常驻在 switch 正下方（不进问号角标）；凭据（`secrets.get` 值、`auth.json`、`settings_config`）任何档位都不写。
+- **导出**：`export_status_log(path?, query?)`，路径来自 `tauri-plugin-dialog` 的原生「另存为」（插件依赖 + `dialog:allow-save` **只给主窗**）。既然路径来自参数，`runtime.rs::validate_export_target` 就是唯一防线：必须绝对路径、后缀限 `jsonl/log/txt`、拒 UNC、拒落在日志目录内。省略路径则落 `<日志目录>/export/diagnose-*.jsonl` 作退路。
+- **命令 4 个**（`get_status_log` 给三窗口，`clear/export/set_status_log_view` 只给主窗）。`set_status_log_view` 决定 monitor 每轮要不要广播增量，页面在 `onMounted/onBeforeUnmount` 成对上报 —— 没人看时零 IPC。广播载荷与查询载荷同形状（`StatusLogPage`）。
+- **前端文案与 Rust 同源**：`lib/status-log.ts` 的 `STAGE_LABELS` / `REASON_EXPLAIN` 由 `lib/status-log-reasons.spec.ts` 用 `?raw` 读 `record.rs` 双向断言（漏一个 = 日志里出现查不到的英文词；多一个 = 永远不会出现的键骗读代码的人）。
+- 契约、黑洞清单、接线状态表（哪些 `LogReason` 还没有产生点）与验收清单见 `reference/doc/agent-status-log-guide.md`。
+
 ### 消息推送（ntfy / Bark，可扩展）
 
 灯态变化可以推到手机。设置页是「Agent 状态灯」的第四个二级分区「消息推送」（方案 A 版面：上半区总开关，下半区左列选服务、右列管该服务的收件方，与「信息卡拓展」同构）。

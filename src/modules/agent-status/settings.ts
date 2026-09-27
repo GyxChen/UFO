@@ -51,6 +51,124 @@ export const AGENT_MAX_CELL_STEPS: readonly number[] = [1, 2, 3, 4, 6, 9]
 /** 本模块格子上限的最大值：3×3 = 9。 */
 export const MAX_AGENT_CELLS = 9
 
+/**
+ * 转灯日志的档位，与 Rust `LogLevel` 的 serde 取值一一对应（`log/config.rs`）。
+ * 档位是「包含」关系：verbose ⊇ normal ⊇ minimal；`off` = 一行都不写。
+ *
+ * ⚠️ 界面上**没有**这四档的选择器：设置页只有一个 switch（见 `LOG_ON` / `LOG_OFF`），
+ * 这四档留着是因为 Rust 的配置块与旧配置仍按 `level` 解释。
+ */
+export type LogLevel = 'off' | 'minimal' | 'normal' | 'verbose'
+
+/** 日志配置块，字段与 Rust `LogConfig` 同名同义（时间单位毫秒、字节单位字节）。 */
+export interface LogSettings {
+  /** 记录到多细；`off` = 完全不记。 */
+  level: LogLevel
+  /** hook 侧（每次平台调用都要开一次进程）是否也写自己那一行。 */
+  hook_enabled: boolean
+  /** 日志文件留多少天（1–90）。 */
+  retention_days: number
+  /** 单个文件写到多大就换（64 KiB–64 MiB）。 */
+  max_file_bytes: number
+  /** 整个日志目录的体积上限（1–512 MiB）。 */
+  max_total_bytes: number
+  /** 每轮增量读活动文件最多读多少字节（64 KiB–4 MiB）。 */
+  live_tail_bytes: number
+  /** 内存环形缓冲留多少条给面板（500–50000）。 */
+  ring_capacity: number
+}
+
+const KIB = 1024
+const MIB = 1024 * KIB
+
+/**
+ * 缺 `log` 块时的默认值：**与 Rust `LogConfig::default()` 必须逐字段一致**。
+ *
+ * 默认关（`level: 'off'`）：设置页那个 switch 的语义是「关 = 完全不记，开 = 明细级 + hook 同记」，
+ * 默认值若是 normal，switch 读数与真实档位就对不上；且明细级会落提问摘录，
+ * 不能让「没人碰过开关」的机器上就出现用户文本。
+ */
+export const DEFAULT_LOG_SETTINGS: LogSettings = {
+  level: 'off',
+  hook_enabled: false,
+  retention_days: 14,
+  max_file_bytes: 8 * MIB,
+  max_total_bytes: 96 * MIB,
+  live_tail_bytes: 256 * KIB,
+  ring_capacity: 5000,
+}
+
+/**
+ * switch「打开」写入的那一对值：明细级 + hook 侧同记。
+ *
+ * ⚠️ 必须两个字段一起写：只写 level 会留下 `hook_enabled: false`，hook 那一侧（含
+ * 「适配器静默忽略」那些行）就是瞎的 —— 而那正是三家平台最容易掉灯的地方。
+ */
+export const LOG_SWITCH_ON: Pick<LogSettings, 'level' | 'hook_enabled'> = {
+  level: 'verbose',
+  hook_enabled: true,
+}
+
+/** switch「关闭」写入的那一对值。 */
+export const LOG_SWITCH_OFF: Pick<LogSettings, 'level' | 'hook_enabled'> = {
+  level: 'off',
+  hook_enabled: false,
+}
+
+/** 档位认得出来才用 given，否则回落 Rust 的 `FALLBACK_LEVEL`（裁决级，不是 off）。 */
+const LOG_LEVELS: readonly LogLevel[] = ['off', 'minimal', 'normal', 'verbose']
+
+/** 把任意输入读成一个档位；写错的值按「有人想记但写错了」处理，落到裁决级。 */
+function readLevel(value: unknown, blockPresent: boolean): LogLevel {
+  if (typeof value === 'string' && (LOG_LEVELS as readonly string[]).includes(value.trim())) {
+    return value.trim() as LogLevel
+  }
+  // 没有 log 块 = 没人打开过开关 → 默认档；有块但值不对 → 回落档（见 config.rs 同处注释）。
+  return blockPresent ? 'normal' : DEFAULT_LOG_SETTINGS.level
+}
+
+/** 整数逐字段取值 + 夹取，范围与 Rust 的 MIN/MAX 常量对齐（坏一个字段只影响它自己）。 */
+function readClampedInt(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+/**
+ * 从本组件的配置块里解析日志设置。
+ *
+ * ⚠️ 入参是**整块** `module_settings['agent-status']`（日志字段在它的 `log` 子块里）：
+ * 少包一层会把整块读成默认值，两边口径就悄悄分家了。
+ */
+export function logSettings(raw: Record<string, unknown> | undefined): LogSettings {
+  const block = raw?.log
+  const present = !!block && typeof block === 'object'
+  const fields = (block ?? {}) as Record<string, unknown>
+  return {
+    level: readLevel(fields.level, present),
+    hook_enabled: typeof fields.hook_enabled === 'boolean' ? fields.hook_enabled : DEFAULT_LOG_SETTINGS.hook_enabled,
+    retention_days: readClampedInt(fields.retention_days, DEFAULT_LOG_SETTINGS.retention_days, 1, 90),
+    max_file_bytes: readClampedInt(fields.max_file_bytes, DEFAULT_LOG_SETTINGS.max_file_bytes, 64 * KIB, 64 * MIB),
+    max_total_bytes: readClampedInt(fields.max_total_bytes, DEFAULT_LOG_SETTINGS.max_total_bytes, MIB, 512 * MIB),
+    live_tail_bytes: readClampedInt(fields.live_tail_bytes, DEFAULT_LOG_SETTINGS.live_tail_bytes, 64 * KIB, 4 * MIB),
+    ring_capacity: readClampedInt(fields.ring_capacity, DEFAULT_LOG_SETTINGS.ring_capacity, 500, 50_000),
+  }
+}
+
+/** switch 的读数：只要档位不是 `off` 就算「打开」（历史脏值也一样，确实有东西在记）。 */
+export function logSwitchOn(settings: LogSettings): boolean {
+  return settings.level !== 'off'
+}
+
+/**
+ * 按 switch 的新状态产出**整块**日志设置（未暴露的字段原样保留）。
+ *
+ * ⚠️ 落盘走 `updateModuleSettings`，它是模块层浅合并：只传 `{ log: { level } }` 会把
+ * `retention_days` 等字段整块丢掉，所以这里必须返回完整一块。
+ */
+export function logBlockWithSwitch(current: LogSettings, on: boolean): LogSettings {
+  return { ...current, ...(on ? LOG_SWITCH_ON : LOG_SWITCH_OFF) }
+}
+
 /** 本组件自己解释的配置（时间单位与后端一致，都是毫秒）。 */
 export interface AgentStatusSettings {
   /** 一轮执行完成后绿灯保留多久（毫秒）。 */
@@ -71,6 +189,14 @@ export interface AgentStatusSettings {
    * 音效由悬浮窗前端播放（`lib/sound-player.ts`），Rust 侧不解释本字段。
    */
   sound_enabled: boolean
+  /**
+   * 转灯日志的配置块（`module_settings['agent-status'].log`）。
+   *
+   * ⚠️ 界面上只有**一个 switch** 管它（关 = 完全不记；开 = 明细级 + hook 侧同记），
+   * 其余字段是给 Rust 运行态用的容量/保留期上限，不暴露给用户 —— 但写回时必须整块带上，
+   * 否则浅合并会把它们抹掉（见 `logBlockWithSwitch`）。
+   */
+  log: LogSettings
 }
 
 /** 缺配置时的默认值（与 Rust `AgentStatusSettings::default` 一致）。 */
@@ -82,6 +208,8 @@ export const DEFAULT_AGENT_STATUS_SETTINGS: AgentStatusSettings = {
   max_cells: MAX_AGENT_CELLS,
   // 默认开：音效是「不看屏幕也能知道出事了」的那一半价值，默认关会没人发现它存在。
   sound_enabled: true,
+  // 默认关：转灯日志是主动排障工具，不是常开黑匣子（明细级会落提问摘录）。
+  log: DEFAULT_LOG_SETTINGS,
 }
 
 /** 把任意输入夹进 [min, max] 的整数毫秒；非有限值回落 `fallback`。 */
@@ -124,6 +252,9 @@ export function agentStatusSettings(config: FloatingModuleConfig | null): AgentS
     max_cells: clampInt(raw.max_cells, ABS_MIN_CELLS, MAX_AGENT_CELLS, defaults.max_cells),
     // 布尔字段只认真正的布尔值：写错类型（如字符串 "false"）回落默认，不做隐式转换。
     sound_enabled: typeof raw.sound_enabled === 'boolean' ? raw.sound_enabled : defaults.sound_enabled,
+    // 日志整块交给 `logSettings` 解析：它有「有没有 log 块」这个判断，默认档因此能分清
+    // 「没人打开过开关」(off) 与「写了但值不对」(normal)，不能并进这里的通用夹取。
+    log: logSettings(raw),
   }
 }
 

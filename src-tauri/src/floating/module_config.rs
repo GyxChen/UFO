@@ -11,6 +11,13 @@ use tauri::{AppHandle, Emitter, State};
 
 const SCHEMA_VERSION: u16 = 1;
 
+/// 组件配置的文件名（落在 AppData 根下）。
+///
+/// 单独导出成常量是因为 **hook 短命进程也要读它**：那里的日志开关必须与主进程同一份
+/// 真相（见 `modules/agent_status/status/hook.rs` 的 `hook_log_config`），
+/// 两处各写字面量迟早会因为一次改名而悄悄分家。
+pub const MODULE_CONFIG_FILE: &str = "floating-modules.json";
+
 /// 一格边长的默认值（物理像素）：与 `tauri.conf.json` 里 floating 窗口的初值一致。
 /// 窗口启动瞬间就是这个尺寸，配置读出来之后再按 `cell_px` 重新吸附。
 const DEFAULT_CELL_PX: u16 = 45;

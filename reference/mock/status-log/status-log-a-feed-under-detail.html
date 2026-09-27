@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 转灯日志方案 A′ · 详情里的可展开项 + 整窗链路</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./status-log.css" />
+    <style>
+      /* 方案 A′ 特有：日志不再独占一块版面，而是「记录详情」里的一个可展开项（照脚本编辑器的交互） */
+      .sr-detail__body { display: grid; gap: 10px; align-content: start; }
+      /* 右列卡内部滚（真实现里就是 `.sr-detail { overflow-y: auto }`）：
+         详情字段 + 提问 + 日志条目加起来会超出卡高，不滚就会裁掉最后那一项。 */
+      .sr-split > .card--detail { overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #4f4f4f transparent; }
+    </style>
+  </head>
+  <body>
+    <div class="note">
+      <h1>方案 A′ · 转灯日志收进「记录详情」的一项，展开走整窗浮层</h1>
+      <p>
+        按你的批注改的：<b>左列一个字都不动</b>，日志不再是版面里独立的一块，而是右列「记录详情」在「最近提问」下面多出来的
+        <b>一个条目</b> —— 一行结论 + 最近两行摘要（整块约 127px），行尾的「导出本会话」旁边那个图标按钮点开
+        <b>整窗浮层</b>才看完整链路。这套交互与 <code>ScriptEditor</code> / <code>ScriptEditorModal</code>
+        （信息卡拓展里那个代码编辑视图）完全一样，你不用重新学：内嵌小块 + 角标展开 + <code>fixed inset-0</code> 实色面板 + 标题栏「完成」/ Esc 退出。
+        回<a href="./status-log-index.html">决策页</a>（关闭态三种画法 + 已拍定规格）。
+      </p>
+      <ul class="risk">
+        <li><b>好处</b>：详情不再被日志腰斩（A 原来最大的毛病没了）；「这条会话的灯为什么乱跳」= 选中 → 详情末尾就看到，不用另找入口。</li>
+        <li><b>代价</b>：看完整链路要多点一次「展开」；浮层期间看不到左列选中项和详情（脚本编辑器本来也是这个取舍）。</li>
+        <li><b>实现口径</b>：内嵌小块只查 <code>key = 选中会话</code> 的最近 3 行（一次 <code>get_status_log({key, limit:3})</code>，第一条做结论行、后两行做摘要）；浮层是<b>左右两栏主从</b> —— 左栏拉本会话全部流水（新→旧），点一行在<b>右栏</b>看那条记录的完整信息（<code>LogEntry</code> 全字段 + <code>detail</code> + 磁盘上那一行 JSONL 原文 + 同 <code>trace_id</code> 的其它行）。不再有「按这一条信号过滤」这个控件，也不在行下面就地展开。浮层外壳照 <code>.jse-modal</code> 那套 CSS 类（<code>main.css:1149</code> 起：实色铺满、44px 标题栏、「完成」+ Esc）。⚠️ 但 <code>ScriptEditorModal.vue</code> <b>没有 slot</b> —— 模板里写死了 <code>ScriptEditorFrame</code> 和 <code>aria-label</code>，那个组件复用不了；要么给它加一个默认 slot（动到正在用的脚本编辑器），要么新写一个约 30 行的 overlay 组件共用同一套类名。<b>这条要你先定。</b></li>
+        <li><b>导出口子两处、不是重复入口</b>：条目行上的「导出本会话」= <code>query.key = 选中会话</code>；浮层里的「导出当前条件」= 当下过滤条件（环节 / 只看被拒 / 暂停跟随期间）。同一个 <code>export_status_log({ path, query })</code>，只是范围不同。</li>
+        <li><b>左列会话卡片本轮改成定高 + 顶对齐</b>：<code>min-height: 52px</code>（实测渲染 60px）、两行内容 <code>align-content: start</code>、提问一律一行省略号收尾（真实现里把 <code>.sr-list__prompt</code> 的 <code>line-clamp-2</code> 换成单行）。⚠️ 两处坑：行内网格与<b>列表自己</b>都要写 <code>align-content: start</code> —— 列表是 flex 子项会被拉满卡高，默认 <code>stretch</code> 会把富余摊给每一行，实测能把行撑到 105px、看着就像内容被拉开。</li>
+      </ul>
+    </div>
+
+    <p class="window__caption"><b>① 开关打开 · 未展开</b>（日志条目就在「最近提问」下面，只给结论 + 最近两行 + 行内「导出本会话」）</p>
+    <div class="window">
+      <div class="titlebar"><span class="titlebar__dot" aria-hidden="true"></span><span>UFO</span><button class="titlebar__close" type="button" aria-label="隐藏到托盘">—</button></div>
+      <nav class="tabs-primary" aria-label="主导航"><button type="button">悬浮窗设置</button><button type="button" aria-selected="true">Agent 状态灯</button></nav>
+      <nav class="tabs-secondary" aria-label="Agent 状态灯设置分区"><button type="button">常规</button><button type="button">信息卡拓展</button><button type="button" aria-selected="true">会话记录</button><button type="button">消息推送</button></nav>
+
+      <div class="page">
+        <section class="card lg-settings" aria-labelledby="lg-a-title">
+          <div class="lg-settings__head">
+            <span class="switch" role="switch" aria-checked="true" tabindex="0" aria-labelledby="lg-a-title"></span>
+            <div class="lg-settings__text">
+              <h2 class="lg-settings__title" id="lg-a-title">转灯日志</h2>
+              <p class="lg-settings__sub">打开后记录每一次转灯裁决的完整链路；关闭则完全不写盘。</p>
+            </div>
+            <span class="lg-settings__state">正在记 · 明细级 + hook</span>
+          </div>
+          <p class="lg-settings__risk">明细级会把<b>提问摘录</b>与审批理由写进本地日志文件（<span class="mono">%APPDATA%\com.tauri-app.my\status\log\</span>），导出后即不受控；凭据与 API key 任何档位都不写。</p>
+        </section>
+
+        <div class="sr-split">
+          <!-- 左列：会话记录列表，与改动前完全一致 -->
+          <section class="card" aria-labelledby="sr-a-list">
+            <div class="card__head"><h3 class="card__title" id="sr-a-list">会话记录</h3><span class="card__hint">3 条</span></div>
+            <div class="sr-list">
+              <div class="sr-row"><button type="button" class="sr-row__main" aria-current="true"><span class="sr-row__line"><img class="sr-row__icon sr-row__icon--mono" src="../../../src/assets/codex.svg" alt="Codex" /><span class="dot dot--green" title="灯亮着"></span><span class="sr-row__id">8f2c1a90</span><span class="sr-row__time">14:32:08</span></span><span class="sr-row__prompt">帮我把 rollout 巡检的去抖基线接上 note_light</span></button><button type="button" class="sr-row__remove" aria-label="移除 8f2c1a90 的记录">✕</button></div>
+              <div class="sr-row"><button type="button" class="sr-row__main"><span class="sr-row__line"><img class="sr-row__icon" src="../../../src/assets/claude.svg" alt="Claude" /><span class="sr-row__id">2a7e51b3</span><span class="sr-row__time">14:30:12</span></span><span class="sr-row__prompt">检查 kernel.rs 里四条 return false 有没有留痕</span></button><button type="button" class="sr-row__remove" aria-label="移除 2a7e51b3 的记录">✕</button></div>
+              <div class="sr-row"><button type="button" class="sr-row__main"><span class="sr-row__line"><img class="sr-row__icon sr-row__icon--mono" src="../../../src/assets/qoder.svg" alt="Qoder" /><span class="sr-row__id">7d31f0aa</span><span class="sr-row__time">14:28:30</span></span><span class="sr-row__prompt">/goal 那一轮为什么把 harness 模板当提问推过来</span></button><button type="button" class="sr-row__remove" aria-label="移除 7d31f0aa 的记录">✕</button></div>
+            </div>
+            <div class="sr-actions"><button type="button" class="btn btn--danger btn--sm">清除全部</button></div>
+          </section>
+
+          <!-- 右列：记录详情（原有字段一字不改）+ 末尾一个可展开的「转灯日志」条目 -->
+          <section class="card card--detail" aria-labelledby="sr-a-detail">
+            <div class="sr-detail__body">
+              <div class="card__head"><h3 class="card__title" id="sr-a-detail">记录详情</h3><span class="card__hint">codex · 8f2c1a904d7b</span></div>
+              <dl class="sr-detail__fields">
+                <div><dt>状态</dt><dd>存活（灯亮着）</dd></div>
+                <div><dt>Endpoint</dt><dd><span class="mono">https://chatgpt.com/backend-api/codex</span> <span style="font-size:11px;color:var(--ufo-faint)">经本地代理 127.0.0.1:15721</span></dd></div>
+                <div><dt>Token 累计</dt><dd>1.26M</dd></div>
+                <div><dt>最后活动</dt><dd>14:32:08</dd></div>
+                <div><dt>创建时间</dt><dd>13:51:22</dd></div>
+              </dl>
+              <div class="srprompt"><span class="srprompt__label">最近提问</span><p class="srprompt__text">帮我把 rollout 巡检的去抖基线接上 note_light，批准后那条「绿」要立刻补而不是等 30 秒</p></div>
+              <p class="sr-note">该会话此刻仍在运行：清除 / 移除只删归档，它会在下一个事件后被重新记录。</p>
+
+              <!-- ★ 新增的那一项 -->
+              <div class="lg-inline">
+                <div class="lg-inline__head">
+                  <span class="lg-inline__label">转灯日志</span>
+                  <span class="lg-inline__count">本会话 41 条</span>
+                  <span class="lg-inline__acts">
+                    <button type="button" class="btn btn--ghost btn--sm" title="另存为… 导出这个会话的全部裁决记录">导出本会话</button>
+                    <button type="button" class="btn btn--ghost btn--sm" title="在整窗中查看完整链路" aria-label="在整窗中查看完整链路">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10,21V19H6.41L10.91,14.5L9.5,13.09L5,17.59V14H3V21H10M14.5,10.91L19,6.41V10H21V3H14V5H17.59L13.09,9.5L14.5,10.91Z" /></svg>
+                    </button>
+                  </span>
+                </div>
+                <p class="lg-inline__sum"><b>14:32:08 <span class="lg-light--yellow">黄</span>灯被顶回<span class="lg-light--green">绿</span></b> · 巡检「文件在长」推定 Running，压过了 hook 刚抬起的等审批<span class="lg-light--yellow">黄</span>灯</p>
+                <ul class="lg-inline__rows">
+                  <li><span class="t">14:32:08</span><span class="lg-row__stage">巡检活动</span><em>rollout_activity · activity_implies_running</em></li>
+                  <li><span class="t">14:31:42</span><span class="lg-row__stage">灯变</span><em>light_transition · <span class="lg-light--green">绿</span>→<span class="lg-light--yellow">黄</span>（WaitingForUser，不闪）</em></li>
+                </ul>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <p class="window__caption"><b>② 点行尾那个图标按钮之后</b> · 整窗浮层，<b>左右两栏主从</b>：左 = 本会话流水，右 = 选中记录的完整字段 + JSONL 原文（浮层外壳与脚本编辑器同一套：标题栏 +「完成」/ Esc 退出）</p>
+    <div class="window window--shot">
+      <div class="titlebar"><span class="titlebar__dot" aria-hidden="true"></span><span>UFO</span><button class="titlebar__close" type="button" aria-label="隐藏到托盘">—</button></div>
+      <nav class="tabs-primary" aria-label="主导航"><button type="button">悬浮窗设置</button><button type="button" aria-selected="true">Agent 状态灯</button></nav>
+      <nav class="tabs-secondary" aria-label="Agent 状态灯设置分区"><button type="button">常规</button><button type="button">信息卡拓展</button><button type="button" aria-selected="true">会话记录</button><button type="button">消息推送</button></nav>
+      <div class="page">
+        <section class="card lg-settings" aria-labelledby="lg-a2">
+          <div class="lg-settings__head">
+            <span class="switch" role="switch" aria-checked="true" tabindex="0" aria-labelledby="lg-a2"></span>
+            <div class="lg-settings__text"><h2 class="lg-settings__title" id="lg-a2">转灯日志</h2><p class="lg-settings__sub">打开后记录每一次转灯裁决的完整链路。</p></div>
+            <span class="lg-settings__state">正在记 · 明细级 + hook</span>
+          </div>
+        </section>
+        <div class="sr-split" style="opacity: 0.35">
+          <section class="card"><div class="card__head"><h3 class="card__title">会话记录</h3><span class="card__hint">3 条</span></div></section>
+          <section class="card card--detail"><div class="card__head"><h3 class="card__title">记录详情</h3><span class="card__hint">codex · 8f2c1a904d7b</span></div></section>
+        </div>
+      </div>
+
+      <!-- 整窗浮层 -->
+      <div class="lg-modal" role="dialog" aria-modal="true" aria-label="转灯日志完整链路">
+        <header class="lg-modal__bar">
+          <span class="lg-modal__title">转灯日志 · codex:8f2c1a90</span>
+          <span class="lg-modal__hint">本会话（codex:8f2c1a90）的全部转灯裁决 · Esc 或「完成」返回</span>
+          <button type="button" class="btn btn--sm">完成</button>
+        </header>
+        <div class="lg-modal__body">
+          <div class="lg-filters">
+            <label>环节 <select><option>全部环节</option><option>hook 收信</option><option>兼容层裁决</option><option>inbox</option><option>内核裁决</option><option>灯变</option><option>清理摘灯</option><option>Codex 巡检</option><option>上游反查</option><option>推送</option><option>日志自身</option></select></label>
+            <label class="lg-check"><input type="checkbox" />只看被拒 / 被丢</label>
+            <label class="lg-check"><input type="checkbox" />暂停跟随</label>
+            <span class="card__hint">本会话 41 条 · 新→旧 · 点一行在右侧看它的完整字段</span>
+          </div>
+
+          <div class="lg-split">
+            <!-- 左：本会话流水（新→旧）。不内嵌展开，选中哪条就看右边 -->
+            <ol class="lg-rows">
+              <li><button type="button" class="lg-row lg-row--warn lg-row--open" aria-current="true">
+                <span class="lg-row__time">14:32:08</span><span class="lg-row__stage">巡检活动</span>
+                <span class="lg-row__msg"><b>rollout_activity</b> · 文件在长 → 推定 Running，<b>把<span class="lg-light--yellow">黄</span>灯顶回<span class="lg-light--green">绿</span></b></span>
+                <span class="lg-row__tail">seq 1182930</span></button></li>
+              <li><button type="button" class="lg-row lg-row--ok">
+                <span class="lg-row__time">14:31:42</span><span class="lg-row__stage">灯变</span>
+                <span class="lg-row__msg"><b>light_transition</b> · <span class="lg-light--green">绿</span>→<span class="lg-light--yellow">黄</span>（WaitingForUser，不闪）</span>
+                <span class="lg-row__tail">seq 1182610</span></button></li>
+              <li><button type="button" class="lg-row lg-row--ok">
+                <span class="lg-row__time">14:31:42</span><span class="lg-row__stage">基线</span>
+                <span class="lg-row__msg"><b>baseline_reflow</b> · hook 抬<span class="lg-light--yellow">黄</span>后回灌巡检器去抖基线</span>
+                <span class="lg-row__tail">seq 1182611</span></button></li>
+              <li><button type="button" class="lg-row lg-row--warn">
+                <span class="lg-row__time">14:29:58</span><span class="lg-row__stage">兼容层</span>
+                <span class="lg-row__msg"><b>adapter_ignored_event</b> · codex 的 PreToolUse 不落盘</span>
+                <span class="lg-row__tail">seq 1181902</span></button></li>
+              <li><button type="button" class="lg-row lg-row--warn">
+                <span class="lg-row__time">14:28:44</span><span class="lg-row__stage">内核</span>
+                <span class="lg-row__msg"><b>duplicate_in_seen_window</b> · <span class="mono">event_id=a19f</span> 已见过 → 不改灯</span>
+                <span class="lg-row__tail">seq 1180771</span></button></li>
+              <li><button type="button" class="lg-row lg-row--plain">
+                <span class="lg-row__time">14:27:11</span><span class="lg-row__stage">上游</span>
+                <span class="lg-row__msg"><b>resolver_hit</b> · cc-switch 反查 <span class="mono">chatgpt.com/backend-api/codex</span></span>
+                <span class="lg-row__tail">seq 1179904</span></button></li>
+            </ol>
+
+            <!-- 右：选中那一条的完整信息 = 磁盘上那一行 JSONL，字段一个不加、一个不改 -->
+            <aside class="lg-recard">
+              <div class="lg-recard__head">
+                <span class="lg-row__stage">巡检活动</span>
+                <b>rollout_activity / activity_implies_running</b>
+                <span class="t">14:32:08.114</span>
+              </div>
+              <p class="lg-recard__lead">「文件在长」推定 Running，把等审批的<span class="lg-light--yellow">黄</span>灯顶回<span class="lg-light--green">绿</span> —— 就是这一步出的 bug。</p>
+              <dl class="lg-rec__fields">
+                <dt>seq</dt><dd>1182930</dd>
+                <dt>writer</dt><dd>monitor</dd>
+                <dt>stage</dt><dd>rollout_activity</dd>
+                <dt>reason</dt><dd>activity_implies_running</dd>
+                <dt>trace_id</dt><dd>c4-1182930</dd>
+                <dt>provider</dt><dd>codex</dd>
+                <dt>session_id</dt><dd>8f2c1a90-4d7b-…</dd>
+                <dt>key</dt><dd>codex:8f2c1a90-4d7b-…</dd>
+                <dt>actor</dt><dd>（空 = 主线程）</dd>
+                <dt>kind</dt><dd>running</dd>
+                <dt>phase_from → to</dt><dd>waiting → running</dd>
+                <dt>sequence</dt><dd>41</dd>
+                <dt>watermark</dt><dd>1182904</dd>
+                <dt>revision</dt><dd>7</dd>
+              </dl>
+              <p class="lg-rec__sub">detail（白名单标量，不含提问原文）</p>
+              <pre class="lg-rec__raw">{ "new_bytes": 41208, "records": 3, "last_item": "function_call" }</pre>
+              <p class="lg-rec__sub">同一条信号（trace c4-1182930）的其它 5 行 · 正序</p>
+              <ol class="lg-chain" style="list-style: none; margin: 0; padding-left: 14px">
+                <li class="lg-chain__item"><span class="lg-row__time">14:31:41.902</span><span class="lg-row__stage">hook</span><span><b>hook_attempt</b> <span class="lg-chain__why">stdin 1.2 KB · async 43 ms</span></span></li>
+                <li class="lg-chain__item"><span class="lg-row__time">14:31:41.904</span><span class="lg-row__stage">inbox</span><span><b>inbox_write</b> <span class="lg-chain__why">原子写 <span class="mono">c4-1182930.json</span></span></span></li>
+                <li class="lg-chain__item"><span class="lg-row__time">14:31:42.007</span><span class="lg-row__stage">内核</span><span><b>kernel_verdict</b> <span class="lg-chain__why">PermissionRequest → WaitingForUser</span></span></li>
+                <li class="lg-chain__item"><span class="lg-row__time">14:31:42.007</span><span class="lg-row__stage">灯变</span><span><b>light_transition</b> <span class="lg-chain__why"><span class="lg-light--green">绿</span>→<span class="lg-light--yellow">黄</span>，不闪</span></span></li>
+                <li class="lg-chain__item"><span class="lg-row__time">14:31:42.008</span><span class="lg-row__stage">基线</span><span><b>baseline_reflow</b> <span class="lg-chain__why">回灌去抖基线</span></span></li>
+              </ol>
+              <p class="lg-rec__sub">线协议一行（内存游标 seq 不在磁盘行里，这是按字段重建的等价行，不是文件里的逐字字节）</p>
+              <pre class="lg-rec__raw">{"seq":1182930,"ts_ms":1790459528114,"writer":"monitor","stage":"rollout_activity","reason":"activity_implies_running","trace_id":"c4-1182930","provider":"codex","session_id":"8f2c1a90-4d7b-…","key":"codex:8f2c1a90-4d7b-…","actor":null,"kind":"running","phase_from":"waiting","phase_to":"running","sequence":41,"watermark":1182904,"revision":7,"detail":{"new_bytes":41208,"records":3,"last_item":"function_call"}}</pre>
+            </aside>
+          </div>
+
+          <div class="lg-foot" style="margin-top: 0">
+            <button type="button" class="btn btn--ghost btn--sm">导出当前条件</button>
+            <button type="button" class="btn btn--danger btn--sm">清空日志</button>
+            <span class="lg-status">再点一次「确认清空」以删除 41 条</span>
+            <span class="lg-dir">%APPDATA%\com.tauri-app.my\status\log</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="window__caption"><b>③ 开关 = 关闭</b> · 条目还在，但只有一条灰字说明（不显示任何旧记录，见对比页三种画法）</p>
+    <div class="window">
+      <div class="titlebar"><span class="titlebar__dot" aria-hidden="true"></span><span>UFO</span><button class="titlebar__close" type="button" aria-label="隐藏到托盘">—</button></div>
+      <nav class="tabs-primary" aria-label="主导航"><button type="button">悬浮窗设置</button><button type="button" aria-selected="true">Agent 状态灯</button></nav>
+      <nav class="tabs-secondary" aria-label="Agent 状态灯设置分区"><button type="button">常规</button><button type="button">信息卡拓展</button><button type="button" aria-selected="true">会话记录</button><button type="button">消息推送</button></nav>
+      <div class="page">
+        <section class="card lg-settings lg-settings--off" aria-labelledby="lg-a3">
+          <div class="lg-settings__head">
+            <span class="switch" role="switch" aria-checked="false" tabindex="0" aria-labelledby="lg-a3"></span>
+            <div class="lg-settings__text"><h2 class="lg-settings__title" id="lg-a3">转灯日志</h2><p class="lg-settings__sub">打开后记录每一次转灯裁决的完整链路；关闭则完全不写盘。</p></div>
+            <span class="lg-settings__state">已关闭 · 零写盘</span>
+          </div>
+        </section>
+        <div class="sr-split">
+          <section class="card"><div class="card__head"><h3 class="card__title">会话记录</h3><span class="card__hint">3 条</span></div>
+            <div class="sr-list">
+              <div class="sr-row"><button type="button" class="sr-row__main" aria-current="true"><span class="sr-row__line"><img class="sr-row__icon sr-row__icon--mono" src="../../../src/assets/codex.svg" alt="Codex" /><span class="dot dot--green"></span><span class="sr-row__id">8f2c1a90</span><span class="sr-row__time">14:32:08</span></span><span class="sr-row__prompt">帮我把 rollout 巡检的去抖基线接上 note_light</span></button><button type="button" class="sr-row__remove">✕</button></div>
+              <div class="sr-row"><button type="button" class="sr-row__main"><span class="sr-row__line"><img class="sr-row__icon" src="../../../src/assets/claude.svg" alt="Claude" /><span class="sr-row__id">2a7e51b3</span><span class="sr-row__time">14:30:12</span></span><span class="sr-row__prompt">检查 kernel.rs 里四条 return false 有没有留痕</span></button><button type="button" class="sr-row__remove">✕</button></div>
+            </div>
+            <div class="sr-actions"><button type="button" class="btn btn--danger btn--sm">清除全部</button></div>
+          </section>
+          <section class="card card--detail"><div class="card__head"><h3 class="card__title">记录详情</h3><span class="card__hint">codex · 8f2c1a904d7b</span></div>
+            <div class="sr-detail__body">
+              <dl class="sr-detail__fields">
+                <div><dt>状态</dt><dd>存活（灯亮着）</dd></div>
+                <div><dt>Endpoint</dt><dd><span class="mono">https://chatgpt.com/backend-api/codex</span></dd></div>
+                <div><dt>Token 累计</dt><dd>1.26M</dd></div>
+                <div><dt>最后活动</dt><dd>14:32:08</dd></div>
+                <div><dt>创建时间</dt><dd>13:51:22</dd></div>
+              </dl>
+              <div class="srprompt"><span class="srprompt__label">最近提问</span><p class="srprompt__text">帮我把 rollout 巡检的去抖基线接上 note_light，批准后那条「绿」要立刻补而不是等 30 秒</p></div>
+              <p class="sr-note">⚠️ 关闭转灯日志<b>不影响</b>上面这些存档 —— 提问采集与 session-records 是独立功能，一直照记。</p>
+              <div class="lg-inline lg-inline--off">
+                <span class="lg-inline__label">转灯日志</span>
+                <p><b>已关闭</b>，这个会话没有留下任何裁决痕迹。</p>
+                <span class="lg-inline__count">0 条</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <p class="window__caption"><b>④ 窄窗 680px</b> · 折叠态只有约 90px 高，塌单列也不像 A 原来那样把日志挤没</p>
+    <div class="window window--narrow">
+      <div class="titlebar"><span class="titlebar__dot" aria-hidden="true"></span><span>UFO</span><button class="titlebar__close" type="button" aria-label="隐藏到托盘">—</button></div>
+      <nav class="tabs-primary" aria-label="主导航"><button type="button">悬浮窗设置</button><button type="button" aria-selected="true">Agent 状态灯</button></nav>
+      <nav class="tabs-secondary" aria-label="Agent 状态灯设置分区"><button type="button">常规</button><button type="button">信息卡拓展</button><button type="button" aria-selected="true">会话记录</button></nav>
+      <div class="page">
+        <section class="card lg-settings" aria-labelledby="lg-a4">
+          <div class="lg-settings__head">
+            <span class="switch" role="switch" aria-checked="true" tabindex="0" aria-labelledby="lg-a4"></span>
+            <div class="lg-settings__text"><h2 class="lg-settings__title" id="lg-a4">转灯日志</h2><p class="lg-settings__sub">关闭则完全不写盘。</p></div>
+            <span class="lg-settings__state">明细级</span>
+          </div>
+        </section>
+        <div class="sr-split" style="grid-template-rows: minmax(0, 1fr) minmax(0, 1.1fr)">
+          <section class="card"><div class="card__head"><h3 class="card__title">会话记录</h3><span class="card__hint">3 条</span></div>
+            <div class="sr-list">
+              <div class="sr-row"><button type="button" class="sr-row__main" aria-current="true"><span class="sr-row__line"><img class="sr-row__icon sr-row__icon--mono" src="../../../src/assets/codex.svg" alt="Codex" /><span class="sr-row__id">8f2c1a90</span><span class="sr-row__time">14:32:08</span></span><span class="sr-row__prompt">帮我把 rollout 巡检的去抖基线接上 note_light</span></button></div>
+              <div class="sr-row"><button type="button" class="sr-row__main"><span class="sr-row__line"><img class="sr-row__icon" src="../../../src/assets/claude.svg" alt="Claude" /><span class="sr-row__id">2a7e51b3</span><span class="sr-row__time">14:30:12</span></span><span class="sr-row__prompt">检查 kernel.rs 里四条 return false 有没有留痕</span></button></div>
+            </div>
+          </section>
+          <section class="card card--detail"><div class="card__head"><h3 class="card__title">记录详情</h3><span class="card__hint">codex · 8f2c1a90</span></div>
+            <div class="sr-detail__body">
+              <dl class="sr-detail__fields"><div><dt>状态</dt><dd>存活</dd></div><div><dt>Endpoint</dt><dd><span class="mono">chatgpt.com/backend-api/codex</span></dd></div></dl>
+              <div class="lg-inline">
+                <div class="lg-inline__head"><span class="lg-inline__label">转灯日志</span><span class="lg-inline__count">本会话 41 条</span><span class="lg-inline__acts"><button type="button" class="btn btn--ghost btn--sm">导出本会话</button><button type="button" class="btn btn--ghost btn--sm" aria-label="在整窗中查看完整链路"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10,21V19H6.41L10.91,14.5L9.5,13.09L5,17.59V14H3V21H10M14.5,10.91L19,6.41V10H21V3H14V5H17.59L13.09,9.5L14.5,10.91Z" /></svg></button></span></div>
+                <p class="lg-inline__sum"><b>14:32:08 <span class="lg-light--yellow">黄</span>灯被顶回<span class="lg-light--green">绿</span></b> · 巡检推定 Running 压过等审批<span class="lg-light--yellow">黄</span>灯</p>
+                <ul class="lg-inline__rows"><li><span class="t">14:32:08</span><span class="lg-row__stage">巡检活动</span><em>rollout_activity · activity_implies_running</em></li></ul>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <div class="note note--spaced">
+      <p>
+        这版把 A 最大的毛病（右列被日志腰斩）消掉了，所以我按它准备实现。<b>请顺便确认两件事</b>：
+        ① 顶部那张<b>满宽设置卡</b>还留着吗（你要的「上面一个占满宽度的板块 + checkbox」），还是把 switch 也搬进详情里那个条目头上、整页只留两栏；
+        ② 关闭态画法（现在是「条目还在、内容清空」，另有「整块不显示」和「保留上次内容 + 停用提示」两种，见<a href="./status-log-index.html">对比页</a>）。
+      </p>
+    </div>
+  </body>
+</html>

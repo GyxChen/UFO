@@ -1074,10 +1074,15 @@
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
-/* 列表可滚动：行数上限 200，不封顶会把右侧详情挤下去。 */
+/*
+ * 列表可滚动：行数上限 200，不封顶会把右侧详情挤下去。
+ * ⚠️ `align-content: start` 必须有：`.sr-list` 是 grid 又吃满卡高（flex-1），
+ * 默认 `stretch` 会把富余高度摊给每一行 —— 行少的时候卡片被撑开、看着像间距坏了。
+ */
 .sr-list {
   @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
   @apply grid gap-1.5;
+  align-content: start;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
@@ -1087,9 +1092,11 @@
   @apply flex items-stretch gap-1;
 }
 
-/* 整行可点选（与信息卡拓展一致），两行内容：标识行 + 提问摘要。 */
+/* 整行可点选（与信息卡拓展一致），两行内容：标识行 + 提问摘要。
+   ⚠️ 定高 52px（= 标识行 + 一行提问 + 上下内边距）：行高一致后列表滚动位置才可预测。 */
 .sr-list__row {
   @apply flex min-w-0 flex-1 flex-col items-start gap-1 rounded-[10px] border px-3 py-2 text-left transition-colors duration-150 ease-out;
+  min-height: 52px;
   background: var(--ufo-surface-2);
   border-color: var(--ufo-border);
   color: var(--ufo-text);
@@ -1142,9 +1149,9 @@
   color: var(--ufo-muted);
 }
 
-/* 提问摘要只给一行：省略号收尾，完整内容在右侧详情看。 */
+/* 提问摘要只给一行（配合上面的定高行）：完整内容在右侧详情看。 */
 .sr-list__prompt {
-  @apply w-full line-clamp-2 text-[11px];
+  @apply w-full truncate text-[11px];
   color: var(--ufo-muted);
 }
 
@@ -1471,4 +1478,408 @@
 
 .push-status--err {
   color: var(--ufo-danger);
+}
+
+/*
+ * ── 转灯日志（会话记录页：顶部设置卡 + 详情里的折叠条目 + 整窗浮层）──
+ *
+ * 版面见 `reference/mock/status-log/status-log-a-feed-under-detail.html`（已批准的方案 A′）。
+ * 这些类只服务本模块的 `StatusLog*.vue`，所以归模块 CSS，不进 main.css。
+ */
+
+/* ══ 会话记录页的新外壳：顶部满宽卡 + 下面原有的两栏（两栏一字不改）══ */
+/* 这一段整体是 flex 列：设置卡按内容高，`.sr-panel` 吃剩余高度。 */
+.sr-page {
+  @apply flex w-full min-h-0 flex-1 flex-col gap-3;
+}
+
+/* 满宽卡要突破 .ufo-card 的 max-w-md：⚠️ 必须两个类权重 —— 模块 CSS 排在 main.css 之前，
+   单类与 .ufo-card 同权重会被压回去（同 `.push-panel > .push-master` 那条坑）。 */
+.sr-page > .lg-settings {
+  @apply max-w-none;
+}
+
+/* ══ 顶部：转灯日志设置卡（只有一个 switch）══ */
+.lg-settings {
+  @apply flex flex-col gap-2.5;
+}
+
+.lg-settings__head {
+  @apply flex items-center gap-3;
+}
+
+.lg-settings__text {
+  @apply grid min-w-0 gap-0.5;
+}
+
+.lg-settings__title {
+  @apply m-0 text-[14.5px] font-semibold;
+}
+
+.lg-settings__sub {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+/* 常驻读数：「当前在记什么」是状态读数，按约定不藏进问号角标。 */
+.lg-settings__state {
+  @apply ml-auto shrink-0 font-mono text-[11.5px];
+  color: var(--ufo-accent-text);
+}
+
+.lg-settings--off .lg-settings__state {
+  color: var(--ufo-muted);
+}
+
+/* 风险告知紧贴开关下方常驻：勾选项自身的风险不走 hover 提示。 */
+.lg-settings__risk {
+  @apply m-0 rounded-[10px] px-2.5 py-2 text-[11.5px] leading-relaxed;
+  background: color-mix(in srgb, var(--ufo-status-yellow) 14%, transparent);
+  color: var(--ufo-status-yellow-text);
+}
+
+/* ══ 记录详情末尾那个可展开条目 ══ */
+.lg-inline {
+  @apply grid content-start gap-1.5 rounded-[10px] border p-2.5;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border);
+}
+
+.lg-inline__head {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.lg-inline__label {
+  @apply m-0 text-[11px] font-medium;
+  color: var(--ufo-muted);
+}
+
+.lg-inline__count {
+  @apply ml-auto font-mono text-[10.5px];
+  color: var(--ufo-muted);
+}
+
+/* 行尾动作：两个按钮同一行高对齐。图标钮别写绝对定位 ——
+   绝对定位的那个永远和旁边的文字按钮差几 px，看着就是没对齐。 */
+.lg-inline__acts {
+  @apply flex shrink-0 items-center gap-1.5;
+}
+
+.lg-inline__expand {
+  @apply grid h-[30px] w-[30px] shrink-0 cursor-pointer place-items-center rounded-[8px] border transition-colors duration-150 ease-out;
+  background: transparent;
+  border-color: var(--ufo-border-strong);
+  color: var(--ufo-muted);
+}
+
+.lg-inline__expand:hover {
+  color: var(--ufo-accent-text);
+  border-color: var(--ufo-accent);
+}
+
+.lg-inline__expand-icon {
+  @apply h-[13px] w-[13px];
+}
+
+.lg-inline__sum {
+  @apply m-0 w-full truncate text-[12px];
+  color: var(--ufo-text);
+}
+
+.lg-inline__rows {
+  @apply m-0 grid list-none gap-0.5 p-0;
+}
+
+.lg-inline__rows li {
+  @apply flex items-baseline gap-2 text-[11.5px];
+  color: var(--ufo-muted);
+}
+
+.lg-inline__rows em {
+  @apply min-w-0 flex-1 truncate not-italic;
+  color: var(--ufo-text);
+}
+
+.lg-inline__time {
+  @apply shrink-0 font-mono text-[10.5px];
+  color: var(--ufo-muted);
+}
+
+.lg-inline__off,
+.lg-inline__feedback {
+  @apply m-0 text-[11.5px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+.lg-inline__feedback {
+  color: var(--ufo-accent-text);
+}
+
+/* 灯色字：只染灯态那三个字，不染提问原文里的同名字。 */
+.lg-light--yellow {
+  color: var(--ufo-status-yellow-text);
+  font-weight: 600;
+}
+
+.lg-light--green {
+  color: var(--ufo-status-green-text);
+  font-weight: 600;
+}
+
+.lg-light--red {
+  color: var(--ufo-status-red-text);
+  font-weight: 600;
+}
+
+/* ══ 整窗浮层：外壳照 `.jse-modal` 那一套（实色铺满、无 blur）══ */
+.lg-modal {
+  @apply fixed inset-0 z-50 flex flex-col;
+  background: var(--ufo-bg-main);
+  color: var(--ufo-text);
+}
+
+.lg-modal__bar {
+  @apply flex h-11 shrink-0 items-center gap-3 border-b px-3;
+  background: var(--ufo-overlay-sunken);
+  border-color: var(--ufo-border);
+}
+
+.lg-modal__title {
+  @apply m-0 shrink-0 text-[13px] font-semibold;
+}
+
+/* 提示行吃掉剩余宽度并截断，保证「完成」在任何宽度下都在栏内。 */
+.lg-modal__hint {
+  @apply m-0 min-w-0 flex-1 truncate text-[12px];
+  color: var(--ufo-muted);
+}
+
+/* ⚠️ 高度链：bar 固定 → body flex-1 → 两栏各自滚，少一环就退化成整页滚。 */
+.lg-modal__body {
+  @apply flex min-h-0 flex-1 flex-col gap-2.5 p-3;
+}
+
+.lg-filters {
+  @apply flex shrink-0 flex-wrap items-center gap-2;
+}
+
+.lg-filters__label {
+  @apply flex items-center gap-1.5 text-[11.5px];
+  color: var(--ufo-muted);
+}
+
+.lg-filters__select {
+  @apply rounded-[8px] border px-2 py-1 text-[12px];
+  background: var(--ufo-input);
+  border-color: var(--ufo-border-strong);
+  color: var(--ufo-text);
+}
+
+.lg-check {
+  @apply flex cursor-pointer items-center gap-1.5 text-[11.5px];
+  color: var(--ufo-muted);
+}
+
+.lg-chip {
+  @apply cursor-pointer rounded-full border px-2.5 py-1 text-[11px];
+  background: var(--ufo-accent-soft);
+  border-color: transparent;
+  color: var(--ufo-text);
+}
+
+.lg-filters__count {
+  @apply ml-auto text-[10.5px];
+  color: var(--ufo-muted);
+}
+
+/* 浮层主体两栏：左流水 / 右完整信息（与信息卡拓展同一套主从语言）。 */
+.lg-split {
+  @apply grid min-h-0 flex-1 gap-3;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, 1.35fr);
+}
+
+.lg-split > * {
+  @apply min-h-0;
+}
+
+/* ⚠️ `content-start`（= align-content: start）必须有：容器有确定高度时 grid 默认 stretch，
+   会把富余摊给每一行，行与行之间拉出大片空白（mock 上实测过）。 */
+.lg-rows {
+  @apply m-0 grid list-none content-start gap-1 overflow-y-auto p-0;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
+}
+
+.lg-rows__empty {
+  @apply text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+/* 流水行：meta 一行（时间 / 环节 / seq，全部靠左）+ 摘要一行（写全、可换行）。 */
+.lg-row {
+  @apply w-full cursor-pointer rounded-[9px] border border-transparent p-1.5 text-left transition-colors duration-150 ease-out;
+  border-left-width: 2px;
+  background: var(--ufo-input);
+  color: var(--ufo-text);
+}
+
+.lg-row:hover {
+  background: var(--ufo-surface-2);
+}
+
+.lg-row__line {
+  @apply flex items-baseline gap-2;
+}
+
+.lg-row__time {
+  @apply shrink-0 font-mono text-[10.5px];
+  color: var(--ufo-muted);
+}
+
+.lg-row__seq {
+  @apply font-mono text-[10.5px];
+  color: var(--ufo-muted);
+}
+
+.lg-row__stage {
+  @apply shrink-0 rounded-full border px-1.5 py-px text-[10px] font-semibold;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+  color: var(--ufo-muted);
+}
+
+/* 摘要不截断：排障要看的正是 reason 那半句。 */
+.lg-row__msg {
+  @apply mt-0.5 block min-w-0 text-[12px] leading-snug;
+  overflow-wrap: anywhere;
+}
+
+.lg-row__trace {
+  @apply ml-1.5 font-mono text-[10.5px];
+  color: var(--ufo-muted);
+}
+
+/* 左侧色条三档：绿 = 灯真的变了，黄 = 被拒 / 被丢 / 被顶回，红 = 出错或摘灯。 */
+.lg-row--ok {
+  border-left-color: var(--ufo-status-green);
+}
+
+.lg-row--warn {
+  border-left-color: var(--ufo-status-yellow);
+}
+
+.lg-row--err {
+  border-left-color: var(--ufo-status-red);
+}
+
+.lg-row--plain {
+  border-left-color: transparent;
+}
+
+.lg-row--current {
+  background: var(--ufo-accent-soft);
+  border-color: var(--ufo-border-strong);
+  border-left-width: 2px;
+}
+
+/* 右栏：选中那条记录的完整信息。 */
+.lg-recard {
+  @apply grid min-h-0 content-start gap-2 overflow-y-auto pr-0.5;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ufo-scroll-thumb) transparent;
+}
+
+.lg-recard__head {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.lg-recard__head b {
+  @apply font-mono text-[12px] font-semibold;
+}
+
+.lg-recard__clock {
+  @apply ml-auto font-mono text-[11px];
+  color: var(--ufo-muted);
+}
+
+.lg-recard__lead {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-text);
+}
+
+.lg-recard__placeholder {
+  @apply m-0 text-[12px];
+  color: var(--ufo-muted);
+}
+
+.lg-rec__fields {
+  @apply m-0 grid gap-x-2.5 gap-y-0.5;
+  grid-template-columns: 92px minmax(0, 1fr);
+}
+
+.lg-rec__fields dt {
+  @apply font-mono text-[11px];
+  color: var(--ufo-muted);
+}
+
+.lg-rec__fields dd {
+  @apply m-0 font-mono text-[11px];
+  color: var(--ufo-text);
+  overflow-wrap: anywhere;
+}
+
+.lg-rec__sub {
+  @apply m-0 mt-1 text-[11px];
+  color: var(--ufo-muted);
+}
+
+/* 原始那一行：等宽可断行，让用户看到盘上到底存了什么。 */
+.lg-rec__raw {
+  @apply m-0 rounded-[10px] border p-2 font-mono text-[10.5px] leading-relaxed;
+  background: var(--ufo-input);
+  border-color: var(--ufo-border);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* 同一条信号的其它行：虚线导轨 + 正序，顺着读才不别扭。 */
+.lg-chain {
+  @apply m-0 grid list-none p-0 pl-3.5;
+  border-left: 1px dashed var(--ufo-border-strong);
+}
+
+.lg-chain__item {
+  @apply grid items-baseline gap-2 py-0.5 text-[11.5px];
+  grid-template-columns: 74px auto minmax(0, 1fr);
+}
+
+.lg-chain__why {
+  @apply ml-1.5 text-[11px];
+  color: var(--ufo-muted);
+}
+
+.lg-foot {
+  @apply flex shrink-0 flex-wrap items-center gap-2.5 border-t pt-2;
+  border-color: var(--ufo-border);
+}
+
+.lg-foot__status {
+  @apply m-0 text-[11.5px];
+  color: var(--ufo-accent-text);
+}
+
+/* 日志目录常驻：用户要知道去哪翻历史，以及被挤掉的条数意味着什么。 */
+.lg-dir {
+  @apply ml-auto m-0 min-w-0 truncate font-mono text-[10.5px];
+  color: var(--ufo-muted);
+}
+
+/* 窄窗：两栏放不下就上下堆叠（浮层是固定铺满窗口，这里按视口断点即可）。 */
+@media (max-width: 760px) {
+  .lg-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }

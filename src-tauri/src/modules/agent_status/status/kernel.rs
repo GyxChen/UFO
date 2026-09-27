@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use super::log::{CleanupReport, EventVerdict, LogReason, LogStage};
 use super::model::{
     session_key, AgentEvent, AgentEventKind, SessionPhase, SessionSnapshot, StatusCounts,
     StatusSnapshot, StatusSource, StoredSeed, TokenTotals, SCHEMA_VERSION,
@@ -131,8 +132,28 @@ impl StatusRegistry {
         }
     }
 
-    pub fn mark_source_degraded(&mut self) {
-        self.source_health = "degraded".to_string();
+    /// 事件源降级：inbox 里有读不出来的文件。**返回是否真的翻转了状态**。
+    ///
+    /// 只有翻转才值得写一行日志 —— 否则每 500ms 一行同样的「坏了」，把有用的行淹掉。
+    pub fn mark_source_degraded(&mut self) -> bool {
+        self.set_source_health("degraded")
+    }
+
+    /// 事件源恢复：坏文件已被清走。**返回是否真的翻转了状态**。
+    ///
+    /// 这条是为了补一个既存缺口：原先只有降级、没有任何地方把 `source_health` 改回
+    /// `healthy`，于是隔离过一个文件的会话会永久显示「数据源异常」。
+    pub fn mark_source_healthy(&mut self) -> bool {
+        self.set_source_health("healthy")
+    }
+
+    /// 设置事件源健康度，返回是否发生变化。
+    fn set_source_health(&mut self, health: &str) -> bool {
+        if self.source_health == health {
+            return false;
+        }
+        self.source_health = health.to_string();
+        true
     }
 
     /// 写入某会话累计的 token；数值变化时返回 true 并推进 revision（触发前端刷新）。
@@ -177,52 +198,76 @@ impl StatusRegistry {
 
     /// 应用一条 hook 事件（无存档回填）。
     ///
-    /// 生产路径走 `apply_event_with_seed`（monitor 总会先查一次回填缓存），
+    /// 生产路径走 [`apply_event_verdict`]（monitor 总会先查一次回填缓存），
     /// 这个无 seed 便捷入口仅供测试构造事件用，因此标 `cfg(test)` 以免在正式构建里成 dead code。
     #[cfg(test)]
     pub fn apply_event(&mut self, event: AgentEvent, retention_ms: u64) -> bool {
-        self.apply_event_with_seed(event, retention_ms, None)
+        self.apply_event_verdict(event, retention_ms, None).changed
     }
 
-    /// 带存档回填的事件应用。
+    /// 带存档回填的事件应用，只关心「灯有没有变」的调用方走这个入口。
     ///
-    /// `seed` 是同一 `provider:session_id` 的跨重启历史摘要（`claude --resume` 继续旧对话等场景）：
-    /// **只在内存里没有该会话时生效** —— 存活中的会话一律以内存值为准，回填不得覆盖新鲜数据。
-    /// 回填只改字段取值，不改「事件是否造成变化」的判定，因此 `revision` 语义保持不变。
+    /// 需要**为什么**（被拒的理由、前后灯态）请用 [`apply_event_verdict`] —— 日志埋点用它。
+    /// 生产路径已全部改走裁决版，这个便捷入口因此只在测试里存在（否则正式构建里是死代码，
+    /// 而「有没有人用 bool 版」这件事本身正是「还有没有地方绕开日志判定灯态」的检查点）。
+    #[cfg(test)]
     pub fn apply_event_with_seed(
         &mut self,
         event: AgentEvent,
         retention_ms: u64,
         seed: Option<&StoredSeed>,
     ) -> bool {
-        let event_key = format!(
-            "{}:{}",
-            session_key(event.provider, &event.session_id),
-            event.event_id
-        );
-        if event.schema_version != SCHEMA_VERSION
-            || event.event_id.is_empty()
-            || event.session_id.is_empty()
-            || !self.mark_seen(event_key)
-        {
-            return false;
-        }
+        self.apply_event_verdict(event, retention_ms, seed).changed
+    }
 
-        let now = event.received_at_ms;
+    /// 带存档回填的事件应用，并给出**这盏灯为什么是这个结果**。
+    ///
+    /// `seed` 是同一 `provider:session_id` 的跨重启历史摘要（`claude --resume` 继续旧对话等场景）：
+    /// **只在内存里没有该会话时生效** —— 存活中的会话一律以内存值为准，回填不得覆盖新鲜数据。
+    /// 回填只改字段取值，不改「事件是否造成变化」的判定，因此 `revision` 语义保持不变。
+    ///
+    /// 返回 [`EventVerdict`] 而不是 `bool`：原先内核有四条静默 `return false`，它们在外部
+    /// 与「灯本来就不该动」完全同形 —— 用户看到的「灯不动」因此无从解释。
+    /// ⚠️ 裁决化**只加返回值，不改任何判定**：下面每个分支的成立条件与改前逐字一致。
+    pub fn apply_event_verdict(
+        &mut self,
+        event: AgentEvent,
+        retention_ms: u64,
+        seed: Option<&StoredSeed>,
+    ) -> EventVerdict {
+        // 会话坐标与执行者先算出来：下面四条拒绝分支都要靠它俩给出口。
         let key = session_key(event.provider, &event.session_id);
         // 序号水位按**执行者**分开比：主线程与每个子代理各有一条独立序列。
         let actor = event.agent_id.clone().unwrap_or_else(|| MAIN_ACTOR.to_string());
+        // ⚠️ `mark_seen` 必须排在其它三条**之后**：一条非法事件不该占掉去重窗口的位子
+        // （窗口是有界 FIFO，占了就等于把一条真事件挤出去）。
+        let event_key = format!("{key}:{}", event.event_id);
+        if event.schema_version != SCHEMA_VERSION {
+            return self.rejection(&key, &actor, LogReason::SchemaMismatch, None);
+        }
+        if event.event_id.is_empty() {
+            return self.rejection(&key, &actor, LogReason::EmptyEventId, None);
+        }
+        if event.session_id.is_empty() {
+            return self.rejection(&key, &actor, LogReason::EmptySessionId, None);
+        }
+        if !self.mark_seen(event_key) {
+            return self.rejection(&key, &actor, LogReason::DuplicateInSeenWindow, None);
+        }
+
+        let now = event.received_at_ms;
+        let watermark = self
+            .sequence_watermarks
+            .get(&key)
+            .and_then(|actors| actors.get(&actor))
+            .copied();
         if event
             .sequence
-            .zip(
-                self.sequence_watermarks
-                    .get(&key)
-                    .and_then(|actors| actors.get(&actor))
-                    .copied(),
-            )
+            .zip(watermark)
             .is_some_and(|(incoming, last)| incoming <= last)
         {
-            return false;
+            // 带上水位：`sequence <= watermark` 是「迟到的旧事件」，差多少直接说明事件源在重放。
+            return self.rejection(&key, &actor, LogReason::StaleSequence, watermark);
         }
 
         // 先把上一版快照的数据整块取出来：后面要多处查询 / 更新 self，
@@ -244,7 +289,14 @@ impl StatusRegistry {
                         .remove_at_ms
                         .is_some_and(|remove_at| now < remove_at)
                 {
-                    return false;
+                    // 绿闪保留窗内的事件一律不吃：以前它与「灯没动」完全同形，
+                    // 现在明确记成 CompletedWithinRetention（「Stop 之后马上又来一条事件」的常见困惑）。
+                    return self.rejection(
+                        &key,
+                        &actor,
+                        LogReason::CompletedWithinRetention,
+                        None,
+                    );
                 }
                 (
                     Some(previous.phase),
@@ -327,13 +379,22 @@ impl StatusRegistry {
                 SessionState::Completed | SessionState::Failed
             )
         {
+            let maintained = self.sessions.get(&key).map(|session| session.phase);
             if let Some(previous) = self.sessions.get_mut(&key) {
                 previous.last_seen_at_ms = now;
             }
             self.store_subagents(&key, subagent_set);
             // 状态未被驱动，但存活时间已推进，需要对外刷新一次。
             self.revision = self.revision.saturating_add(1);
-            return true;
+            // ⚠️ `changed = true` 但灯色与计时原样保留：这条恰好是「灯看起来没跟着子代理动」
+            // 的**正确**表现，以前没有任何地方能把它与「事件被吃了」区分开。
+            return EventVerdict::unchanged(
+                LogStage::SubagentAliveOnly,
+                LogReason::SubagentOnFinishedSession,
+                maintained,
+                actor,
+                self.revision,
+            );
         }
 
         // 状态机归约：把「主线程事件」与「子代理事件」统一成下一次内部状态。
@@ -353,6 +414,9 @@ impl StatusRegistry {
         // - 判据看**内部状态**而不是投影片段：主线程 Stop 后仍有子代理在跑时对外也是
         //   Running，那不是「新一轮开始」，不能顺手抹掉别人的审批灯；
         // - 只清「等 prompt」的空闲黄，**不清**「等用户操作」的审批黄。
+        // 「别人的黄灯被我这一轮清掉」必须进日志：用户看到的现象是「另一盏灯凭空没了」，
+        // 而它的因挂在**另一个会话**的事件上 —— 不记就永远对不上号。
+        let mut idle_cleared: Vec<(String, SessionPhase)> = Vec::new();
         if event.agent_id.is_none() && event.kind == AgentEventKind::Running {
             let provider = event.provider;
             let current_session = event.session_id.clone();
@@ -366,14 +430,14 @@ impl StatusRegistry {
                 })
                 .map(|(session_key, session)| (session_key.clone(), session.phase))
                 .collect();
-            let idle: Vec<String> = candidates
+            let idle: Vec<(String, SessionPhase)> = candidates
                 .into_iter()
                 .filter(|(session_key, phase)| {
                     self.internal_state(session_key, *phase) == SessionState::WaitingForPrompt
                 })
-                .map(|(session_key, _)| session_key)
                 .collect();
-            for session_key in idle {
+            for (session_key, phase) in idle {
+                idle_cleared.push((session_key.clone(), phase));
                 // 整套删除：私有状态机与子代理记录不能留给同一个 key 的下一世。
                 self.forget_session(&session_key);
             }
@@ -382,6 +446,9 @@ impl StatusRegistry {
         // 回填只在「内存里没有该会话」时启用（previous_started_at 为该分支恒 None 的判据，
         // 上面 match 已经查过一次 self.sessions.get(&key)，不再多查一次哈希）。
         let seed = seed.filter(|_| previous_started_at.is_none());
+        // 有没有真的用上回填要进日志：resume 保住原灯位、继承来的提问与 endpoint、
+        // token 地板全都靠它解释，否则只能说「这盏灯凭空出现了」。
+        let seed_applied = seed.is_some();
 
         let started_at_ms = previous_started_at
             // 本次运行没见过这个会话 → 用存档里的创建时刻：--resume 的会话因此保住原灯位
@@ -395,7 +462,9 @@ impl StatusRegistry {
         // - 其余按「下一状态 + 是否先绿闪的等待」重算：
         //   TurnFinished → Waiting 但先绿闪，retention 后落成黄常亮；
         //   SessionFinished → Completed，绿闪后移除；其它 Waiting 直接黄灯不闪。
-        let timing = if session_state == previous_state && event.kind == AgentEventKind::Unknown {
+        let inherited_unknown_timing =
+            session_state == previous_state && event.kind == AgentEventKind::Unknown;
+        let timing = if inherited_unknown_timing {
             previous_timing
         } else {
             resolve_timing(phase, flash_waiting, now, retention_ms)
@@ -425,7 +494,8 @@ impl StatusRegistry {
             self.sequence_watermarks
                 .entry(key.clone())
                 .or_default()
-                .insert(actor, sequence);
+                // `actor` 之后还要进裁决（日志要知道是哪个执行者的水位推进了），故拷一份。
+                .insert(actor.clone(), sequence);
         }
 
         self.sessions.insert(
@@ -490,23 +560,79 @@ impl StatusRegistry {
             },
         );
         self.revision = self.revision.saturating_add(1);
-        true
+        // 出口：把「灯到底变没变、为什么没变」讲清楚 —— 裁决化的全部目的就是这一处。
+        // ⚠️ 绿闪的开/关**不算**一次转灯：阶段没变，`flash_waiting` 只影响 `is_flashing`，
+        // 对外仍是同一个颜色。要追「为什么一直在闪」看快照的 `is_flashing` 与 `remove_at_ms`。
+        let verdict = if previous_phase == Some(phase) {
+            EventVerdict::unchanged(
+                LogStage::LightUnchanged,
+                if inherited_unknown_timing {
+                    LogReason::UnknownKindInheritsTiming
+                } else if seed_applied {
+                    // 采纳了、灯色也没变，但用上了跨重启回填：resume 会话的第一步常长成这样。
+                    LogReason::SeedApplied
+                } else {
+                    LogReason::PhaseReducedSame
+                },
+                Some(phase),
+                actor,
+                self.revision,
+            )
+        } else {
+            EventVerdict::transitioned(previous_phase, Some(phase), actor, self.revision)
+        };
+        EventVerdict {
+            seed_applied,
+            idle_cleared,
+            // 生效之后的水位：带了序号就取它，否则维持原水位（两者并排才看得出跳号）。
+            watermark: event.sequence.or(watermark),
+            ..verdict
+        }
     }
 
-    /// 清理过期会话。
+    /// 构造一条「事件被内核拒了」的裁决：顺手读一眼当前灯态，
+    /// 让日志能写出「维持的是哪盏灯」而不是只说「没动」。
+    fn rejection(
+        &self,
+        key: &str,
+        actor: &str,
+        reason: LogReason,
+        watermark: Option<u64>,
+    ) -> EventVerdict {
+        let maintained = self.sessions.get(key).map(|session| session.phase);
+        EventVerdict::rejected(reason, maintained, actor.to_string(), self.revision)
+            .at_watermark(watermark)
+    }
+
+    /// 清理过期会话（只关心「有没有变」的调用方走这个入口）。
     ///
-    /// `running_timeout_ms`：Running 无新 hook 的可配置超时（与 Error/Unknown 的 60s 分离）。
-    pub fn cleanup<F>(&mut self, now: i64, running_timeout_ms: i64, mut is_alive: F) -> bool
+    /// 需要**每个被摘灯的会话是因为什么**请用 [`cleanup_report`] —— 日志埋点用它。
+    pub fn cleanup<F>(&mut self, now: i64, running_timeout_ms: i64, is_alive: F) -> bool
     where
         F: FnMut(&SessionSnapshot) -> Option<bool>,
     {
-        let before = self.sessions.len();
-        let mut flash_settled = false;
+        self.cleanup_report(now, running_timeout_ms, is_alive).changed
+    }
+
+    /// 清理过期会话，并给出**每个被摘灯的会话是因为什么**、谁的绿闪落定了。
+    ///
+    /// `running_timeout_ms`：Running 无新 hook 的可配置超时（与 Error/Unknown 的 60s 分离）。
+    /// 五种删除理由原先全共用一个 `bool`，于是「灯自己消失了」在链路上是一条彻底的空白。
+    pub fn cleanup_report<F>(
+        &mut self,
+        now: i64,
+        running_timeout_ms: i64,
+        mut is_alive: F,
+    ) -> CleanupReport
+    where
+        F: FnMut(&SessionSnapshot) -> Option<bool>,
+    {
+        let mut report = CleanupReport::default();
         // 兜底：配置异常时至少保留 60s，避免 Running 被瞬间清掉。
         let running_timeout = running_timeout_ms.max(ERROR_TIMEOUT_MS);
 
         // Waiting + Stop 绿闪到期：关掉 is_flashing，落成黄常亮（会话保留）。
-        for session in self.sessions.values_mut() {
+        for (key, session) in &mut self.sessions {
             if session.phase == SessionPhase::Waiting
                 && session.is_flashing
                 && session
@@ -515,45 +641,29 @@ impl StatusRegistry {
             {
                 session.is_flashing = false;
                 session.remove_at_ms = None;
-                flash_settled = true;
+                report.changed = true;
+                // 绿闪落定是一次**对外可见**的变化（颜色从闪绿变成常黄），单独记一行。
+                report.flash_settled.push(key.clone());
             }
         }
 
-        self.sessions.retain(|_, session| {
-            match session.phase {
-                // Completed: follow retention timer, then remove.
-                SessionPhase::Completed => {
-                    if let Some(remove_at_ms) = session.remove_at_ms {
-                        return now < remove_at_ms;
-                    }
-                    true
-                }
-                // Waiting: keep until next run clears it; failsafe timeout.
-                SessionPhase::Waiting => {
-                    now.saturating_sub(session.last_seen_at_ms) <= WAITING_TIMEOUT_MS
-                }
-                // Running：可配置的长超时 + 进程存活检查（慢 agent 不会被 60s 误杀）。
-                SessionPhase::Running => {
-                    if now.saturating_sub(session.last_seen_at_ms) > running_timeout {
-                        return false;
-                    }
-                    match is_alive(session) {
-                        Some(false) => false,
-                        _ => true,
-                    }
-                }
-                // Error / Unknown：短超时 + 进程存活检查。
-                SessionPhase::Error | SessionPhase::Unknown => {
-                    if now.saturating_sub(session.last_seen_at_ms) > ERROR_TIMEOUT_MS {
-                        return false;
-                    }
-                    match is_alive(session) {
-                        Some(false) => false,
-                        _ => true,
-                    }
-                }
+        // 先**一轮**定生死，再按名单摘除：判据里含进程存活检查（Windows 上要起 `tasklist`），
+        // 分成「判断 + 再判断一次」就是双倍开销 —— 而这一轮的结果恰好是日志要的东西。
+        let doomed: Vec<(String, LogReason, SessionPhase)> = self
+            .sessions
+            .iter()
+            .filter_map(|(key, session)| {
+                reap_reason(session, now, running_timeout, &mut is_alive)
+                    .map(|reason| (key.clone(), reason, session.phase))
+            })
+            .collect();
+        if !doomed.is_empty() {
+            report.changed = true;
+            for (key, ..) in &doomed {
+                self.sessions.remove(key);
             }
-        });
+            report.reaped = doomed;
+        }
 
         // 会话消失后同步丢弃它的运行时映射（token / 状态机 / 子代理 / 序号水位）：
         // 会话一旦被清理，对应记录必须一起丢，否则长期运行会越积越多。
@@ -565,11 +675,10 @@ impl StatusRegistry {
         self.sequence_watermarks
             .retain(|key, _| self.sessions.contains_key(key));
 
-        let changed = flash_settled || before != self.sessions.len();
-        if changed {
+        if report.changed {
             self.revision = self.revision.saturating_add(1);
         }
-        changed
+        report
     }
 
     pub fn snapshot(&self, now: i64) -> StatusSnapshot {
@@ -626,6 +735,50 @@ fn merge_token_floor(floor: TokenTotals, incoming: TokenTotals) -> TokenTotals {
             .cache_read_input_tokens
             .max(incoming.cache_read_input_tokens),
         output_tokens: floor.output_tokens.max(incoming.output_tokens),
+    }
+}
+
+/// 该会话是否到了「该摘灯」的时刻，以及**为什么**。
+///
+/// 判据与改成裁决化之前逐字一致，只是把「返回 false」换成了一个具名理由 —— 五种删除方式
+/// 在外部都表现为「灯凭空消失」，不分清就查不出是超时、进程没了还是保留期到了。
+///
+/// ⚠️ `is_alive` 在 Windows 上要起一次 `tasklist`，因此每个会话**只准调一次**；
+/// 本函数只由 [`StatusRegistry::cleanup_report`] 在唯一那一轮里调用。
+fn reap_reason<F>(
+    session: &SessionSnapshot,
+    now: i64,
+    running_timeout: i64,
+    is_alive: &mut F,
+) -> Option<LogReason>
+where
+    F: FnMut(&SessionSnapshot) -> Option<bool>,
+{
+    // `is_alive` 返回 None = 读不出存活：当作还活着，宁可让灯多留一会儿，
+    // 也不要误杀正在跑长命令的会话（与改前的 `match is_alive(session)` 同一语义）。
+    let idle_for = now.saturating_sub(session.last_seen_at_ms);
+    match session.phase {
+        // Completed：绿闪 / 保留窗走完就摘灯（`remove_at_ms` 由 `resolve_timing` 定）。
+        SessionPhase::Completed => session
+            .remove_at_ms
+            .filter(|remove_at| now >= *remove_at)
+            .map(|_| LogReason::RetentionElapsed),
+        // Waiting：等下一条指令，只有兜底超时（30 分钟）会摘它。
+        SessionPhase::Waiting => (idle_for > WAITING_TIMEOUT_MS).then_some(LogReason::WaitingTimeout),
+        // Running：可配置的长超时 + 进程存活检查（慢 agent 不会被 60s 误杀）。
+        SessionPhase::Running => {
+            if idle_for > running_timeout {
+                return Some(LogReason::RunningTimeout);
+            }
+            matches!(is_alive(session), Some(false)).then_some(LogReason::ProcessDead)
+        }
+        // Error / Unknown：短超时 + 进程存活检查。
+        SessionPhase::Error | SessionPhase::Unknown => {
+            if idle_for > ERROR_TIMEOUT_MS {
+                return Some(LogReason::ErrorTimeout);
+            }
+            matches!(is_alive(session), Some(false)).then_some(LogReason::ProcessDead)
+        }
     }
 }
 
@@ -830,6 +983,8 @@ mod tests {
         AgentEvent {
             schema_version: SCHEMA_VERSION,
             event_id: id.to_string(),
+            // 贯穿 id 只在日志里用（内核不读它）：测试构造的事件没有真实来源，留空即可。
+            trace_id: None,
             provider,
             session_id: session_id.to_string(),
             kind,

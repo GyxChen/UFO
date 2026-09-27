@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
+# 转灯日志的「导出到指定文件」：用原生另存为对话框拿目标路径（Rust 侧再校验一次）。
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-prevent-default = "5.0"

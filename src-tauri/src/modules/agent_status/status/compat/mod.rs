@@ -78,6 +78,8 @@ pub(crate) struct AdaptedEvent {
 pub(crate) struct EventEnvelope {
     pub provider: Provider,
     pub event_id: String,
+    /// 贯穿各环节的日志关联 id（由 hook 生成，**不来自 payload**，见 [`AgentEvent::trace_id`]）。
+    pub trace_id: String,
     pub received_at_ms: i64,
     pub pid: Option<u32>,
 }
@@ -87,6 +89,7 @@ impl AdaptedEvent {
     pub(crate) fn into_event(self, envelope: EventEnvelope) -> AgentEvent {
         AgentEvent {
             schema_version: SCHEMA_VERSION,
+            trace_id: Some(envelope.trace_id),
             event_id: envelope.event_id,
             provider: envelope.provider,
             session_id: self.session_id,

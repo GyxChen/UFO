@@ -41,8 +41,9 @@ use modules::agent_status::{
     settings::{adopt_legacy_fields, config_hook, AgentStatusSettings},
     sound::read_light_sound,
     status::{
-        dismiss_status_session, get_proxy_resolvers, get_status_snapshot, now_ms,
-        set_tooltip_interactive, spawn_monitor, StatusState,
+        clear_status_log, dismiss_status_session, export_status_log, get_proxy_resolvers,
+        get_status_log, get_status_snapshot, now_ms, set_status_log_view, set_tooltip_interactive,
+        spawn_monitor, LogConfig, LogState, StatusState,
     },
 };
 use modules::weather::settings::adopt_legacy_fields as adopt_weather_legacy_fields;
@@ -119,6 +120,14 @@ pub fn run() {
             push_state.configure(modules::agent_status::push::config::PushConfig::from_block(
                 module_state.snapshot().module_settings.get("agent-status"),
             ));
+            // 转灯日志运行态：落点基准与 inbox 同为 `status_dir`（日志在它下面的 `log/`），
+            // 初值同样从已存配置取（配置钩子此刻还空转）。
+            let log_state = LogState::new(
+                status_dir.clone(),
+                LogConfig::from_block(
+                    module_state.snapshot().module_settings.get("agent-status"),
+                ),
+            );
             let status_state = StatusState::new(
                 status_dir,
                 agent_status_settings.completed_retention_ms,
@@ -128,6 +137,7 @@ pub fn run() {
                 session_store.clone(),
                 flow_state.clone(),
                 push_state.clone(),
+                log_state,
             );
             app.manage(status_state.clone());
             app.manage(profile_state);
@@ -229,6 +239,10 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_shell::init())
+        // 「导出转灯日志」要用原生另存为对话框拿目标路径：它走 IPC → RFD 自己弹窗，
+        // 与 prevent-default 拦的那条通道（webview 的 alert/confirm/prompt）不是同一个东西。
+        // ⚠️ 这条推理要靠运行时实测确认，别当既成事实：点一次导出、看原生框到底出不出来。
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_prevent_default::init())
         .invoke_handler(tauri::generate_handler![
             get_status_snapshot,
@@ -249,6 +263,10 @@ pub fn run() {
             get_session_records,
             delete_session_record,
             clear_session_records,
+            get_status_log,
+            clear_status_log,
+            export_status_log,
+            set_status_log_view,
             read_light_sound,
             is_left_mouse_pressed,
             get_floating_module_config,

@@ -11,7 +11,9 @@ use tauri::{AppHandle, Manager};
 
 use crate::floating::module_config::{FloatingModuleConfig, ModuleConfigHook, ModuleSettingsMap};
 use crate::modules::agent_status::proxy::NONE_RESOLVER;
-use crate::modules::agent_status::status::StatusState;
+use crate::modules::agent_status::status::{
+    LogConfig, LogEntry, LogReason, LogStage, LogWriter, StatusState,
+};
 
 /// 本组件在外壳配置里的键（`module_settings` 的键，同时也是前端注册表里的模块 id）。
 pub const MODULE_ID: &str = "agent-status";
@@ -149,6 +151,22 @@ pub fn config_hook() -> ModuleConfigHook {
             config.module_settings.get(MODULE_ID),
         );
         status_state.push.configure(push);
+        // 转灯日志：同样是子块自治（`log`），本文件只负责把它交给日志运行态。
+        let log = LogConfig::from_block(config.module_settings.get(MODULE_ID));
+        let changed = status_state.log.configure(log.clone());
+        // 配置变了要留一行「当时的灯参数」：事后回看时，retention / 超时 / 解析器的取值
+        // 本身就是解释灯态变化的关键上下文（少了它，「绿闪只亮了 3 秒」无从判断对不对）。
+        if changed {
+            status_state.log.report(
+                LogEntry::decided(LogWriter::Ui, LogStage::ConfigApplied, LogReason::ConfigReloaded)
+                    .with_detail(serde_json::json!({
+                        "completed_retention_ms": settings.completed_retention_ms,
+                        "running_timeout_ms": settings.running_timeout_ms,
+                        "proxy_resolver": settings.proxy_resolver,
+                        "log": log,
+                    })),
+            );
+        }
     })
 }
 

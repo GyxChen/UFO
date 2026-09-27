@@ -10,20 +10,24 @@
  * 不使用 window.alert / window.confirm：本应用装了 tauri-plugin-prevent-default，
  * 原生对话框可能被拦掉，所以反馈一律走行内提示（role="status"）。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { formatTokenCount, formatTokenMillions, tokenTotal } from '../lib/agent-status'
 import { providerFallbackMark, providerMeta } from '../lib/provider-registry'
 import { formatRecordTime, recordEndpoint, recordLocalNote, type SessionRecord } from '../lib/session-records'
 import { useAgentStatusStore } from '../stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { useSessionRecordsStore } from '../stores/sessionRecords'
+import { useStatusLogStore } from '../stores/statusLog'
 import { agentStatusSettings } from '../settings'
+import StatusLogFeed from './StatusLogFeed.vue'
+import StatusLogSettingsCard from './StatusLogSettingsCard.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import closeIcon from '@/assets/close.svg'
 
 const records = useSessionRecordsStore()
 const agentStatus = useAgentStatusStore()
 const modules = useFloatingModulesStore()
+const log = useStatusLogStore()
 
 /** 当前选中的存档 key；null 表示还没有记录可选。 */
 const selectedKey = ref<string | null>(null)
@@ -72,6 +76,12 @@ onMounted(() => {
   // 本面板自带一份订阅，避免依赖 App.vue 的启动顺序；store 内部幂等。
   // 存活标记要的 agentStatus 快照由 App.vue 对三窗口统一启动，这里不再重复。
   void records.start()
+  // 转灯日志只在这一页挂着的时候才让后端广播（`set_status_log_view`），离开就停。
+  void log.start()
+})
+
+onBeforeUnmount(() => {
+  log.stop()
 })
 
 /**
@@ -131,7 +141,11 @@ function onClearAll() {
 </script>
 
 <template>
-  <div class="sr-panel">
+  <div class="sr-page">
+    <!-- 顶部：占满宽度的「转灯日志」设置卡（只有一个 switch）-->
+    <StatusLogSettingsCard />
+
+    <div class="sr-panel">
     <section class="ufo-card sr-list-card" aria-labelledby="sr-list-title">
       <div class="ufo-card__header">
         <h2 id="sr-list-title" class="ufo-card__title">会话记录</h2>
@@ -245,6 +259,11 @@ function onClearAll() {
         </p>
       </template>
       <p v-else class="sr-detail__placeholder">先在左侧选择一条会话记录。</p>
+
+      <!-- 末尾一项：转灯日志（折叠态 + 导出本会话 + 展开整窗浮层）。
+           上面那些存档字段一个都没动 —— 关掉日志它们也照旧显示。 -->
+      <StatusLogFeed :session-key="selectedKey ?? ''" />
     </section>
+    </div>
   </div>
 </template>

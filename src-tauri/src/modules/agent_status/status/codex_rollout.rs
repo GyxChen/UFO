@@ -43,10 +43,56 @@ pub(crate) struct RolloutUpdates {
     pub events: Vec<AgentEvent>,
     /// 各会话的最新累计用量：`(session_key, totals)`。
     pub tokens: Vec<(String, TokenTotals)>,
+    /// 本轮各会话的**巡检账**，只供转灯日志（不参与任何裁决）。
+    ///
+    /// 为什么要把计数带出来而不是在巡检器里直接写日志：巡检器由 monitor 独占、
+    /// 但写日志的档位判断与批次归集都在 monitor 那一侧，保持「一个写入方」这条纪律。
+    pub scans: Vec<RolloutScan>,
 }
 
-/// 一轮巡检里观察到的一次灯态变化。
+/// 一轮巡检对某个会话攒下的账：读了多少行、各类丢弃多少、为什么没生命周期记录也推了绿。
 ///
+/// 这几个数就是「Codex 的灯为什么不动」的全部候选答案 —— 原先每一类丢弃都不留痕迹。
+#[derive(Debug, Default, Clone)]
+pub(crate) struct RolloutScan {
+    /// 会话 key（`codex:<session_id>`）。
+    pub key: String,
+    /// 本轮读到的记录行数（0 表示这个会话本轮没有任何新字节）。
+    pub lines: u32,
+    /// 被 `cares()` 子串预筛跳过的行：命令输出与消息正文，不是生命周期记录。
+    pub prefiltered: u32,
+    /// 命中预筛却仍分类不出语义的行：**新增的记录类型还没登记**，是最该被发现的一种丢弃。
+    pub unclassified: u32,
+    /// 批内连续同灯态被压掉的条数（一条指令会连写十几条记录，压掉是正常的）。
+    pub merged: u32,
+    /// **与上一轮灯态基线相同而被丢的条数**。非零而灯又「该变」，就是
+    /// 「批准后卡黄」那一类问题（靠 `BaselineReflow` 回灌才不出错的，见 `note_light`）。
+    pub baseline_dropped: u32,
+    /// 本轮产出的事件条数。
+    pub emitted: u32,
+    /// 兜底结论的名字：`activity` = 只有文件在长就推绿；`keepalive` = 30 秒保活。
+    pub fallback: Option<&'static str>,
+    /// 因归档而读不到的文件数（连续两轮读不到才判会话结束）。
+    pub vanished: u32,
+}
+
+/// hook 回灌去抖基线的效果，只供日志说明「这一步到底做了什么」。
+///
+/// 这一格为什么值得单独记：它是「批准后卡黄」这个历史 bug 的唯一防线 ——
+/// 少了回灌，rollout 恢复写入的那条绿会被去抖当成重复吃掉，灯要等 30 秒保活才回来。
+pub(crate) enum BaselineEffect {
+    /// 巡检器还没发现这个会话（UFO 中途启动、rollout 尚未扫到）：无处可同步。
+    Untracked,
+    /// 基线本来就是这个灯态：无需回灌。
+    Unchanged,
+    /// 基线从 `from` 改成 `to`。
+    Reflowed {
+        from: Option<AgentEventKind>,
+        to: AgentEventKind,
+    },
+}
+
+/// 一轮巡检里观察到的一次灯态变化。///
 /// 批内连续同灯态会被压成一条（一条指令连写十几条记录），但灯态**真的变了**的那些
 /// 变化会各占一条，按文件里的先后顺序排列 —— 内核据此才能看到「恢复执行 → 一轮结束」
 /// 这样的序列，而不是只看到最后那个状态。
@@ -250,6 +296,12 @@ impl CodexRolloutWatcher {
             // 本文件的等待状态：闭包里还要借用 `session.files`，先用局部变量承载，扫完再写回。
             let mut pending_user_input_call_id = session.pending_user_input_call_id.clone();
             let mut grew = false;
+            // 本轮的巡检账（只喂日志，不参与裁决）。
+            let mut lines = 0_u32;
+            let mut prefiltered = 0_u32;
+            let mut unclassified = 0_u32;
+            // 命中的生命周期记录数：与 `observed` 的长度之差就是被批内合并压掉的条数。
+            let mut lifecycle = 0_u32;
             let mut vanished: Vec<PathBuf> = Vec::new();
 
             for (path, cursor) in session.files.iter_mut() {
@@ -267,13 +319,16 @@ impl CodexRolloutWatcher {
                 cursor.lines.read_appended(path, |line| {
                     // 文件在长 = 有活动（大记录不必解析，见 compat::codex::cares）。
                     grew = true;
+                    lines += 1;
                     let waiting_output = pending_user_input_call_id
                         .as_deref()
                         .is_some_and(|call_id| codex::is_function_call_output_for(line, call_id));
                     if !codex::cares(line) && !waiting_output {
+                        prefiltered += 1;
                         return;
                     }
                     let Some(record) = codex::classify_rollout_line(line) else {
+                        unclassified += 1;
                         return;
                     };
                     if record.name == "request_user_input" {
@@ -298,6 +353,7 @@ impl CodexRolloutWatcher {
                     }
                     if let Some(kind) = record.kind {
                         saw_lifecycle = true;
+                        lifecycle += 1;
                         // 连续同灯态压成一条；灯态真的变了才追加。
                         if observed.last().map(|entry| entry.kind) != Some(kind) {
                             observed.push(Observed {
@@ -338,10 +394,15 @@ impl CodexRolloutWatcher {
 
             // 灯态：**首条与上一轮基线相同**的丢掉（不是新变化），其后的每一条都是本轮
             // 新观测到的变化。长时间保持「绿」则按间隔补一条保活事件。
+            // 批内合并数 = 命中的生命周期记录数 - 压缩后的变化序列长度。
+            let merged = lifecycle.saturating_sub(observed.len() as u32);
             let keepalive_due = now.saturating_sub(session.last_emit_ms) >= RUNNING_KEEPALIVE;
             let mut emitting: Vec<Observed> = Vec::new();
+            // 与上一轮基线相同而被丢的条数：这一格就是「批准后卡黄」的现场。
+            let mut baseline_dropped = 0_u32;
             for entry in observed {
                 if emitting.is_empty() && Some(entry.kind) == session.last_kind {
+                    baseline_dropped = baseline_dropped.saturating_add(1);
                     continue;
                 }
                 emitting.push(entry);
@@ -380,7 +441,15 @@ impl CodexRolloutWatcher {
             }
 
             let produced_event = !emitting.is_empty();
+            let mut emitted = 0_u32;
+            // 兜底推绿的来路名字（`activity` / `keepalive`），日志据此解释
+            // 「Codex 一条生命周期记录都没写，灯为什么还是绿的」。
+            let mut fallback: Option<&'static str> = None;
             for entry in emitting {
+                if matches!(entry.name, "activity" | "keepalive") {
+                    fallback = Some(entry.name);
+                }
+                emitted += 1;
                 session.activity_seq = session.activity_seq.saturating_add(1);
                 // turn 级记录用语义 id：文件被截断重扫时，内核那层去重仍能兜住。
                 let event_id = match entry.turn_id {
@@ -408,6 +477,21 @@ impl CodexRolloutWatcher {
                 session.reported_tokens = session.tokens;
                 updates.tokens.push((session.key.clone(), session.tokens));
             }
+            // 巡检账：一轮一行（不是逐行），否则 `cares()` 预筛一轮就能刷出几千条。
+            // 本轮没读到任何新字节的会话不占行 —— Codex 没在跑时每 500ms 都会进到这儿。
+            if lines > 0 || emitted > 0 {
+                updates.scans.push(RolloutScan {
+                    key: session.key.clone(),
+                    lines,
+                    prefiltered,
+                    unclassified,
+                    merged,
+                    baseline_dropped,
+                    emitted,
+                    fallback,
+                    vanished: 0,
+                });
+            }
         }
         updates
     }
@@ -419,18 +503,21 @@ impl CodexRolloutWatcher {
     /// 用户批准、rollout 恢复写入时，本该转绿的活动被当成「灯态没变」整个吃掉，灯会一直卡在
     /// 黄色，直到 `RUNNING_KEEPALIVE`（30 秒）的保活事件才回来。
     ///
-    /// 巡检器还没发现这个会话时（UFO 刚启动、rollout 尚未扫到）无处可同步，直接忽略 ——
-    /// 那一刻退化成原行为，不会更糟。
-    pub(crate) fn note_light(&mut self, key: &str, kind: AgentEventKind) {
+    /// 返回值只服务于日志：这一步做了什么都要能回查（见 [`BaselineEffect`]）。
+    pub(crate) fn note_light(&mut self, key: &str, kind: AgentEventKind) -> BaselineEffect {
         let Some(session) = self.sessions.get_mut(key) else {
-            return;
+            // 巡检器还没发现这个会话（UFO 刚启动、rollout 尚未扫到）：无处可同步，直接忽略 ——
+            // 那一刻退化成原行为，不会更糟。
+            return BaselineEffect::Untracked;
         };
         // 基线已经是这个灯态：没什么可同步的（也不该白刷保活计时）。
         if session.last_kind == Some(kind) {
-            return;
+            return BaselineEffect::Unchanged;
         }
+        let from = session.last_kind;
         session.last_kind = Some(kind);
         session.last_emit_ms = now_ms();
+        BaselineEffect::Reflowed { from, to: kind }
     }
 
     /// 丢弃已不存在的会话（由 monitor 在清理后调用），连同其文件登记一并释放。
@@ -475,7 +562,10 @@ impl WatchedSession {
     ) -> AgentEvent {
         AgentEvent {
             schema_version: SCHEMA_VERSION,
-            event_id,
+            event_id: event_id.clone(),
+            // rollout 侧没有 inbox 文件可当贯穿 id，直接复用它自己生成的事件 id ——
+            // 那已经是 `rollout-<事件名>-<turn id>` 这种我们拼的串，不来自外部输入。
+            trace_id: Some(event_id),
             provider: Provider::Codex,
             session_id: self.session_id.clone(),
             kind,

@@ -397,4 +397,40 @@ describe('模块样式 · 设置页卡片必须真的撑满列宽', () => {
       expect(body, `${header} 必须钉住 content-start（否则 grid 会把行拉开）`).toContain('content-start')
     }
   })
+
+  /**
+   * 转灯日志的版面护栏（用户在 mock 上连着反馈过两次的那两条）。
+   *
+   * ① 列表类的 grid 必须钉 `align-content: start`：容器吃满高度时 grid 默认 stretch，
+   *    会把富余摊给每一行 —— 行与行之间拉出大片空白（mock 上实测行被撑到 105px）。
+   * ② 会话卡片定高 + 提问只给一行：这是「行高一致、滚动位置可预测」的约定。
+   * ③ 浮层的高度链：bar 固定 → body `min-h-0` + `flex-1` → 两栏各自滚，少一环就退化成整页滚。
+   */
+  it('keeps the transition-log lists pinned to the top and the modal chain unbroken', () => {
+    const css = agentStatusCss()
+    // `.sr-list` 用的是普通声明（align-content: start），`.lg-rows` 走 @apply content-start：两种写法等价。
+    for (const header of ['.sr-list {', '.lg-rows {']) {
+      const body = blockAfter(css, header)
+      expect(body, `${header} 规则必须存在`).not.toBe('')
+      expect(
+        body.includes('content-start') || body.includes('align-content: start'),
+        `${header} 必须钉住行对齐，否则 grid 会把行拉开`
+      ).toBe(true)
+    }
+
+    const row = blockAfter(css, '.sr-list__row {')
+    expect(row, '会话卡片要定高（行高一致才谈得上滚动位置可预测）').toContain('min-height: 52px')
+    const prompt = blockAfter(css, '.sr-list__prompt {')
+    expect(prompt, '提问摘要只给一行').toContain('truncate')
+    expect(prompt, '不许再把提问改回两行夹行高').not.toContain('line-clamp-2')
+
+    // 满宽设置卡：突破 .ufo-card 限宽必须有两条类权重（同 `.push-panel > .push-master`）。
+    expect(css, '设置卡要占满页宽').toContain('.sr-page > .lg-settings')
+
+    const modalBody = blockAfter(css, '.lg-modal__body {')
+    expect(modalBody, '浮层主体要吃满剩余高度且允许收缩').toContain('min-h-0')
+    expect(modalBody).toContain('flex-1')
+    const split = blockAfter(css, '.lg-split {')
+    expect(split, '浮层两栏都要能独立滚').toContain('min-h-0')
+  })
 })

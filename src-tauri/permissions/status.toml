@@ -48,6 +48,18 @@ identifier = "allow-manage-session-records"
 description = "Allows deleting or clearing persisted session records from the main window."
 commands.allow = ["delete_session_record", "clear_session_records"]
 
+# 转灯日志：读命令给三个窗口（悬浮窗 / 提示窗也可能要查），清空与导出只给主窗。
+# 事件名常量在 Rust 与前端各一份，由 lib/status-log-reasons.spec.ts 锁住同源。
+[[permission]]
+identifier = "allow-get-status-log"
+description = "Allows reading the light-transition log (转灯日志) written by the status chain."
+commands.allow = ["get_status_log"]
+
+[[permission]]
+identifier = "allow-manage-status-log"
+description = "Allows clearing, exporting and attaching the viewer to the light-transition log from the main window."
+commands.allow = ["clear_status_log", "export_status_log", "set_status_log_view"]
+
 [[permission]]
 identifier = "allow-light-sounds"
 description = "Allows reading the replaceable status light sound files (安装路径下 data/bgm) for playback."

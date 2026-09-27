@@ -103,6 +103,15 @@ pub struct AgentEvent {
     pub schema_version: u16,
     /// 事件去重 ID
     pub event_id: String,
+    /// **贯穿 id**：由 UFO 自己生成，把同一条信号在「hook 落盘 → inbox → 内核裁决 → 灯变」
+    /// 各环节的日志行串起来；同时也是 inbox 事件文件的**文件名**。
+    ///
+    /// ⚠️ 与 `event_id` 的分工要说清：后者是内核用来去重的 id，可能直接来自 payload
+    /// （`hook.rs` 只校验非空与长度），因此**绝不能**拿它拼路径 —— 那是把 `..`、`\`、`:`
+    /// 送进文件系统。本字段永远是 `<pid>-<纳秒>` 形态，不接受外部输入。
+    /// 旧事件缺此字段反序列化为 None（**不得升 `SCHEMA_VERSION`**）。
+    #[serde(default)]
+    pub trace_id: Option<String>,
     /// 来源 provider
     pub provider: Provider,
     /// 会话标识
@@ -331,6 +340,7 @@ mod tests {
         let event = AgentEvent {
             schema_version: SCHEMA_VERSION,
             event_id: "test-event".to_string(),
+            trace_id: Some("4242-1700000000000000000".to_string()),
             provider: Provider::Claude,
             session_id: "sess-123".to_string(),
             kind: AgentEventKind::TurnFinished,
@@ -351,6 +361,10 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: AgentEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.event_id, "test-event");
+        assert_eq!(
+            deserialized.trace_id.as_deref(),
+            Some("4242-1700000000000000000")
+        );
         assert_eq!(deserialized.provider, Provider::Claude);
         assert_eq!(deserialized.session_id, "sess-123");
         assert_eq!(deserialized.kind, AgentEventKind::TurnFinished);
@@ -454,6 +468,27 @@ mod tests {
         assert_eq!(deserialized.transcript_path, None);
         // 也没有 agent_id：缺省 None 即视为主线程事件（沿用旧行为）。
         assert_eq!(deserialized.agent_id, None);
+        // 旧版 hook 二进制写的事件没有 trace_id：必须兼容为 None，而不是整条落 quarantine
+        // （那会让「升级后所有在途事件全废」）。日志因此对这条信号只能按 event_id 关联。
+        assert_eq!(deserialized.trace_id, None);
+    }
+
+    #[test]
+    fn trace_id_is_optional_so_old_events_still_parse() {
+        // 显式锁住「加字段不许升 SCHEMA_VERSION」这条红线：新字段一律 Option + default。
+        assert_eq!(SCHEMA_VERSION, 1);
+        let json = r#"{
+            "schema_version": 1,
+            "event_id": "e1",
+            "provider": "claude",
+            "session_id": "s1",
+            "kind": "running",
+            "event": "PreToolUse",
+            "received_at_ms": 1
+        }"#;
+        let parsed: AgentEvent = serde_json::from_str(json).expect("no trace_id on the wire");
+        assert_eq!(parsed.trace_id, None);
+        assert_eq!(parsed.kind, AgentEventKind::Running);
     }
 
     #[test]

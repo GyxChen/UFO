@@ -759,6 +759,7 @@ mod tests {
         let event = adapted.into_event(EventEnvelope {
             provider: Provider::Codex,
             event_id: "hook-1".to_string(),
+            trace_id: "trace-hook-1".to_string(),
             received_at_ms: 100,
             pid: None,
         });

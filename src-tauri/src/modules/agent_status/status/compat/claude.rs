@@ -294,6 +294,8 @@ mod tests {
         let event = adapted.into_event(EventEnvelope {
             provider: Provider::Claude,
             event_id: "e2e".to_string(),
+            // 贯穿 id 由 hook 生成（测试里给一个定值即可）：它不参与任何裁决。
+            trace_id: "trace-e2e".to_string(),
             received_at_ms,
             pid: None,
         });

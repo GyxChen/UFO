@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UFO · 「转灯日志」方案 A′（已选定）+ 关闭态三画法</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./status-log.css" />
+    <style>
+      .wrap { width: min(1000px, 100%); margin: 0 auto; display: grid; gap: 16px; }
+      .spec table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+      .spec th, .spec td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--ufo-border); vertical-align: top; }
+      .spec th { color: var(--ufo-faint); font-weight: 500; font-size: 11.5px; }
+      .spec code { background: var(--ufo-input); padding: 1px 6px; border-radius: 6px; font-size: 11.5px; font-family: var(--font-mono); }
+      .spec h2 { margin: 0; font-size: 16px; }
+      .frag { display: grid; gap: 8px; }
+      .open-q { display: grid; gap: 6px; }
+      .open-q h3 { margin: 0; font-size: 13.5px; }
+      .open-q p { margin: 0; font-size: 12px; color: var(--ufo-muted); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1 style="margin: 0; font-size: 24px; letter-spacing: -0.02em">「转灯日志」方案 A′（已选定，B / C 已删）</h1>
+        <p style="margin: 6px 0 0; color: var(--ufo-muted); font-size: 14px">
+          版面只剩一套，全部细节看 <a href="./status-log-a-feed-under-detail.html" style="color: var(--ufo-accent)">status-log-a-feed-under-detail.html</a>
+          （里面有四台窗口：未展开 / 整窗浮层 / 关闭 / 窄窗 680px）。
+          这一页只留下<b>还没定的两件事</b>与已拍定的规格。
+        </p>
+      </header>
+
+      <section class="spec card" style="padding: 20px">
+        <h2>还没定 ①：switch 关闭时，详情里那个日志条目画成哪种</h2>
+        <div class="compare" style="margin: 14px 0 0">
+          <div class="card frag">
+            <h3>① 条目整块不显示</h3>
+            <p>「记录详情」回到与现在完全一致（五项 + 最近提问），末尾什么都不多出来。</p>
+            <div class="lg-inline lg-inline--off" style="visibility: hidden; height: 40px"><p>占位</p></div>
+            <p style="font-size: 12px; color: var(--ufo-faint)">（详情卡按原样收满）</p>
+            <span class="verdict verdict--no">代价：想知道"到底记没记"没有可见凭据，翻旧账要先把开关打回开</span>
+          </div>
+          <div class="card frag">
+            <h3>② 条目在、内容清空（A′ 现在画的）</h3>
+            <p>一行灰字说明没在记 + 计数 0，让人一眼看出「不是没发生，是没记」。</p>
+            <div class="lg-inline lg-inline--off"><span class="lg-inline__label">转灯日志</span><p><b>已关闭</b>，这个会话没有留下任何裁决痕迹。</p><span class="lg-inline__count">0 条</span></div>
+            <span class="verdict">推荐：入口稳定，「没在记」与「没发生」分得开</span>
+          </div>
+          <div class="card frag">
+            <h3>③ 保留上次内容 + 停用提示</h3>
+            <p>条目继续显示关闭前那几行，只是标注"已停止记录"。</p>
+            <div class="lg-inline"><p class="lg-inline__sum"><b>14:32:08 <span class="lg-light--yellow">黄</span>灯被顶回<span class="lg-light--green">绿</span></b>（已停止记录）</p></div>
+            <span class="verdict verdict--no">代价：最容易被误读成"还在记"，排障时这是致命的</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="spec card" style="padding: 20px">
+        <h2>还没定 ②：顶部那张满宽的「转灯日志」设置卡还留不留</h2>
+        <div class="compare" style="margin: 14px 0 0">
+          <div class="card open-q">
+            <h3>留着（A′ 现在画的）</h3>
+            <p>你要的「上面一个占满宽度的板块 + 开关」原样实现：开关、当前读数、风险告知都在页面第一段，滚到哪都能看见有没有在记。</p>
+            <p style="color: var(--ufo-faint)">代价：详情末尾那个条目与它有一点重复（一个是"开不开"、一个是"这条会话记了什么"）。</p>
+          </div>
+          <div class="card open-q">
+            <h3>搬进详情那个条目头</h3>
+            <p>整页只有两栏，开关就在「转灯日志」那一行的左边；页面更干净，日志这件事彻底收进详情。</p>
+            <p style="color: var(--ufo-faint)">代价：与「会话记录视图上面增加一个占满宽度的板块」这句原话不符；换一条会话就要重新看到一次开关。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="spec card" style="padding: 20px">
+        <h2>已拍定的规格（不再变）</h2>
+        <table>
+          <tr><th style="width: 168px">项</th><th>约定</th></tr>
+          <tr><td>一个 switch 管全部</td>
+            <td>关闭 = <b>完全不记</b>；打开 = <b>明细级 + hook 侧同记</b>。原来的四档分段控件与独立「hook 侧也记」开关都不再出现在界面上 —— 一个行为只留一个入口。
+              Rust 侧 <code>LogConfig</code> 的字段结构保留，前端把 <code>level</code> 与 <code>hook_enabled</code> 当成一个开关一起写：开 → <code>{level:'verbose', hook_enabled:true}</code>，关 → <code>{level:'off', hook_enabled:false}</code>。全新安装默认<b>关</b>。</td></tr>
+          <tr><td>关掉之后还剩什么</td>
+            <td>「会话记录」列表与「记录详情」里的<b>状态 / Endpoint / Token / 最后活动 / 创建时间 / 最近提问全部照旧</b> —— 提问采集与 <code>session-records.db</code> 是加日志之前就有的独立功能。
+              <code>hook-debug.log</code> 归这个开关管：关了就什么都不写。</td></tr>
+          <tr><td>灯色字要染色</td>
+            <td>链路文字里的「<span class="lg-light--yellow">黄</span>」「<span class="lg-light--green">绿</span>」按状态灯色染（<code>--ufo-warn</code> / <code>--ufo-accent</code>），扫一眼就知道说的是哪个灯；<b>但用户提问原文里的字不染</b>（那是引文，不是日志值）。</td></tr>
+          <tr><td>展开交互</td>
+            <td>详情里的条目默认只查 <code>get_status_log({ key: 选中会话, limit: 3 })</code>（第一条做结论行、后两条做摘要，整块约 127px，实测 1000px 宽下右列 455/455 不产生滚动）；条目行尾两个动作同高对齐（实测 top/bottom 差 0）：<b>「导出本会话」</b>与一个图标钮。图标钮打开<b>左右两栏</b>整窗浮层（实测左流水 409px / 右完整信息 553px，右栏 719/581 自己滚）。两处导出是同一命令的不同范围，不是重复入口。
+              ⚠️ 浮层外壳照 <code>.jse-modal</code> 那套 CSS 类（<code>main.css:1149</code>：实色铺满、44px 标题栏、「完成」+ Esc），但 <code>ScriptEditorModal.vue</code> <b>没有 slot</b>（模板写死 <code>ScriptEditorFrame</code> 与 <code>aria-label</code>），组件本身复用不了 —— <b>待定：给它加默认 slot，还是新写一个约 30 行的 overlay 组件共用类名。</b></td></tr>
+          <tr><td>左列会话卡片</td>
+            <td>本轮按批注改成<b>定高 + 顶对齐</b>：<code>min-height: 52px</code>（实测渲染 60px，三行等高），提问一律一行省略号收尾（真实现里把 <code>.sr-list__prompt</code> 的 <code>line-clamp-2</code> 换成单行）。行内与列表两处都要 <code>align-content: start</code>，否则默认 stretch 会把行撑开。</td></tr>
+          <tr><td>平台图标</td>
+            <td>列表行用各自的真图标（mock 直接引 <code>src/assets/{claude,codex,qoder}.svg</code>，不另画假的以免漂移）；<code>mono</code> 那两张走 <code>--ufo-mono-icon-filter</code>（深色主题下是 <code>none</code>）。</td></tr>
+          <tr><td>一行日志的内容</td>
+            <td><code>时间 · 环节徽标 · reason + 摘要</code>。左侧色条只表达三档：绿 = 灯真的变了、黄 = 被拒 / 被丢 / 被顶回、红 = 出错或摘灯。环节与理由都用<b>文字</b>表达，不只靠颜色。</td></tr>
+          <tr><td>贯穿 id</td>
+            <td><code>trace_id</code> 由 hook 生成 <code>&lt;pid&gt;-&lt;纳秒&gt;</code>，同时是 inbox 文件名与关联键。<b>不用</b> payload 里的 <code>event_id</code>（外部可控串，拿来拼名字就是路径注入）。没有 trace 的行（如上游反查、日志自身维护）不可展开。</td></tr>
+          <tr><td>过滤与展开</td>
+            <td>浮层是<b>左右两栏主从</b>（与信息卡拓展 / 会话记录同一套语言，实测 1000px 下左 409 / 右 553）：左栏 = 本会话全部流水（<code>key</code> 过滤，新→旧，默认跟随最新），过滤条件只剩三个 —— 环节下拉、「只看被拒 / 被丢」、「暂停跟随」；<b>「只看这一条信号」那颗 chip 已删</b>，也不在行下面就地展开。点左栏某一行 → 右栏显示<b>那条记录的完整信息</b>：<code>LogEntry</code> 全字段（seq / writer / stage / reason / trace_id / provider / session_id / key / actor / kind / phase_from→phase_to / sequence / watermark / revision）+ <code>detail</code> + 同 <code>trace_id</code> 的其它行 + 磁盘上那一行 JSONL 原文。右栏内容高于一屏，自己滚（实测 719 / 581）。认不出的过滤取值<b>不匹配任何东西</b>（而不是静默变全量）。</td></tr>
+          <tr><td>导出</td>
+            <td>「导出当前条件」→ 系统<b>另存为</b>选路径 → <code>export_status_log({ path, query })</code>。校验：绝对路径、扩展名 <code>jsonl/log/txt</code>、拒绝写进正在 tail 的日志目录内。取消即不发命令。风险告知常驻：<b>导出内容含提问原文</b>。</td></tr>
+          <tr><td>数据量</td>
+            <td>面板读内存环形缓冲（5000 条），"导出你看得见的那些"；更早的按 <code>before_seq</code> 翻页。浮层底部常驻一行显示<b>日志目录</b>与被挤掉多少条。</td></tr>
+          <tr><td>后端复用</td>
+            <td>Rust 侧整套（22 阶段 / 68 理由、JSONL 落盘与轮转、内核具名裁决、hook 每次调用恰好一行）从被 <code>git reset</code> 摘掉的提交里捞回，<b>只改四处</b>：默认档位、导出签名、命令入参、dialog 插件。前端按这版版面重写。</td></tr>
+        </table>
+      </section>
+
+      <p style="font-size: 12px; color: var(--ufo-faint); margin: 0">
+        这两件定完我就动代码。<code>reference/mock/status-log/</code> 只在浏览器里看，不进构建。
+      </p>
+    </div>
+  </body>
+</html>
