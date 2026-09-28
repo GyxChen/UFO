@@ -234,7 +234,7 @@ async function dismissSession() {
         @pointerup.stop
         @click.stop.prevent="void dismissSession()"
       >
-        <img src="@/assets/close.svg" alt="" class="ufo-mono-icon" aria-hidden="true" />
+        <img src="@/assets/icon/close.svg" alt="" class="ufo-mono-icon" aria-hidden="true" />
       </button>
       <!--
         「正在等你操作」的原因（Codex 的审批理由）：塞进 head 行而不是单开一行 ——

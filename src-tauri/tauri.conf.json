@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
-  "version": "2.10.3",
-  "identifier": "com.tauri-app.my",
+  "productName": "UFO",
+  "version": "1.0.0",
+  "identifier": "com.ufo.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "floating",
-        "title": "tauri-app launcher",
+        "title": "UFO launcher",
         "width": 45,
         "height": 45,
         "x": 24,
@@ -31,7 +31,7 @@
       },
       {
         "label": "main",
-        "title": "tauri-app",
+        "title": "UFO",
         "width": 1000,
         "height": 750,
         "visible": false,
@@ -42,7 +42,7 @@
       },
       {
         "label": "tooltip",
-        "title": "tauri-app tooltip",
+        "title": "UFO tooltip",
         "width": 300,
         "height": 260,
         "visible": false,
@@ -61,7 +61,7 @@
     "trayIcon": {
       "id": "main",
       "iconPath": "icons/icon.png",
-      "tooltip": "tauri-app",
+      "tooltip": "UFO",
       "showMenuOnLeftClick": false
     },
     "security": {

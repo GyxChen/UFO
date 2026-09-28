@@ -38,7 +38,8 @@
   --agent-status-ring-shadow: rgba(0, 0, 0, 0.45);
   --agent-status-overflow-core-bg: color-mix(in srgb, var(--ufo-input) 94%, transparent);
   --agent-status-overflow-core-inset: rgba(255, 255, 255, 0.1);
-  --agent-status-idle-icon-opacity: 0.38;
+  /* 鬼影是唯一的可见内容，压得太狠就成了「看不出这块窗是干什么的」；灰图标在中性底上取 0.5 才够读出轮廓。 */
+  --agent-status-idle-icon-opacity: 0.5;
 
   @apply grid h-full w-full content-center justify-items-center gap-px overflow-hidden p-0;
   /* 网格列行由组件按形态与格子数内联设置，适配方形 / 横条 / 竖条。 */
@@ -274,18 +275,13 @@
 /*
  * ── 空态：一个 CLI 会话都没有 ─────────────────────────────────────────
  *
- * 零会话时模板里没有任何灯 / 溢出格，只剩一块空毛玻璃 —— 看着像应用挂了。这里铺一层
- * 两个平台 logo 的「鬼影」（38% 不透明 + 去色），说明「这块窗是 Claude / Codex 的状态灯，
- * 只是现在没在跑」。
+ * 零会话时模板里没有任何灯 / 溢出格，只剩一块空毛玻璃 —— 看着像应用挂了。这里铺一层机器人图标的
+ * 「鬼影」（见 `.agent-status-module__idle-icon` 的透明度），说明「这块窗是 agent 状态灯，只是现在没在跑」。
  *
  * ⚠️ 必须跨满整个网格（`grid-area: 1 / 1 / -1 / -1`）：模块根节点是 grid（列行由组件按形态内联设置），
  *   不写它就会被当成一个普通格子项塞进某一格，看上去是「鬼影缩在角上」。
  *   ⚠️ 四条线都要写全 —— `grid-area: 1 / -1` 只等于「行起 1 / 列起 -1」（行末与列末默认 auto = 各占一格），
  *   看着像全跨其实只占最后一列那一格。
- * ⚠️ 尺寸取两条轴里更紧的那条：两个图标并排的总宽 ≈ 2.4em（两个 1:1 图标 + 0.38em 间隙），
- *   所以宽度项给 `36cqw`（2.4em ≤ 88% 行宽 → em ≤ 0.36 行宽）；高度项 `80cqh` 管横带那种
- *   「宽而矮」的槽位。45 格（39×39）下算出来约 14px，被设计上限 13px 收回。
- * ⚠️ `--agent-idle-icon-h` 声明在容器上、图标继承：间隙按它算，两者比例才锁得死。
  */
 .agent-status-module__idle {
   grid-area: 1 / 1 / -1 / -1;
@@ -294,18 +290,22 @@
   min-height: 0;
   align-items: center;
   justify-content: center;
-  --agent-idle-icon-h: clamp(7px, min(36cqw, 80cqh), calc(13px * var(--floating-cell-scale, 1)));
-  gap: calc(var(--agent-idle-icon-h) * 0.38);
 }
 
-/* 图标：只给高，宽按资源比例推出来（logo 的 viewBox 接近 1:1，写死宽会把它压扁）。 */
+/*
+ * ⚠️ 尺寸取两条轴里更紧的那条（百分比只能落在限制轴上）：高度项 `74cqh` 管横条那种「宽而矮」的槽位，
+ *   宽度项 `96cqw` 管竖条那一格窄槽（图标是 1:1 的方框，所以宽度上限可以到 96%）。
+ *   45 格（39×43）下算出 31.8px，被设计上限 32px 收住。
+ *   上限是设计像素 → 必须乘 `--floating-cell-scale`，格子调大时鬼影跟着长。
+ * ⚠️ 机器人字形只占 1024 画布的约 86% 宽 × 69% 高（四周留白），所以方框要给到灯点的量级
+ *   （45 格下灯点 34.4px、鬼影方框 31.8px → 肉眼约 27×22），照「灯点 × 80%」给方框会明显偏小。
+ * 只给高、宽交给资源比例（图标 viewBox 是 1:1，写死宽会压扁）。
+ */
 .agent-status-module__idle-icon {
-  height: var(--agent-idle-icon-h);
+  height: clamp(11px, min(96cqw, 74cqh), calc(32px * var(--floating-cell-scale, 1)));
   width: auto;
   flex: 0 0 auto;
   opacity: var(--agent-status-idle-icon-opacity);
-  /* 去色：两个品牌色都很重，38% 下并排会互相抢眼；要保留品牌色就把这条删掉并提到 0.42 左右。 */
-  filter: grayscale(1);
 }
 
 :root[data-theme='light'] .agent-status-module {

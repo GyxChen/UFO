@@ -21,7 +21,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseSlider from '@/components/ui/BaseSlider.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
 import SettingsHint from '@/components/ui/SettingsHint.vue'
-import gearIcon from '@/assets/gear.svg'
+import gearIcon from '@/assets/icon/gear.svg'
 
 const emit = defineEmits<{
   /** 请求打开某个组件的设置页（由主窗口切到对应的 tab）。 */

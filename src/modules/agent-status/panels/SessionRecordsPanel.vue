@@ -22,7 +22,7 @@ import { agentStatusSettings } from '../settings'
 import StatusLogFeed from './StatusLogFeed.vue'
 import StatusLogSettingsCard from './StatusLogSettingsCard.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import closeIcon from '@/assets/close.svg'
+import closeIcon from '@/assets/icon/close.svg'
 
 const records = useSessionRecordsStore()
 const agentStatus = useAgentStatusStore()

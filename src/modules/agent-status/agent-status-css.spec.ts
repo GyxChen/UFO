@@ -224,7 +224,7 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
     expect(OVERFLOW_TOOLTIP_METRICS.gap).toBe(6)
   })
 
-  it('centres the idle platform ghosts across the whole grid', () => {
+  it('centres the idle robot ghost across the whole grid', () => {
     const css = agentStatusCss()
     const idle = ruleBody(css, '.agent-status-module__idle')
     expect(idle, '空态必须有单独的规则').not.toBe('')
@@ -233,20 +233,16 @@ describe('模块样式 · Agent 状态灯一格放得下', () => {
     // 看上去是「缩在角上」而不是居中。⚠️ 四条线要写全 —— `1 / -1` 只是「行起 1 / 列起 -1」，
     // 行末与列末默认 auto（各占一格），看着像全跨其实只占最后一列那一格。
     expect(decl(idle, 'grid-area')).toBe('1 / 1 / -1 / -1')
-    // 尺寸取两条轴里更紧的那条，且上限是设计像素 → 必须跟格子缩放走。
-    const size = decl(idle, '--agent-idle-icon-h')
+
+    const icon = ruleBody(css, '.agent-status-module__idle-icon')
+    // ⚠️ 尺寸取两条轴里更紧的那条（百分比只能落在限制轴上），上限是设计像素 → 必须跟格子缩放走。
+    const size = decl(icon, 'height')
     expect(size).toContain('cqh')
     expect(size).toContain('cqw')
     expect(size).toContain('--floating-cell-scale')
-    // 间隙按图标高算，比例才锁得死（写死 px 会在格子调大后变成两个贴在一起的标）。
-    expect(decl(idle, 'gap')).toContain('--agent-idle-icon-h')
-
-    const icon = ruleBody(css, '.agent-status-module__idle-icon')
-    expect(decl(icon, 'height')).toBe('var(--agent-idle-icon-h)')
-    // 只给高、宽交给资源比例：两个 logo 的 viewBox 不是同一个宽高比，写死宽会压扁其中一个。
+    // 只给高、宽交给资源比例：写死宽会把图标压扁。
     expect(decl(icon, 'width')).toBe('auto')
     expect(decl(icon, 'opacity')).toBe('var(--agent-status-idle-icon-opacity)')
-    expect(decl(icon, 'filter')).toBe('grayscale(1)')
   })
 
   it('draws the overflow ring as a hollow band centred in the cell', () => {

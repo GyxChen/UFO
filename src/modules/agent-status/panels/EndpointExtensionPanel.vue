@@ -15,7 +15,7 @@ import { useEndpointProfilesStore } from '../stores/endpointProfiles'
 import EndpointFlowEditor from './EndpointFlowEditor.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
-import closeIcon from '@/assets/close.svg'
+import closeIcon from '@/assets/icon/close.svg'
 
 const profiles = useEndpointProfilesStore()
 

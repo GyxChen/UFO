@@ -34,10 +34,11 @@ import { hasModuleSettings, type FloatingModuleSection } from '@/lib/floating-mo
 import { hideMainWindow, startCurrentWindowDrag } from '@/lib/window'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { useThemeStore } from '@/stores/theme'
-import closeIcon from '@/assets/close.svg'
-import gearIcon from '@/assets/gear.svg'
-import moonIcon from '@/assets/moon.svg'
-import sunIcon from '@/assets/sun.svg'
+import closeIcon from '@/assets/icon/close.svg'
+import gearIcon from '@/assets/icon/gear.svg'
+import logoIcon from '@/assets/icon/ufo_logo.png'
+import moonIcon from '@/assets/icon/moon.svg'
+import sunIcon from '@/assets/icon/sun.svg'
 
 /** 悬浮窗设置页的 tab key；用固定串而不是模块 id，免得将来某个组件真叫这个名字。 */
 const MODULES_TAB = 'floating-window'
@@ -173,7 +174,11 @@ onBeforeUnmount(() => {
 <template>
   <div class="main-shell">
     <header class="main-titlebar" @pointerdown="onTitlebarPointerDown">
-      <span class="main-titlebar__title">UFO · 主窗口</span>
+      <span class="main-titlebar__title">
+        <!-- 可见文字已写出「UFO」，图标只作装饰，alt 留空避免读屏重复播报。 -->
+        <img :src="logoIcon" alt="" class="main-titlebar__logo" aria-hidden="true" />
+        <span class="main-titlebar__name">UFO</span>
+      </span>
       <button
         type="button"
         class="main-titlebar__close"

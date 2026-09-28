@@ -28,7 +28,7 @@ import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
 import SettingsField from '@/components/ui/SettingsField.vue'
 import SettingsHint from '@/components/ui/SettingsHint.vue'
-import closeIcon from '@/assets/close.svg'
+import closeIcon from '@/assets/icon/close.svg'
 
 const push = usePushStore()
 

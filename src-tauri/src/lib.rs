@@ -12,6 +12,8 @@ use tauri::{
 mod devtools;
 /// 悬浮窗外壳（Rust 侧）：组件的配置存取与转发 —— 不认识任何组件。
 mod floating;
+/// App 标识改名后的一次性搬迁：文件由外壳整体补缺，凭据由组合根点名各组件搬自己的那几条。
+mod migrate;
 /// 悬浮窗组件在 Rust 侧的家：一个组件一个目录（与前端 `src/modules/` 一一对应）。
 mod modules;
 mod mouse;
@@ -89,6 +91,9 @@ fn hide_main<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // ⚠️ 必须排在第一次读 `app_data_dir()` 之前：晚一步，下面所有状态都按空目录加载，
+            //   旧配置 / 会话存档这一轮就用不上了（下次启动才生效，用户看到的是「设置全丢了」）。
+            migrate::copy_app_data(app.handle());
             let app_data = app.path().app_data_dir()?;
             let status_dir = app_data.join("status");
             let module_config_path = app_data.join("floating-modules.json");
@@ -107,6 +112,11 @@ pub fn run() {
             proxy_state.set_selected(&agent_status_settings.proxy_resolver);
             // endpoint 档案登记表（主窗口「信息卡拓展」的数据源），与 StatusState 共享同一份。
             let profile_state = EndpointProfileState::load(app_data.join("endpoint-profiles.json"));
+            // 凭据不在数据目录里（按 service 名前缀寻址，而前缀就是 App 标识），各组件搬自己那几条：
+            // flow 的条目名从刚加载的档案 `secret_names` 反推，todo / weather 用的是固定名。
+            modules::agent_status::flow::migrate_secrets_from_legacy(&profile_state);
+            modules::todo::secrets::migrate_from_legacy();
+            modules::weather::secrets::migrate_from_legacy();
             // 会话存档（SQLite）：跨重启续档。load 打开库、回填缓存并做一次过期清理。
             // 与 profiles 同样处理：clone 进 StatusState（monitor 线程写），再 manage 一份（命令读）。
             let session_store =

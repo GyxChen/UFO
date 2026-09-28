@@ -305,8 +305,22 @@ html.is-tooltip-window #app {
   cursor: grabbing;
 }
 
+/* 标题栏品牌位：logo + 应用名，整块不吃指针事件，拖窗仍由 header 接管。 */
 .main-titlebar__title {
-  @apply pointer-events-none flex-1 pr-10 pl-2 text-left text-xs;
+  @apply pointer-events-none ml-2 flex items-center gap-1.5;
+}
+
+/*
+ * logo：彩色（白＋灰渐变）图标，所以不加 `.ufo-mono-icon` —— 反相会把立体阴影翻成负片。
+ * 深色底上本来就够亮；浅色底接近纯白，靠这圈投影勾出轮廓。
+ */
+.main-titlebar__logo {
+  @apply pointer-events-none block h-5 w-5 object-contain;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+
+.main-titlebar__name {
+  @apply text-xs leading-none;
   color: var(--ufo-muted);
 }
 

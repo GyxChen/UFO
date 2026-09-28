@@ -2,16 +2,32 @@
 //!
 //! 与天气模块同构：service 名带模块后缀，同一个 App 的多个组件各存各的，互不踩。
 
-use crate::modules::agent_status::status::APP_IDENTIFIER;
+use crate::modules::agent_status::status::{APP_IDENTIFIER, LEGACY_APP_IDENTIFIER};
 
 /// 凭据 service 后缀（与前端模块 id 一致）。
 const TODO_SERVICE_SUFFIX: &str = "todo";
 /// 凭据条目名。
 const API_TOKEN_NAME: &str = "api_token";
 
+/// 按 App 标识拼 service 名（当前标识与旧标识只差这个前缀）。
+fn service_name(prefix: &str) -> String {
+    format!("{prefix}/{TODO_SERVICE_SUFFIX}")
+}
+
 /// 本模块在 OS 凭据管理器里的 service 名称。
 pub fn get_service_name() -> String {
-    format!("{APP_IDENTIFIER}/{TODO_SERVICE_SUFFIX}")
+    service_name(APP_IDENTIFIER)
+}
+
+/// 把 Token 从旧 App 标识的 service 复制到当前 service（新值已存在或旧值都没有都无事发生）。
+///
+/// App 标识改过一次名，凭据按 service 名前缀寻址，不搬就等于用户重填一遍。
+pub fn migrate_from_legacy() {
+    crate::migrate::copy_credential(
+        &service_name(LEGACY_APP_IDENTIFIER),
+        &get_service_name(),
+        API_TOKEN_NAME,
+    );
 }
 
 /// 从 OS 凭据管理器读取 API Token（空串视为未配置）。

@@ -28,7 +28,8 @@ pub(crate) use compat::home_dir;
 // providers.settings_config.config），必须与适配器用同一套解析规则。
 pub(crate) use compat::codex::base_url_from_config_text;
 // flow 模块用 App 标识派生凭据 service 名，与 hook 定位 status 目录同一来源。
-pub(crate) use hook::APP_IDENTIFIER;
+// LEGACY_ 那份只给 `crate::migrate` 的一次性搬迁用（标识改过名，旧数据留在旧前缀下）。
+pub(crate) use hook::{APP_IDENTIFIER, LEGACY_APP_IDENTIFIER};
 // model 子模块本身私有，但这些类型是跨模块协议（session_store 存档回填、前端快照），
 // 统一从这里 re-export，避免 session_store 直连 `status::model`。
 pub use model::{

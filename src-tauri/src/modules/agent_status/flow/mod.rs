@@ -785,6 +785,22 @@ pub fn secret_names_for(profiles: &EndpointProfileState, endpoint_id: &str) -> V
         .unwrap_or_default()
 }
 
+/// App 标识改名后的一次性凭据搬迁：把各 endpoint 的脚本密钥从旧 service 前缀复制到新前缀。
+///
+/// keyring 不能按 service 列举，条目名只能从档案的 `secret_names` 清单反推 —— 清单丢了就搬不到
+/// （与「删档案留孤儿」是同一个代价）。只在启动时跑一次，整表 clone 一次无所谓。
+pub fn migrate_secrets_from_legacy(profiles: &EndpointProfileState) {
+    for profile in profiles.snapshot().profiles {
+        for name in secret_names_for(profiles, &profile.id) {
+            crate::migrate::copy_credential(
+                &KeyringSecrets::legacy_service_for(&profile.id),
+                &KeyringSecrets::service_for(&profile.id),
+                &name,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -40,7 +40,9 @@ use crate::modules::agent_status::settings::MODULE_ID;
 const MAX_HOOK_INPUT: u64 = 4 * 1024 * 1024;
 /// App 标识（与 `tauri.conf.json` 的 `identifier` 保持一致）：既用于定位 AppData 下的
 /// status 目录，也被 flow 模块用作凭据 service 前缀 —— 统一从这里导出，避免两处各写一份。
-pub(crate) const APP_IDENTIFIER: &str = "com.tauri-app.my";
+pub(crate) const APP_IDENTIFIER: &str = "com.ufo.app";
+/// 改名前的旧 App 标识：只被 `crate::migrate` 的一次性搬迁用到（搬完不再有任何读取点）。
+pub(crate) const LEGACY_APP_IDENTIFIER: &str = "com.tauri-app.my";
 
 pub fn try_run_status_hook(args: &[String]) -> Option<i32> {
     if !args.iter().any(|arg| arg == "--status-hook") {

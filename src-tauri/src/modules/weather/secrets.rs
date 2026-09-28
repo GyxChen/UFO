@@ -1,11 +1,25 @@
-use crate::modules::agent_status::status::APP_IDENTIFIER;
+use crate::modules::agent_status::status::{APP_IDENTIFIER, LEGACY_APP_IDENTIFIER};
 
 const WEATHER_SERVICE_SUFFIX: &str = "weather";
 const API_KEY_NAME: &str = "api_key";
 
-/// 获取天气模块在 OS 凭据管理器中的 service 名称
+/// 按 App 标识拼 service 名（当前标识与旧标识只差这个前缀）
+fn service_name(prefix: &str) -> String {
+    format!("{prefix}/{WEATHER_SERVICE_SUFFIX}")
+}
+
+/// 获取本模块在 OS 凭据管理器中的 service 名称
 fn get_service_name() -> String {
-    format!("{APP_IDENTIFIER}/{WEATHER_SERVICE_SUFFIX}")
+    service_name(APP_IDENTIFIER)
+}
+
+/// 把 API Key 从旧 App 标识的 service 复制到当前 service（新值已存在或旧值都没有都无事发生）
+pub fn migrate_from_legacy() {
+    crate::migrate::copy_credential(
+        &service_name(LEGACY_APP_IDENTIFIER),
+        &get_service_name(),
+        API_KEY_NAME,
+    );
 }
 
 /// 从 OS 凭据管理器读取和风 API Key

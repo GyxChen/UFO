@@ -16,8 +16,7 @@ import { useAgentStatusStore } from './stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { agentStatusDemand } from './demand'
 import { agentStatusSettings } from './settings'
-import claudeIcon from '@/assets/claude.svg'
-import codexIcon from '@/assets/codex.svg'
+import robotIcon from '@/assets/icon/robot.svg'
 
 const props = defineProps<{ layoutMode: FloatingLayout }>()
 const store = useAgentStatusStore()
@@ -63,7 +62,7 @@ const overflowLabel = computed(() => {
 })
 
 /**
- * 一个 CLI 会话都没有 = **空态**：窗口里什么都不画会像「挂了」，所以铺一层平台 logo 的鬼影
+ * 一个 CLI 会话都没有 = **空态**：窗口里什么都不画会像「挂了」，所以铺一层机器人图标的鬼影
  * （见模板里那段与 `.agent-status-module__idle` 样式），说明「这块窗是 agent 灯，只是现在没在跑」。
  * 判据只看会话数：`+N` 溢出格必须同时为空，否则那是「有会话但放不下」，不是空态。
  */
@@ -186,19 +185,13 @@ onMounted(preloadLightSounds)
     </span>
 
     <!--
-      空态：一个会话都没有时，居中铺一层两个平台 logo 的「鬼影」（38% 不透明度 + 去色）。
-      比留一块空玻璃强 —— 空窗看着像挂了，鬼影一眼说明「这块窗是 Claude / Codex 的状态灯，
-      只是现在没在跑」。整块跨满网格（`.agent-status-module__idle` 的 grid-area），
-      否则会被塞进第一格；图标纯装饰，读屏文案走 sr-only 那句。
+      空态：一个会话都没有时，居中铺一层机器人图标的「鬼影」（见样式里的 `.agent-status-module__idle`）。
+      比留一块空玻璃强 —— 空窗看着像挂了，鬼影一眼说明「这块窗是 agent 状态灯，只是现在没在跑」。
+      整块跨满网格（`.agent-status-module__idle` 的 grid-area），否则会被塞进第一格；
+      图标纯装饰，读屏文案走 sr-only 那句。
     -->
     <div v-if="isEmpty" class="agent-status-module__idle">
-      <img :src="claudeIcon" alt="" class="agent-status-module__idle-icon" aria-hidden="true" />
-      <img
-        :src="codexIcon"
-        alt=""
-        class="agent-status-module__idle-icon ufo-mono-icon"
-        aria-hidden="true"
-      />
+      <img :src="robotIcon" alt="" class="agent-status-module__idle-icon" aria-hidden="true" />
       <span class="sr-only">当前没有 CLI 会话在运行</span>
     </div>
   </div>

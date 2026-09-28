@@ -17,7 +17,7 @@
 
 use std::{net::IpAddr, time::Duration};
 
-use crate::modules::agent_status::status::APP_IDENTIFIER;
+use crate::modules::agent_status::status::{APP_IDENTIFIER, LEGACY_APP_IDENTIFIER};
 
 /// 单次 HTTP 响应体的字节上限：读满即截断，防住脚本拉回巨型响应撑爆内存。
 pub const MAX_RESPONSE_BYTES: usize = 256 * 1024;
@@ -265,15 +265,25 @@ pub trait SecretSource: Send + Sync {
 /// 生产实现：`keyring`（Windows = 凭据管理器 / macOS = Keychain / Linux = Secret Service）。
 pub struct KeyringSecrets;
 
+/// 由 endpoint id 派生凭据 service 名：`<App 标识>/flow/<id>`，删除档案时可整片清理。
+fn service_with_prefix(prefix: &str, endpoint_id: &str) -> String {
+    // endpoint_id 形如 `api.example.com:443`，替换掉分隔符冲突字符。
+    let sanitized: String = endpoint_id
+        .chars()
+        .map(|c| if c == '/' || c == '\\' { '_' } else { c })
+        .collect();
+    format!("{}/flow/{}", prefix, sanitized)
+}
+
 impl KeyringSecrets {
-    /// 由 endpoint id 派生凭据 service 名：与 App 标识绑定，删除档案时可整片清理。
+    /// 本组件在 OS 凭据管理器里的 service 名（当前 App 标识下）。
     pub fn service_for(endpoint_id: &str) -> String {
-        // endpoint_id 形如 `api.example.com:443`，替换掉分隔符冲突字符。
-        let sanitized: String = endpoint_id
-            .chars()
-            .map(|c| if c == '/' || c == '\\' { '_' } else { c })
-            .collect();
-        format!("{}/flow/{}", APP_IDENTIFIER, sanitized)
+        service_with_prefix(APP_IDENTIFIER, endpoint_id)
+    }
+
+    /// 旧 App 标识下的 service 名：只给启动时的一次性凭据搬迁用（见 `crate::migrate`）。
+    pub fn legacy_service_for(endpoint_id: &str) -> String {
+        service_with_prefix(LEGACY_APP_IDENTIFIER, endpoint_id)
     }
 }
 
