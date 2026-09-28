@@ -227,14 +227,21 @@ impl LogState {
         let capacity = config.ring_capacity.max(1) as usize;
         let mut fresh = Vec::new();
         for (day, seq, size) in files {
+            // 本文件的起点。拿它和游标比「谁在谁前面」，才知道这个文件读完了没有。
+            let position = Cursor {
+                day: day.clone(),
+                seq,
+                offset: 0,
+            };
             let from = match runtime.cursor.clone() {
-                // 游标已经在这个文件之后：它早就读完了。
-                Some(cursor) if cursor.precedes(&Cursor { day: day.clone(), seq, offset: 0 }) => {
-                    continue;
-                }
+                // ⚠️ 方向必须是「本文件的起点 < 游标」，别写成 `cursor.precedes(&position)`：
+                //   那样跳过的会是**比游标更新**的文件。跨天之后今天的文件永远读不到，
+                //   游标还会被更早那个文件的位置顶回去，环形缓冲从此冻在旧账上 —— 盘上一路在写、
+                //   面板却「本会话 0 条」。（同一天内看不出来，所以只有第二天才会暴露。）
+                Some(cursor) if position.precedes(&cursor) => continue,
                 // 游标正停在这个文件上：从上次断点继续（夹到当前大小，防被截断后越界）。
                 Some(cursor) if cursor.day == day && cursor.seq == seq => cursor.offset.min(size),
-                // 游标还没建立（目录第一次出现文件）：整份读。
+                // 比游标更新的文件（跨天了 / 当天另起了一个），或游标还没建立：从文件头整份读。
                 _ => 0,
             };
             if size <= from {
@@ -733,7 +740,10 @@ mod tests {
     /// 造一条填好了会话坐标的日志（测试里到处要用，抽出来免得每处写 15 个字段）。
     fn entry(stage: LogStage, reason: Option<LogReason>) -> LogEntry {
         LogEntry {
-            ts_ms: 1_758_940_800_000,
+            // ⚠️ 时刻必须跟着真实时钟：条目落进哪一天的文件由 `ts_ms` 决定，而 `clear()`
+            // 是按 `utc_day(now)` 建活动文件的。夹具写死日期会让「清空后还读得回来」那条
+            // 测试变成「日期恰好与今天同一天才成立」。
+            ts_ms: now_ms(),
             writer: LogWriter::Monitor,
             stage,
             reason,
@@ -808,6 +818,45 @@ mod tests {
             })
             .entries
             .is_empty());
+    }
+
+    #[test]
+    fn an_older_day_file_must_not_starve_the_current_one() {
+        // 跨天才暴露的那条：目录里同时有「更早一天」和「今天」两个文件时，
+        // 播种只该管最新那个，旧文件既不该整份灌进内存，更不该把游标顶回去、
+        // 让今天的行永远读不到（面板表现为「本会话 0 条」，而盘上一直在写）。
+        let temp = TempDir::new("log-runtime-two-days");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        log.report(entry(LogStage::LightTransition, Some(LogReason::PhaseChanged)));
+        log.report(entry(LogStage::KernelVerdict, Some(LogReason::StaleSequence)));
+
+        let stale: String = (0..3)
+            .map(|_| serde_json::to_string(&entry(LogStage::IdleLanternCleared, None)).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        fs::write(log.dir().join(file_name("2000-01-01", 0)), stale).expect("种一个更早一天的文件");
+
+        let fresh = log.drain();
+        assert_eq!(
+            fresh
+                .iter()
+                .filter(|item| item.entry.stage == LogStage::IdleLanternCleared)
+                .count(),
+            0,
+            "旧一天的文件不该被整份灌进环形缓冲"
+        );
+        assert_eq!(fresh.len(), 2, "今天的两行必须进内存");
+
+        // 第二轮：新写的一行要读得回来。游标一旦被旧文件顶回去，这一轮就永远是 0。
+        log.report(entry(LogStage::SessionReaped, None));
+        assert_eq!(log.drain().len(), 1, "跨天后的第二轮还得跟得上");
+        let page = log.page(&StatusLogQuery {
+            key: Some("claude:s1".to_string()),
+            limit: 50,
+            ..Default::default()
+        });
+        assert_eq!(page.entries.len(), 3, "按会话过滤要能捞到今天的这三行");
     }
 
     #[test]

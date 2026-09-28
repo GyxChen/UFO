@@ -117,9 +117,6 @@ pub fn pick_active_seq(files: &[(String, u64)], today: &str, max_file_bytes: u64
         .unwrap_or_default()
 }
 
-/// 一个会话的日志行上限（tailer 与 UI 的共用口径）：超过就要靠过滤而不是翻全量。
-pub const MAX_LIMIT: u16 = 500;
-
 /// 总量超上限时该删哪些文件：**从最旧的整天开始**，删到低于上限即停。
 ///
 /// 活动文件（今天、`active_seq`）永不进名单 —— 它可能被别的 hook 进程持有追加句柄。
