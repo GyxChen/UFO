@@ -7,11 +7,14 @@ interface Props {
     /** 是否把输入值转换为数字。 */
     number?: boolean
   }
+  /** 隐藏数字框两侧的上下微调箭头（设置页的时间类字段用：值有明确范围，箭头点击易误触）。 */
+  noSpin?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: '',
   modelModifiers: () => ({}),
+  noSpin: false,
 })
 
 const emit = defineEmits<{
@@ -41,7 +44,13 @@ function onChange(event: Event) {
 </script>
 
 <template>
-  <input class="base-input" :value="modelValue" @input="onInput" @change="onChange" />
+  <input
+    class="base-input"
+    :class="{ 'base-input--no-spin': noSpin }"
+    :value="modelValue"
+    @input="onInput"
+    @change="onChange"
+  />
 </template>
 
 <style scoped>
@@ -99,6 +108,14 @@ function onChange(event: Event) {
 .base-input[type='number']::-webkit-inner-spin-button,
 .base-input[type='number']::-webkit-outer-spin-button {
   opacity: 0.58;
+}
+
+/* 隐藏上下箭头：Chromium 下 appearance:none 即整块消失。 */
+.base-input--no-spin[type='number']::-webkit-inner-spin-button,
+.base-input--no-spin[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

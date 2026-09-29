@@ -24,6 +24,7 @@ import SettingsField from '@/components/ui/SettingsField.vue'
 import {
   AGENT_MAX_CELL_STEPS,
   AGENT_STATUS_MODULE_ID,
+  DEFAULT_AGENT_STATUS_SETTINGS,
   MAX_AGENT_CELLS,
   MAX_RETENTION_SECONDS,
   MAX_RUNNING_TIMEOUT_MINUTES,
@@ -125,6 +126,23 @@ watch(
   { immediate: true }
 )
 
+/**
+ * 「恢复默认」是否无事可做：本页六个字段已经全在默认值上。
+ * 此时把钮置灰 —— 留一个点了没反应的钮等于又一个「按钮点不动」。
+ */
+const atDefaults = computed(() => {
+  const d = DEFAULT_AGENT_STATUS_SETTINGS
+  const s = settings.value
+  return (
+    s.completed_retention_ms === d.completed_retention_ms &&
+    s.running_timeout_ms === d.running_timeout_ms &&
+    s.token_unit === d.token_unit &&
+    s.proxy_resolver === d.proxy_resolver &&
+    s.max_cells === d.max_cells &&
+    s.sound_enabled === d.sound_enabled
+  )
+})
+
 /** 更新灯闪烁持续时间（输入是秒，配置里存毫秒）。 */
 async function updateRetention() {
   try {
@@ -188,23 +206,26 @@ async function updateSoundEnabled() {
   }
 }
 
-/** 把输入框恢复成当前配置值（放弃未提交的编辑）。 */
-function resetInputs() {
-  maxCellsIndex.value = indexForCells(settings.value.max_cells)
-  retentionInput.value = toSeconds(settings.value.completed_retention_ms)
-  runningTimeoutInput.value = toMinutes(settings.value.running_timeout_ms)
-  tokenUnitInput.value = settings.value.token_unit
-  proxyResolverInput.value = settings.value.proxy_resolver
-  soundEnabledInput.value = settings.value.sound_enabled
-}
-
 /**
- * 提交时间类配置（保留时长 + 执行中超时）。
- * 各字段本来就在 `@change` 时落盘，这个按钮是给「改完没失焦就想保存」兜底。
+ * 把本页六个字段写回默认值并落盘。
+ *
+ * 只传这六个键：`updateModuleSettings` 是模块层浅合并，`log` 等不在本页的键原样保留。
+ * 输入框不回退本地值 —— 成功时配置事件会把新值经 `watch(settings)` 灌回来，失败时盘上本来就没变。
  */
-async function saveTimeouts() {
-  await updateRetention()
-  await updateRunningTimeout()
+async function restoreDefaults() {
+  const d = DEFAULT_AGENT_STATUS_SETTINGS
+  try {
+    await modules.updateModuleSettings(AGENT_STATUS_MODULE_ID, {
+      completed_retention_ms: d.completed_retention_ms,
+      running_timeout_ms: d.running_timeout_ms,
+      token_unit: d.token_unit,
+      proxy_resolver: d.proxy_resolver,
+      max_cells: d.max_cells,
+      sound_enabled: d.sound_enabled,
+    })
+  } catch {
+    // 写失败时盘上还是原值，输入框也没有本地改动要回退；store 已经 warn 过，这里不再重复。
+  }
 }
 </script>
 
@@ -219,15 +240,18 @@ async function saveTimeouts() {
         label-for="completed-retention-seconds"
         hint="一轮完成后绿灯闪烁维持的时长，到期落成黄常亮；默认 30，范围 1–86400。"
       >
-        <BaseInput
-          v-model.number="retentionInput"
-          id="completed-retention-seconds"
-          type="number"
-          :min="MIN_RETENTION_SECONDS"
-          :max="MAX_RETENTION_SECONDS"
-          step="1"
-          @change="updateRetention"
-        />
+        <div class="w-20">
+          <BaseInput
+            v-model.number="retentionInput"
+            id="completed-retention-seconds"
+            type="number"
+            no-spin
+            :min="MIN_RETENTION_SECONDS"
+            :max="MAX_RETENTION_SECONDS"
+            step="1"
+            @change="updateRetention"
+          />
+        </div>
       </SettingsField>
 
       <!-- 说明收进问号角标（`SettingsHint`）：取值范围与默认值是次要文案，常驻会把卡片撑高。 -->
@@ -236,15 +260,18 @@ async function saveTimeouts() {
         label-for="running-timeout-minutes"
         hint="绿灯（Running）期间超过该时长没有任何新事件，就判定这一轮已结束并清掉灯；默认 1，范围 1–60。慢 agent 可拉长。"
       >
-        <BaseInput
-          v-model.number="runningTimeoutInput"
-          id="running-timeout-minutes"
-          type="number"
-          :min="MIN_RUNNING_TIMEOUT_MINUTES"
-          :max="MAX_RUNNING_TIMEOUT_MINUTES"
-          step="1"
-          @change="updateRunningTimeout"
-        />
+        <div class="w-20">
+          <BaseInput
+            v-model.number="runningTimeoutInput"
+            id="running-timeout-minutes"
+            type="number"
+            no-spin
+            :min="MIN_RUNNING_TIMEOUT_MINUTES"
+            :max="MAX_RUNNING_TIMEOUT_MINUTES"
+            step="1"
+            @change="updateRunningTimeout"
+          />
+        </div>
       </SettingsField>
 
       <SettingsField
@@ -307,10 +334,12 @@ async function saveTimeouts() {
     </section>
   </div>
 
-  <!-- 重置 / 保存是整页动作（保存的是左卡的两个时间参数，格子上限本就在 change 时落盘），
-       所以提到两卡之外，避免看起来只作用于某一张卡。 -->
+  <!--
+    本页唯一的动作钮：各字段都在 change / 失焦时即时落盘，所以「保存」是多余的（而且光标移开
+    输入框的那一刻就先提交了，钮来不及变可点）。「恢复默认」管的是另一件事 —— 把六个字段退回默认值，
+    与「悬浮窗设置 · 格子大小」那颗「默认」钮同一语义；已经在默认值上时置灰。
+  -->
   <div class="module-settings__actions">
-    <BaseButton variant="ghost" @click="resetInputs">重置</BaseButton>
-    <BaseButton variant="primary" @click="saveTimeouts">保存</BaseButton>
+    <BaseButton variant="ghost" :disabled="atDefaults" @click="restoreDefaults">恢复默认</BaseButton>
   </div>
 </template>

@@ -11,7 +11,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import GeneralSection from './GeneralSection.vue'
-import { AGENT_STATUS_MODULE_ID } from '../settings'
+import { AGENT_STATUS_MODULE_ID, DEFAULT_AGENT_STATUS_SETTINGS } from '../settings'
 import type { FloatingModuleConfig } from '@/lib/floating-modules'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 
@@ -198,5 +198,47 @@ describe('GeneralSection', () => {
     await flushPromises()
 
     expect(toggle.element.checked).toBe(false)
+  })
+
+  it('restores the six fields this page owns and keeps every other key', async () => {
+    const wrapper = await mountWith(
+      backendConfig({
+        completed_retention_ms: 45_000,
+        running_timeout_ms: 600_000,
+        token_unit: 'm_tokens',
+        proxy_resolver: 'cc-switch',
+        max_cells: 3,
+        sound_enabled: false,
+        // 日志块不在本页上：浅合并必须原样留着它
+        log: { level: 'verbose', hook_enabled: true, retention_days: 14 },
+      })
+    )
+
+    const button = wrapper.get('.module-settings__actions button')
+    expect(button.text()).toBe('恢复默认')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click')
+    await flushPromises()
+
+    const block = saved?.module_settings[AGENT_STATUS_MODULE_ID] as Record<string, unknown>
+    expect(block.completed_retention_ms).toBe(DEFAULT_AGENT_STATUS_SETTINGS.completed_retention_ms)
+    expect(block.running_timeout_ms).toBe(DEFAULT_AGENT_STATUS_SETTINGS.running_timeout_ms)
+    expect(block.token_unit).toBe(DEFAULT_AGENT_STATUS_SETTINGS.token_unit)
+    expect(block.proxy_resolver).toBe(DEFAULT_AGENT_STATUS_SETTINGS.proxy_resolver)
+    expect(block.max_cells).toBe(DEFAULT_AGENT_STATUS_SETTINGS.max_cells)
+    expect(block.sound_enabled).toBe(DEFAULT_AGENT_STATUS_SETTINGS.sound_enabled)
+    expect(block.log).toEqual({ level: 'verbose', hook_enabled: true, retention_days: 14 })
+    expect(saved?.module_settings['other-module']).toEqual({ untouched: true })
+
+    // 回灌后界面停在默认值上（输入框、滑块、开关都跟着配置走）
+    expect(wrapper.get<HTMLInputElement>('#completed-retention-seconds').element.value).toBe('30')
+    expect(wrapper.get<HTMLInputElement>('#running-timeout-minutes').element.value).toBe('1')
+    expect(wrapper.get<HTMLInputElement>('.base-switch__input').element.checked).toBe(true)
+  })
+
+  it('greys the restore-defaults button when every field already sits on its default', async () => {
+    // 缺字段 = 全默认：此时钮无事可做，不许留成「点了没反应」
+    const wrapper = await mountWith(backendConfig({}))
+    expect(wrapper.get('.module-settings__actions button').attributes('disabled')).toBeDefined()
   })
 })
