@@ -1,13 +1,14 @@
 <script setup lang="ts">
 /**
  * 主窗「悬浮窗设置」页（方案 C）：左边是组件列表（启用开关 / 需求 / 顺序 / 齿轮）+ 格子大小卡，
- * 右边是悬浮窗在三种形态下的实时预览。
+ * 右边顶上是版本卡、下面是悬浮窗在三种形态下的实时预览。
  *
  * 列表里的每一行都来自注册表（新增组件自动出现）；顺序写进配置的 `order`，
  * 与悬浮窗里的先后顺序是同一个字段。齿轮与「点悬浮窗上的组件」都打开同一个设置页。
  */
 import { computed, ref, watch } from 'vue'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
+import AboutPanel from '@/components/AboutPanel.vue'
 import FloatingShapePreview from './FloatingShapePreview.vue'
 import { FLOATING_BASE_CELL_PX, MAX_CELL_PX, MIN_CELL_PX, clampCellPx } from '@/lib/floating-layout'
 import {
@@ -266,17 +267,22 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
       </section>
     </div>
 
-    <section class="ufo-card module-catalog__preview" aria-labelledby="module-preview-title">
-      <div class="ufo-card__header">
-        <h2 id="module-preview-title" class="ufo-card__title">悬浮窗预览</h2>
-        <span class="ufo-card__hint">贴边即变形</span>
-      </div>
+    <div class="module-catalog__column">
+      <!-- 版本卡放右列最上面：预览要跟着格子大小实时长缩，占下面的大块；版本一行读完，占顶上。 -->
+      <AboutPanel />
 
-      <FloatingShapePreview
-        :snapshot="modules.runtime"
-        :definitions="definitions"
-        :cell-px="cellPxInput"
-      />
-    </section>
+      <section class="ufo-card module-catalog__preview" aria-labelledby="module-preview-title">
+        <div class="ufo-card__header">
+          <h2 id="module-preview-title" class="ufo-card__title">悬浮窗预览</h2>
+          <span class="ufo-card__hint">贴边即变形</span>
+        </div>
+
+        <FloatingShapePreview
+          :snapshot="modules.runtime"
+          :definitions="definitions"
+          :cell-px="cellPxInput"
+        />
+      </section>
+    </div>
   </div>
 </template>

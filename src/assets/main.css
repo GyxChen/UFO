@@ -71,8 +71,15 @@
   /* 浮在编辑区之上的小按钮（语法编辑器的「扩大」） */
   --ufo-overlay-float: rgba(0, 0, 0, 0.42);
   --ufo-overlay-float-strong: rgba(0, 0, 0, 0.62);
-  /* 细滚动条滑块；轨道一律透明 */
+  /*
+   * 滚动条滑块与槽宽；轨道一律透明。⚠️ 全 App 的滚动条只走标准属性这一套
+   * （`scrollbar-width` + `scrollbar-color`）：元素只要设了 `scrollbar-color`，
+   * 它的 `::-webkit-scrollbar` 自定义规则就整体失效（实测槽宽回到标准渲染），
+   * 所以不要再加 webkit 块——那是改了你看不到的死代码。
+   * `scrollbar-width` 只接受关键字：auto ≈ 15px、thin ≈ 8px（px 长度不合法，会静默落回 auto）。
+   */
   --ufo-scroll-thumb: rgba(255, 255, 255, 0.28);
+  --ufo-scrollbar-w: auto;
   --ufo-selection: rgba(52, 211, 153, 0.3);
   /*
    * 交互控件的「实体件」：滑块 / 开关的拇指是一块实心圆片，开关的关闭轨道也是一块实心底。
@@ -367,7 +374,7 @@ html.is-tooltip-window #app {
   @apply flex min-h-0 flex-1 flex-col items-center justify-start gap-4 overflow-x-hidden overflow-y-auto px-4 py-6;
   color: var(--ufo-text);
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -410,7 +417,7 @@ html.is-tooltip-window #app {
 }
 
 .main-tabs__tab-icon {
-  @apply block h-4 w-4 object-contain opacity-70;
+  @apply block h-[18px] w-[18px] object-contain opacity-70;
   pointer-events: none;
 }
 
@@ -428,8 +435,9 @@ html.is-tooltip-window #app {
  * tabbar 右端的动作按钮（主题切换）：外观是一格方按钮，语义是**动作**而不是标签页，
  * 因此不属于 tablist，也不参与方向键漫游（见 `.main-tabs` 的注释）。
  */
+/* 动作钮：32px 见方（⚠️ 用 px 而不是 h-8 —— 根字号 14px 下 2rem 只有 28px）。 */
 .main-tabs__action {
-  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent p-0;
+  @apply flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-lg border-0 bg-transparent p-0;
   color: var(--ufo-muted);
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -446,7 +454,7 @@ html.is-tooltip-window #app {
 }
 
 .main-tabs__action-icon {
-  @apply block h-4 w-4 object-contain;
+  @apply block h-[18px] w-[18px] object-contain;
   pointer-events: none;
 }
 
@@ -505,31 +513,6 @@ html.is-tooltip-window #app {
 
 .main-tabs--chips .main-tabs__tab:focus-visible {
   outline-offset: 2px;
-}
-
-/* WebKit 滚动条：细轨 + 圆角滑块，贴合 Matte 面板 */
-.main-window::-webkit-scrollbar {
-  width: 10px;
-}
-
-.main-window::-webkit-scrollbar-track {
-  background: transparent;
-  margin: 8px 0;
-}
-
-.main-window::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background-clip: padding-box;
-  background-color: var(--ufo-scroll-thumb);
-}
-
-.main-window::-webkit-scrollbar-thumb:hover {
-  background-color: var(--ufo-ring);
-}
-
-.main-window::-webkit-scrollbar-corner {
-  background: transparent;
 }
 
 /*
@@ -735,20 +718,17 @@ html.is-tooltip-window #app {
 }
 
 /*
- * 「标题 + 说明角标」同一行（角标见 `ui/SettingsHint.vue`）。
+ * 「标题 + 说明角标」同一行（角标见 `ui/SettingsHint.vue`），两者**垂直居中**对齐 ——
+ * 与 `SettingsField` 的标题行同一套口径（大一号的字下 baseline 会让角标视觉下坠）。
  * ⚠️ 角标不能塞进标题元素里面：设置页大量用 `aria-labelledby` 指向标题，标题的无障碍名称会
  * 把按钮的名字一起读出来（「窗口格子 说明」）。所以标题保持纯文本，角标做它的兄弟节点。
  * 允许换行：窄栏里宁可角标掉到第二行，也不挤压标题文本。
  */
 .ufo-heading-row {
-  @apply flex min-w-0 flex-wrap items-baseline gap-x-2;
+  @apply flex min-w-0 flex-wrap items-center gap-x-2;
 }
 
-/* 「关于」页：整页只有一条信息，所以居中一张窄卡，不铺满内容区宽度。 */
-.about-panel {
-  @apply mx-auto flex w-full max-w-md flex-col gap-3;
-}
-
+/* 版本卡里的版本号：等宽 + 等宽数字，刷新时不抖。 */
 .about-panel__version {
   @apply text-[13px] font-medium tabular-nums;
   font-family: var(--font-mono);
@@ -759,16 +739,15 @@ html.is-tooltip-window #app {
   @apply my-0;
 }
 
-/* 窗口格子上限：滑块 + 右侧取值一行（滑块吃满剩余宽度，取值固定不动）。 */
-.module-settings__cap-row {
-  @apply mt-1 flex items-center gap-3 border-t pt-4;
-  border-color: var(--ufo-border);
-}
-
-.module-settings__cap-value {
-  @apply shrink-0 text-right text-[12px] font-semibold tabular-nums;
-  color: var(--ufo-text);
-  min-width: 5.5rem;
+/*
+ * 窗口格子滑块：设置行右列控件。
+ * ⚠️ 选择器要三级（0,3,0）才压得住 BaseSlider 的 scoped `.base-slider[data-v-…] { width:100% }`
+ * （scoped 把类选择器加成 0,2,0，与两级复合选择器打平、按加载顺序它赢）。
+ * 一旦 100% 生效，`auto` 列会塌成原生 range 的 min-content（实测 129px），刻度与轨道全挤在一起。
+ * 定宽 300px 让 6 枚刻度摊开；上下 8px 呼吸位把整行从 ~34px 撑到 ~50px。
+ */
+.settings-field .settings-field__control .module-settings__cap-slider {
+  @apply w-[300px] py-2;
 }
 
 .module-settings__actions {
@@ -806,7 +785,7 @@ html.is-tooltip-window #app {
 }
 
 /*
- * 「常规」页：短表单卡片横向并排（行为 / 窗口格子），窄窗口塌成单列。
+ * 「常规」页：两块无卡头的短表单卡横向并排，窄窗口塌成单列。
  * 卡片默认带 max-w-md 限宽，并排时去掉限宽，否则右侧会留一大片空白。
  */
 .general-cards {
@@ -816,18 +795,6 @@ html.is-tooltip-window #app {
 }
 
 .general-cards > .ufo-card {
-  @apply max-w-none;
-}
-
-/*
- * `.general-cards` 右列的纵向堆叠（如「窗口格子」+ 它下面的那一行）。
- * 列内卡片同样要撑满列宽：`.general-cards > .ufo-card` 是**直接子级**选择器，够不到嵌套的卡片。
- */
-.general-cards__column {
-  @apply flex min-w-0 flex-col gap-4;
-}
-
-.general-cards__column > .ufo-card {
   @apply max-w-none;
 }
 
@@ -1134,7 +1101,7 @@ html.is-tooltip-window #app {
   caret-color: var(--ufo-text);
   resize: none;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) var(--ufo-input);
 }
 

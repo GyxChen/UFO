@@ -122,43 +122,41 @@ function onRetentionChange(value: string) {
 </script>
 
 <template>
-  <section class="ufo-card lg-settings" :class="{ 'lg-settings--off': !on }" aria-labelledby="lg-settings-title">
-    <div class="lg-settings__head">
+  <section class="ufo-card lg-settings" aria-label="转灯日志设置">
+    <!--
+      标准设置行：标题 + 问号在左、开关贴右。
+      说明收进问号，其中「关掉不影响会话存档」是红线句，必须留在文案里。
+      不给 state 读数：在不在记，开关自己说得出。
+    -->
+    <SettingsField
+      label="转灯日志"
+      hint="打开后把每一次转灯裁决落成一行可回查的账；关闭则完全不写盘。关掉它不影响下面的会话存档。明细级会落提问与等待原因的截断摘录，凭据任何档位都不写。"
+    >
       <BaseSwitch
         v-model="on"
-        aria-labelledby="lg-settings-title"
+        aria-label="转灯日志"
         :title="on ? '关闭后不再记录任何转灯裁决' : '打开后记录每一次转灯裁决'"
         @change="save"
       />
-      <div class="lg-settings__text">
-        <h2 id="lg-settings-title" class="lg-settings__title ufo-heading-row__title">转灯日志</h2>
-        <p class="lg-settings__sub">
-          打开后把每一次转灯裁决落成一行可回查的账；关闭则完全不写盘。关掉它不影响下面的会话存档。
-        </p>
-      </div>
-    </div>
+    </SettingsField>
 
     <!--
-      保留天数是唯一的回收旋钮：横排（`inline`）= 标题 + 问号角标留在左、下拉钉在最右；
-      「当前占多少盘」那行小字写在标题下面一行 —— 它是读数（按约定常驻，不进角标），
-      但这一行的右边给了控件，挤进标签行就会顶到下拉框跟前。
+      保留天数是唯一的回收旋钮：标准设置行 = 标题 + 问号角标在左、下拉钉右；
+      「当前占多少盘」是下拉读不出的事实，走 `state` 常驻在标题下面一行。
       ⚠️ 这行在日志关闭时也保持可用：不再写新的不等于已有账不必回收。
     -->
-    <div class="lg-retention">
-      <SettingsField
-        inline
-        label="保留天数"
-        label-id="lg-retention-label"
-        :hint="`日志按 UTC 日分文件保存；超过这个天数的整天文件会被自动回收（当天的永不删）。只能选 ${LOG_RETENTION_DAYS_CHOICES.join(' 或 ')} 天，默认 7 天；盘上若还留着更早版本手填的其它天数，会自动就近改成这两档之一并写回。另有一条体积硬上限不给界面入口：量特别大的日子它会提前削掉最旧的一天，读数里会写明。`"
-      >
-        <BaseSelect
-          :model-value="String(days)"
-          :options="retentionOptions"
-          aria-labelledby="lg-retention-label"
-          @change="onRetentionChange"
-        />
-      </SettingsField>
-      <p class="lg-retention__usage">{{ usageLabel }}</p>
-    </div>
+    <SettingsField
+      label="保留天数"
+      label-id="lg-retention-label"
+      :state="usageLabel"
+      :hint="`日志按 UTC 日分文件保存；超过这个天数的整天文件会被自动回收（当天的永不删）。只能选 ${LOG_RETENTION_DAYS_CHOICES.join(' 或 ')} 天，默认 7 天；盘上若还留着更早版本手填的其它天数，会自动就近改成这两档之一并写回。另有一条体积硬上限不给界面入口：量特别大的日子它会提前削掉最旧的一天，读数里会写明。`"
+    >
+      <BaseSelect
+        :model-value="String(days)"
+        :options="retentionOptions"
+        aria-labelledby="lg-retention-label"
+        @change="onRetentionChange"
+      />
+    </SettingsField>
   </section>
 </template>

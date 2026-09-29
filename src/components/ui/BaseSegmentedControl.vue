@@ -88,6 +88,8 @@ function onChange(option: SegmentedOption, event: Event) {
   color: var(--ufo-muted);
   font-size: 12px;
   font-weight: 500;
+  /* 作为设置行右列控件时列宽按内容算：文案绝不折行（两行高的段控件会把整行撑歪） */
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background-color 150ms ease-out,

@@ -53,11 +53,12 @@ impl AgentApp {
     }
 }
 
-/// 一个可选代理解析器的下拉项（id 存配置，label 供 UI 展示）。
+/// 一个可选代理解析器的下拉项（id 存配置，label 供 UI 展示，description 说明「选了会发生什么」）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ProxyResolverInfo {
     pub id: String,
     pub label: String,
+    pub description: String,
 }
 
 /// 代理解析器接口：每种本地代理工具实现一次。
@@ -70,6 +71,9 @@ pub trait ProxyResolver: Send + Sync {
 
     /// 人类可读名，作下拉的显示文本。
     fn label(&self) -> &'static str;
+
+    /// 一句说明（下拉菜单里跟在名字下面）：说清「选了这个会发生什么」，不写实现细节。
+    fn description(&self) -> &'static str;
 
     /// 本地代理地址命中时返回其转发到的上游 endpoint；
     /// 未配置代理 / 地址不是本工具的监听端口 / 读不到时，一律返回 None（调用方回落原值）。
@@ -87,10 +91,12 @@ impl ResolverRegistry {
         let mut options = vec![ProxyResolverInfo {
             id: NONE_RESOLVER.to_string(),
             label: "不解析（直连）".to_string(),
+            description: "Endpoint 按会话原样显示".to_string(),
         }];
         options.extend(self.resolvers.iter().map(|resolver| ProxyResolverInfo {
             id: resolver.id().to_string(),
             label: resolver.label().to_string(),
+            description: resolver.description().to_string(),
         }));
         options
     }

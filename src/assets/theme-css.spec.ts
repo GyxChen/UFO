@@ -54,6 +54,8 @@ const THEME_INDEPENDENT = new Set([
   '--ufo-status-yellow',
   '--ufo-status-red',
   '--ufo-status-blue',
+  // 滚动条槽宽是长度不是颜色：两个主题同值（滑块颜色 --ufo-scroll-thumb 才有浅色档）
+  '--ufo-scrollbar-w',
 ])
 
 describe('主题 token 护栏', () => {

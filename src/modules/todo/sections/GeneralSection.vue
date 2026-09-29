@@ -590,7 +590,8 @@ function completedTime(task: TodoTaskItem, nowMs: number): string {
 
       <div class="flex flex-wrap items-end gap-3">
         <div class="min-w-[220px] flex-1">
-          <SettingsField label="任务标题" label-for="todo-new-task-title">
+          <!-- 页内表单（不是设置行）：控件在标题下面占满，走 stacked -->
+          <SettingsField stacked label="任务标题" label-for="todo-new-task-title">
             <BaseInput
               id="todo-new-task-title"
               v-model="newTaskTitle"
@@ -602,7 +603,7 @@ function completedTime(task: TodoTaskItem, nowMs: number): string {
         </div>
 
         <div class="w-[200px]">
-          <SettingsField label="优先级" label-id="todo-new-task-priority-label">
+          <SettingsField stacked label="优先级" label-id="todo-new-task-priority-label">
             <BaseSegmentedControl
               v-model="newTaskPriority"
               name="todo-new-task-priority"
@@ -649,7 +650,9 @@ function completedTime(task: TodoTaskItem, nowMs: number): string {
           <SettingsHint text="API Token 将安全存储在系统凭据管理器中，不进入配置文件" />
         </header>
 
+        <!-- Token 管理是「输入 + 按钮 + 状态行」的复合块，装不进一行，走 stacked -->
         <SettingsField
+          stacked
           label="API Token"
           label-for="todo-api-token"
           :state="todoStore.hasSavedToken ? '已保存至凭据管理器' : '未保存'"
@@ -690,7 +693,8 @@ function completedTime(task: TodoTaskItem, nowMs: number): string {
           </div>
         </SettingsField>
 
-        <SettingsField label="清单筛选" label-id="todo-project-label" hint="只统计某个清单的未完成任务；默认统计全部清单">
+        <!-- 清单筛选：下拉 + 刷新按钮 + 错误行，复合块走 stacked -->
+        <SettingsField stacked label="清单筛选" label-id="todo-project-label" hint="只统计某个清单的未完成任务；默认统计全部清单">
           <div class="flex items-center gap-2">
             <BaseSelect
               v-model="projectIdInput"
@@ -716,18 +720,15 @@ function completedTime(task: TodoTaskItem, nowMs: number): string {
           label-for="todo-refresh-interval"
           hint="数据拉取间隔，范围 5~60 分钟（避免过度请求滴答接口）"
         >
-          <div class="flex items-center gap-2">
-            <div class="w-24">
-              <BaseInput
-                id="todo-refresh-interval"
-                v-model="refreshIntervalInput"
-                type="number"
-                :min="MIN_REFRESH_INTERVAL_MIN"
-                :max="MAX_REFRESH_INTERVAL_MIN"
-                @blur="saveCommonSettings()"
-              />
-            </div>
-            <span class="text-xs text-[var(--ufo-muted)]">分钟</span>
+          <div class="w-24">
+            <BaseInput
+              id="todo-refresh-interval"
+              v-model="refreshIntervalInput"
+              type="number"
+              :min="MIN_REFRESH_INTERVAL_MIN"
+              :max="MAX_REFRESH_INTERVAL_MIN"
+              @blur="saveCommonSettings()"
+            />
           </div>
         </SettingsField>
 

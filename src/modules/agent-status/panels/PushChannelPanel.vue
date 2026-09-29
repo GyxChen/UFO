@@ -72,10 +72,10 @@ function providerEnabled(id: string): boolean {
   return push.config.providers[id]?.enabled === true
 }
 
-/** 已启用的服务数 · 主题总数，显示在总开关那一行右侧。 */
+/** 主题总数与在服务的主题数，显示在总开关那一行下面（服务个数不说 —— 左列列表里一眼数得出）。 */
 const summary = computed(() => {
   const services = providers.value.filter(item => providerEnabled(item.id)).length
-  return `${providers.value.length} 个服务 · ${push.channels.length} 行主题 · ${services} 个在服务`
+  return `${push.channels.length} 行主题 · ${services} 个在服务`
 })
 
 /** 一句服务副标题（未登记服务也能显示，走注册表降级）。 */
@@ -212,23 +212,27 @@ async function onRemove(topic: ChannelView) {
 <template>
   <div class="push-panel">
     <!-- ① 上半区：总开关与「发什么 / 发哪些事件」（所有服务共用，一次配好） -->
-    <section class="ufo-card push-master" aria-labelledby="push-master-title">
-      <div class="push-master__head">
+    <section class="ufo-card push-master" aria-label="消息推送设置">
+      <!--
+        总开关行：标题 + 问号在左、开关贴右。
+        计数（几行主题 / 几个在服务）是开关读不出的事实 → 走 state 常驻标题下面；
+        服务个数不放 —— 左列服务列表一眼数得出，说了就是复读。
+      -->
+      <SettingsField
+        label="消息推送"
+        :state="summary"
+        hint="总开关。关掉后所有主题一律不发，也不会碰网络。"
+      >
         <BaseSwitch
           :model-value="push.config.enabled"
           aria-label="消息推送总开关"
           @update:model-value="onMaster"
         />
-        <!-- 外壳的标题行：标题 + 说明角标同一行（角标不进标题，否则 aria-labelledby 把它一起读进标题） -->
-        <div class="ufo-heading-row">
-          <h3 id="push-master-title" class="push-master__title">消息推送</h3>
-          <SettingsHint text="总开关。关掉后所有主题一律不发，也不会碰网络。" />
-        </div>
-        <span class="push-master__meta">{{ summary }}</span>
-      </div>
+      </SettingsField>
 
       <div class="push-master__body" :class="{ 'push-master__body--dim': !push.config.enabled }">
-        <SettingsField label="哪些事发通知（可多选）">
+        <!-- 多选 chips 是一整块控件组，装不进一行，走 stacked -->
+        <SettingsField stacked label="哪些事发通知（可多选）">
           <div class="push-chips" role="group" aria-label="推送事件">
             <button
               v-for="option in PUSH_EVENT_OPTIONS"
@@ -246,6 +250,7 @@ async function onRemove(topic: ChannelView) {
         </SettingsField>
 
         <SettingsField
+          stacked
           label="提醒内容（可多选）"
           hint="「哪个平台的哪类状态」固定发，这里只挑还要额外带什么；不勾的那项整行不出现"
         >

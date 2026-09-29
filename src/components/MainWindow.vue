@@ -2,24 +2,22 @@
 /**
  * 主窗口：两级导航 + 内容区。
  *
- * 一级 tab = 「悬浮窗设置」（悬浮窗整体：组件列表 + 三形态预览）+
- * 每个声明了设置页的组件各一页 + 右端的工具页（「关于」）；二级 tab = 该组件自己的设置分区
- * （切法由组件定义，外壳不参与）。
+ * 一级 tab = 每个声明了设置页的组件各一页 + 右端的「悬浮窗设置」（齿轮图标页签，
+ * 一页到底：组件列表 / 格子大小 / 三形态预览 / 版本）；
+ * 二级 tab = 该组件自己的设置分区（切法由组件定义，外壳不参与）。
  *
- * ⚠️ 「悬浮窗设置」是**一页到底**，没有二级：它本身就是一块整体（列表 + 预览并排），
- * 再切一刀反而把「改组件」和「看效果」拆开了。二级只服务组件设置页。
- * 组件只给一个分区时同样不渲染二级（只有一个 tab 的 tabbar 是纯噪音）。
+ * ⚠️ 组件设置页只有一个分区时不渲染二级（只有一个 tab 的 tabbar 是纯噪音）。
  *
  * 内容容器按分区的 `fill` 选：`fill: true`（列表 / 编辑器）用 `.main-window--wide` —— 外层不滚、
  * 内层各列占满高度各自滚；否则 `.main-window--stack` —— 内容有多高算多高，滚外层页面。
  *
  * 两级导航都是 `BaseTabs`，靠 variant 区分外观（一级下划线 / 二级胶囊）；
  * 页面清单完全由模块注册表推出，新增组件不用改这个文件。
- * 打开某组件设置有两条路：组件列表行上的齿轮，或直接点悬浮窗里的那个组件
- * （外壳发 `OPEN_MODULE_SETTINGS_EVENT` 过来）。
+ * 打开某组件设置有两条路：悬浮窗设置页里组件列表行的齿轮，或直接点悬浮窗里的那个组件
+ * （外壳发 `OPEN_MODULE_SETTINGS_EVENT` 过来）；两条都落到 `openModuleSettings`。
  *
- * 一级 tabbar 右端另有两个工具位，**语义不同、所在容器也不同**：
- * - 「关于」（齿轮图标）= 一个**标签页**，进 tablist，因此参与方向键漫游；
+ * 一级 tabbar 右端另有两格，**语义不同、所在容器也不同**：
+ * - 「悬浮窗设置」（齿轮图标）= 一个**标签页**，进 tablist，因此参与方向键漫游；
  * - 主题切换 = 一个**动作**（切深浅色，没有对应页面），走 `BaseTabs` 的 `#actions` 插槽，
  *   刻意留在 tablist 之外。
  */
@@ -27,7 +25,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import FloatingModulesPanel from './floating/FloatingModulesPanel.vue'
-import AboutPanel from './AboutPanel.vue'
 import BaseTabs from './ui/BaseTabs.vue'
 import { OPEN_MODULE_SETTINGS_EVENT, type OpenModuleSettingsPayload } from '@/lib/floating-bridge'
 import { hasModuleSettings, type FloatingModuleSection } from '@/lib/floating-modules'
@@ -42,20 +39,18 @@ import sunIcon from '@/assets/icon/sun.svg'
 
 /** 悬浮窗设置页的 tab key；用固定串而不是模块 id，免得将来某个组件真叫这个名字。 */
 const MODULES_TAB = 'floating-window'
-/** 「关于」页的 tab key（同上，用固定串）。 */
-const ABOUT_TAB = 'about'
 
-/** 一个一级页面：悬浮窗设置、某个组件的设置页，或工具页（关于）。 */
+/** 一个一级页面：某个组件的设置页，或「悬浮窗设置」。 */
 interface MainTab {
   /** tab 唯一 key（组件页 = 模块 id） */
   key: string
-  /** tabbar 上的文字；工具页只有图标时为空串 */
+  /** tabbar 上的文字；齿轮页只有图标时为空串 */
   label: string
-  /** 单色图标地址；给了就渲染在文字前，或单独占一格（工具页） */
+  /** 单色图标地址；给了就渲染在文字前，或单独占一格（齿轮页） */
   icon?: string
   /** 没有可见文字时必须给的读屏名称 */
   ariaLabel?: string
-  /** 是否靠右（工具页），与左侧的内容 tab 视觉分区 */
+  /** 是否靠右（齿轮页），与左侧的内容 tab 视觉分区 */
   end?: boolean
   /** 该页的二级分区；空数组 = 这页没有二级 tabbar */
   sections: FloatingModuleSection[]
@@ -64,16 +59,14 @@ interface MainTab {
 const modules = useFloatingModulesStore()
 const theme = useThemeStore()
 
-/** 一级页面清单：悬浮窗设置 + 每个有设置页的组件一页（顺序 = 注册表顺序）+ 右端的「关于」。 */
+/** 一级页面清单：每个有设置页的组件一页（顺序 = 注册表顺序）+ 右端的「悬浮窗设置」（齿轮）。 */
 const tabs = computed<MainTab[]>(() => [
-  { key: MODULES_TAB, label: '悬浮窗设置', sections: [] },
   ...FLOATING_MODULE_DEFINITIONS.filter(hasModuleSettings).map(definition => ({
     key: definition.id,
     label: definition.label,
     sections: definition.settings?.sections ?? [],
   })),
-  // 工具页：只有齿轮图标，靠右对齐。
-  { key: ABOUT_TAB, label: '', icon: gearIcon, ariaLabel: '关于', end: true, sections: [] },
+  { key: MODULES_TAB, label: '', icon: gearIcon, ariaLabel: '悬浮窗设置', end: true, sections: [] },
 ])
 
 /** 交给 `BaseTabs` 的精简清单（它只认 key / label / icon / 无障碍名 / 是否靠右）。 */
@@ -87,7 +80,10 @@ const tabItems = computed(() =>
   }))
 )
 
-const activeTab = ref<string>(MODULES_TAB)
+/** 默认一级页 = 第一个组件设置页；没有任何组件有设置页时退回「悬浮窗设置」。 */
+const DEFAULT_TAB = FLOATING_MODULE_DEFINITIONS.find(hasModuleSettings)?.id ?? MODULES_TAB
+
+const activeTab = ref<string>(DEFAULT_TAB)
 /** 当前一级页的分区列表。 */
 const activeSections = computed(() => tabs.value.find(tab => tab.key === activeTab.value)?.sections ?? [])
 /** 当前二级分区的 id；空串 = 还没选（只有单分区的组件会出现）。 */
@@ -121,7 +117,7 @@ watch(
 )
 
 /**
- * 切到某个组件的设置页。
+ * 切到某个组件的设置页（列表行齿轮 / 点悬浮窗上该组件两条路共用）。
  * 组件没有设置页（或没传 id）时回到悬浮窗设置页 —— 悬浮窗上点空白处就是这个语义。
  */
 function openModuleSettings(moduleId: string | null) {
@@ -199,7 +195,7 @@ onBeforeUnmount(() => {
       外壳只提供这块区域，不认识任何在里面上演的组件。
     -->
     <div class="main-content" id="main-content">
-    <!-- 一级：悬浮窗设置 / 各组件设置页 / 关于（下划线，见 .main-tabs 默认样式）。 -->
+    <!-- 一级：各组件设置页 / 悬浮窗设置（齿轮页签，下划线，见 .main-tabs 默认样式）。 -->
     <BaseTabs v-model="activeTab" id-prefix="main" aria-label="主窗口分区" :tabs="tabItems">
       <!-- 右端动作：切换深浅色。月亮 = 当前是深色，太阳 = 当前是浅色（点击切到另一个）。 -->
       <template #actions>
@@ -230,28 +226,19 @@ onBeforeUnmount(() => {
       :tabs="activeSections.map(section => ({ key: section.id, label: section.label }))"
     />
 
+    <!--
+      悬浮窗设置（齿轮页签）：一页到底、没有二级 —— 列表 + 预览 + 版本纵向堆叠，
+      内容有多高算多高，滚外层页面（整页比视口高，不能用不滚的 --wide）。
+    -->
     <main
       v-if="activeTab === MODULES_TAB"
-      class="main-window main-window--wide"
+      class="main-window main-window--stack"
       role="tabpanel"
       tabindex="0"
       :id="`main-panel-${MODULES_TAB}`"
       :aria-labelledby="`main-tab-${MODULES_TAB}`"
     >
       <FloatingModulesPanel @open-settings="openModuleSettings" />
-    </main>
-
-    <!-- 关于：目前只有版本号，没有二级分区，也不需要 fill（内容短，滚整页即可）。 -->
-    <main
-      v-else-if="activeTab === ABOUT_TAB"
-      class="main-window main-window--stack"
-      role="tabpanel"
-      tabindex="0"
-      :id="`main-panel-${ABOUT_TAB}`"
-      :aria-labelledby="`main-tab-${ABOUT_TAB}`"
-    >
-      <h1 class="sr-only">{{ activeTabLabel }}</h1>
-      <AboutPanel />
     </main>
 
     <main

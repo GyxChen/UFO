@@ -218,13 +218,14 @@ onBeforeUnmount(disarmDismiss)
 
 <style scoped>
 /*
- * 触发图标：16×16 的描边按钮，与前面的标题/标签同一行（间距交给容器的 `gap`，组件自己不留 margin）。
+ * 触发图标：15×15 的描边按钮，与前面的标题同一行、**垂直居中**对齐（间距交给容器的 `gap`，组件自己不留 margin）。
+ * 15px 是配着 14px 标题定的：16px 的圆盒在 14px 字旁会显大，15px 则正好与字高齐平。
  * 描边靠 currentColor，悬停 / 聚焦 / 展开三态一起提亮 —— 看得出「正开着的是它」。
  */
 .settings-hint {
   display: inline-flex;
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;

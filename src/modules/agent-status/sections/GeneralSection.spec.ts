@@ -68,13 +68,14 @@ describe('GeneralSection', () => {
       backendConfig({ completed_retention_ms: 45_000, running_timeout_ms: 120_000 })
     )
     expect(wrapper.get<HTMLInputElement>('#completed-retention-seconds').element.value).toBe('45')
-    expect(wrapper.get<HTMLInputElement>('#running-timeout-seconds').element.value).toBe('120')
+    // 无响应超时的输入单位是分钟：120_000ms 显示为 2。
+    expect(wrapper.get<HTMLInputElement>('#running-timeout-minutes').element.value).toBe('2')
   })
 
   it('falls back to defaults when the config has no block for this module', async () => {
     const wrapper = await mountWith(backendConfig(null))
     expect(wrapper.get<HTMLInputElement>('#completed-retention-seconds').element.value).toBe('30')
-    expect(wrapper.get<HTMLInputElement>('#running-timeout-seconds').element.value).toBe('60')
+    expect(wrapper.get<HTMLInputElement>('#running-timeout-minutes').element.value).toBe('1')
   })
 
   it('writes edits into its own block (seconds in the form, milliseconds on disk)', async () => {
@@ -142,37 +143,37 @@ describe('GeneralSection', () => {
     expect(muted.get('.base-switch__input').attributes('aria-label')).toBe('状态音效')
   })
 
-  it('lays the status sound row out in the right column, below the cells card', async () => {
+  it('merges the cells slider and status sound rows into one header-less right card', async () => {
     const wrapper = await mountWith(backendConfig({}))
 
-    // 右列 = `.general-cards` 的第二个子节点，里面自上而下是「窗口格子」→「状态音效」。
-    const cards = wrapper.get('.general-cards')
-    const columns = [...cards.element.children]
-    expect(columns).toHaveLength(2)
-    expect(columns[1]?.classList.contains('general-cards__column')).toBe(true)
+    // 两块卡并排、都是 `.general-cards` 的直接子节点；都不带卡头（「行为 / 即时生效」已删）。
+    const cards = [...wrapper.get('.general-cards').element.children]
+    expect(cards).toHaveLength(2)
+    for (const card of cards) {
+      expect(card.querySelector('.ufo-card__header'), '设置卡不再要汇总性卡头').toBeNull()
+    }
 
-    const column = wrapper.get('.general-cards__column')
-    const nested = [...column.element.children]
-    expect(nested[0]?.classList.contains('ufo-card')).toBe(true)
-    expect(nested[0]?.textContent).toContain('窗口格子')
-    expect(nested[1]?.classList.contains('light-sound')).toBe(true)
-
-    // 左列仍是「行为」卡：音效没有塞进去（否则会被读成时间参数那一类）。
-    expect(wrapper.get('.general-cards > .ufo-card').find('.light-sound').exists()).toBe(false)
-
-    // 行内布局：简介在左、开关在右（开关是这一行的最后一个子节点）。
-    const row = wrapper.get('.light-sound')
-    expect(row.get('.light-sound__text').text()).toContain('状态音效')
-    expect([...row.element.children].at(-1)?.classList.contains('base-switch')).toBe(true)
+    // 左卡 = 四个取值行；右卡 = 「窗口格子」（滑块贴右）+「状态音效」（开关贴右）。
+    expect(cards[0]?.textContent).toContain('Token 单位')
+    const fields = [...cards[1]!.querySelectorAll('.settings-field')]
+    expect(fields.map(f => f.querySelector('.settings-field__label')?.textContent?.trim())).toEqual([
+      '窗口格子',
+      '状态音效',
+    ])
+    expect(fields[0]?.querySelector('.settings-field__control .base-slider')).toBeTruthy()
+    // 「最多 N 盏灯」读数常驻在「窗口格子」标题下面（刻度只标形状，盏数要换算）。
+    expect(fields[0]?.querySelector('.settings-field__state')?.textContent).toBe('最多 9 盏灯')
+    expect(fields[1]?.querySelector('.settings-field__control .base-switch')).toBeTruthy()
   })
 
   it('points the user at the replaceable sound folder under the install path', async () => {
-    const wrapper = await mountWith(backendConfig({}))
+    await mountWith(backendConfig({}))
+    // 换音频说明是静态解释 → 收进问号角标（面板 Teleport 到 body，常驻 DOM）；
     // 音频在安装路径下，提示写的是那句固定文案（不回显开发期的绝对路径）。
-    const text = wrapper.get('.light-sound').text()
-    expect(text).toContain('安装路径下的')
-    expect(text).toContain('data/bgm')
-    expect(text).toContain('goError.mp3')
+    const pops = [...document.body.querySelectorAll('.settings-hint__pop')].map(p => p.textContent ?? '')
+    expect(
+      pops.some(t => t.includes('安装路径') && t.includes('data/bgm') && t.includes('goError.mp3'))
+    ).toBe(true)
   })
 
   it('writes the status sound toggle into its own config block', async () => {

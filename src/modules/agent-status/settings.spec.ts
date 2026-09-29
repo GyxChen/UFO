@@ -15,7 +15,8 @@ import {
   logSwitchOn,
   nearestRetentionChoice,
   retentionMsFromSeconds,
-  runningTimeoutMsFromSeconds,
+  runningTimeoutMsFromMinutes,
+  toMinutes,
   toSeconds,
 } from './settings'
 
@@ -211,11 +212,13 @@ describe('seconds helpers', () => {
     expect(retentionMsFromSeconds(45)).toBe(45_000)
     expect(retentionMsFromSeconds(0)).toBe(1_000)
     expect(retentionMsFromSeconds(MAX_RETENTION_SECONDS + 1)).toBe(MAX_RETENTION_SECONDS * 1000)
-    expect(runningTimeoutMsFromSeconds(120)).toBe(120_000)
-    expect(runningTimeoutMsFromSeconds(1)).toBe(60_000)
-    expect(runningTimeoutMsFromSeconds(Number.NaN)).toBe(
+    expect(runningTimeoutMsFromMinutes(2)).toBe(120_000)
+    expect(runningTimeoutMsFromMinutes(0)).toBe(60_000)
+    expect(runningTimeoutMsFromMinutes(999)).toBe(MAX_RUNNING_TIMEOUT_SECONDS * 1000)
+    expect(runningTimeoutMsFromMinutes(Number.NaN)).toBe(
       DEFAULT_AGENT_STATUS_SETTINGS.running_timeout_ms
     )
     expect(toSeconds(45_000)).toBe(45)
+    expect(toMinutes(120_000)).toBe(2)
   })
 })

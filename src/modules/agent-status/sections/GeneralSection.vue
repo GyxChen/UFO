@@ -1,14 +1,12 @@
 <script setup lang="ts">
 /**
- * Agent 状态灯设置 · 常规：所有「填一下就完事」的配置，两块卡片横向并排，下面再补一行状态音效。
+ * Agent 状态灯设置 · 常规：所有「填一下就完事」的配置，两块无卡头的短表单卡横向并排。
  *
- * 左「行为」（时间参数与全局取值）、右「窗口格子」（各形态上限）。
- * 它们都是短表单，纵向堆叠会白白拉长页面，所以并排铺开 —— 一屏看完，不用滚。
- * 需要「占满高度 + 左右各自滚动」的两个面板（信息卡拓展 / 会话记录）才各占一个二级 tab。
- *
- * 「状态音效」是右列里的一行（简介在左、开关在右），落在「窗口格子」卡片**下面**：
- * 它配的是「有没有声音」，与左卡的时间参数、上面卡片的格子尺寸都不是一类，
- * 塞进任一张卡都会被误读成只影响那一块。
+ * 左卡 = 时间参数与全局取值（灯闪烁持续时间 / 无响应超时 / Token 单位 / 代理解析器），
+ * 右卡 = 窗口与声音（窗口格子滑块 + 状态音效开关）。
+ * 都不带卡头：每一行的标题已经说清是什么，「行为 / 即时生效」这类汇总性标题是噪音。
+ * 纵向堆叠会白白拉长页面，所以并排铺开 —— 一屏看完，不用滚；
+ * 需要「占满高度 + 左右各自滚动」的面板（信息卡拓展 / 会话记录）才各占一个二级 tab。
  *
  * 卡里的字段是本组件自己的配置（`../settings` 读写外层的 `module_settings['agent-status']`，
  * 字段名不经过外壳）；右卡的「最多显示几盏灯」也是本组件自己的配置（同块的 `max_cells`），
@@ -23,19 +21,19 @@ import BaseSelect from '@/components/ui/BaseSelect.vue'
 import BaseSlider from '@/components/ui/BaseSlider.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
 import SettingsField from '@/components/ui/SettingsField.vue'
-import SettingsHint from '@/components/ui/SettingsHint.vue'
 import {
   AGENT_MAX_CELL_STEPS,
   AGENT_STATUS_MODULE_ID,
   MAX_AGENT_CELLS,
   MAX_RETENTION_SECONDS,
-  MAX_RUNNING_TIMEOUT_SECONDS,
+  MAX_RUNNING_TIMEOUT_MINUTES,
   MIN_RETENTION_SECONDS,
-  MIN_RUNNING_TIMEOUT_SECONDS,
+  MIN_RUNNING_TIMEOUT_MINUTES,
   agentStatusSettings,
   fetchProxyResolvers,
   retentionMsFromSeconds,
-  runningTimeoutMsFromSeconds,
+  runningTimeoutMsFromMinutes,
+  toMinutes,
   toSeconds,
   type ProxyResolverInfo,
   type TokenUnit,
@@ -47,7 +45,8 @@ const modules = useFloatingModulesStore()
 const settings = computed(() => agentStatusSettings(modules.config))
 
 const retentionInput = ref(toSeconds(settings.value.completed_retention_ms))
-const runningTimeoutInput = ref(toSeconds(settings.value.running_timeout_ms))
+/** 无响应超时的输入单位是分钟（配置里存毫秒）。 */
+const runningTimeoutInput = ref(toMinutes(settings.value.running_timeout_ms))
 const tokenUnitInput = ref<TokenUnit>(settings.value.token_unit)
 const proxyResolverInput = ref(settings.value.proxy_resolver)
 /** 状态音效开关：悬浮窗前端播放，关掉后三种跳色都不出声。 */
@@ -64,15 +63,23 @@ onMounted(async () => {
   }
 })
 
+/** 状态音效的说明（收进问号角标）：三种提示音的语义 + 换音频的操作指引，都是解释不是读数。 */
+const soundHint =
+  '红灯 / 黄灯 / 完成绿闪各播一段提示音；绿常亮不发声，绿闪落成黄常亮也不重复响。换音频：把安装路径下 data/bgm 里的 goError.mp3 / goWarn.mp3 / goSucc.mp3 覆盖掉（重启后生效）。'
+
 /** token 单位选项；`tokens` 显示原始计数，`m_tokens` 显示百万。 */
 const tokenUnitOptions: { value: TokenUnit; label: string }[] = [
   { value: 'tokens', label: 'Tokens' },
   { value: 'm_tokens', label: 'M tokens' },
 ]
 
-/** 代理解析器下拉选项；只把后端 id/label 映射成通用下拉需要的结构。 */
+/** 代理解析器下拉选项；只把后端 id/label/说明映射成通用下拉需要的结构。 */
 const proxyResolverOptions = computed(() =>
-  resolvers.value.map(option => ({ value: option.id, label: option.label }))
+  resolvers.value.map(option => ({
+    value: option.id,
+    label: option.label,
+    description: option.description,
+  }))
 )
 
 /**
@@ -83,9 +90,8 @@ const proxyResolverOptions = computed(() =>
 const maxCellsIndex = ref(indexForCells(settings.value.max_cells))
 const currentMaxCells = computed(() => AGENT_MAX_CELL_STEPS[maxCellsIndex.value] ?? MAX_AGENT_CELLS)
 
-/** 贴角网格标注：档位 → 行×列（如 9 盏灯 = 3×3 方块），放在取值旁帮用户理解这个数撑多大。 */
+/** 贴角网格标注：档位 → 行×列（如 9 盏灯 = 3×3 方块），标在滑块刻度下方帮用户理解这个数撑多大。 */
 const cornerShapes: Record<number, string> = { 1: '1×1', 2: '1×2', 3: '1×3', 4: '2×2', 6: '2×3', 9: '3×3' }
-const currentCornerShape = computed(() => cornerShapes[currentMaxCells.value] ?? '')
 
 /**
  * 滑块刻度：每个档位一枚，下标即档位、标注贴到四角时的方块形状。
@@ -110,7 +116,7 @@ watch(
   settings,
   value => {
     retentionInput.value = toSeconds(value.completed_retention_ms)
-    runningTimeoutInput.value = toSeconds(value.running_timeout_ms)
+    runningTimeoutInput.value = toMinutes(value.running_timeout_ms)
     tokenUnitInput.value = value.token_unit
     proxyResolverInput.value = value.proxy_resolver
     maxCellsIndex.value = indexForCells(value.max_cells)
@@ -119,7 +125,7 @@ watch(
   { immediate: true }
 )
 
-/** 更新完成灯保留时长（输入是秒，配置里存毫秒）。 */
+/** 更新灯闪烁持续时间（输入是秒，配置里存毫秒）。 */
 async function updateRetention() {
   try {
     await modules.updateModuleSettings(AGENT_STATUS_MODULE_ID, {
@@ -130,14 +136,14 @@ async function updateRetention() {
   }
 }
 
-/** 更新 Running 无新 hook 超时（秒）；慢 agent 可拉长避免绿灯被误清。 */
+/** 更新无响应超时（输入是分钟，配置里存毫秒）；慢 agent 可拉长避免绿灯被误清。 */
 async function updateRunningTimeout() {
   try {
     await modules.updateModuleSettings(AGENT_STATUS_MODULE_ID, {
-      running_timeout_ms: runningTimeoutMsFromSeconds(runningTimeoutInput.value),
+      running_timeout_ms: runningTimeoutMsFromMinutes(runningTimeoutInput.value),
     })
   } catch {
-    runningTimeoutInput.value = toSeconds(settings.value.running_timeout_ms)
+    runningTimeoutInput.value = toMinutes(settings.value.running_timeout_ms)
   }
 }
 
@@ -186,7 +192,7 @@ async function updateSoundEnabled() {
 function resetInputs() {
   maxCellsIndex.value = indexForCells(settings.value.max_cells)
   retentionInput.value = toSeconds(settings.value.completed_retention_ms)
-  runningTimeoutInput.value = toSeconds(settings.value.running_timeout_ms)
+  runningTimeoutInput.value = toMinutes(settings.value.running_timeout_ms)
   tokenUnitInput.value = settings.value.token_unit
   proxyResolverInput.value = settings.value.proxy_resolver
   soundEnabledInput.value = settings.value.sound_enabled
@@ -203,15 +209,16 @@ async function saveTimeouts() {
 </script>
 
 <template>
-  <!-- 两块卡片横向并排（窄窗口由 .general-cards 的媒体查询塌成单列）；右列自己再纵向堆叠。 -->
+  <!-- 两块卡片横向并排（窄窗口由 .general-cards 的媒体查询塌成单列）。两张卡都不带卡头：
+       每一行自己的标题已经说清是什么，「行为 / 即时生效」这类汇总性标题是噪音。 -->
   <div class="general-cards">
-    <section class="ufo-card module-settings" aria-labelledby="agent-status-behaviour-title">
-      <div class="ufo-card__header">
-        <h2 id="agent-status-behaviour-title" class="ufo-card__title">行为</h2>
-        <span class="ufo-card__hint">即时生效</span>
-      </div>
-
-      <SettingsField label="完成灯保留（秒）" label-for="completed-retention-seconds">
+    <section class="ufo-card module-settings">
+      <!-- 单位留在标题里（输入框只有数字，单位必须可见）；取值范围收进问号。 -->
+      <SettingsField
+        label="灯闪烁持续时间（秒）"
+        label-for="completed-retention-seconds"
+        hint="一轮完成后绿灯闪烁维持的时长，到期落成黄常亮；默认 30，范围 1–86400。"
+      >
         <BaseInput
           v-model.number="retentionInput"
           id="completed-retention-seconds"
@@ -225,17 +232,17 @@ async function saveTimeouts() {
 
       <!-- 说明收进问号角标（`SettingsHint`）：取值范围与默认值是次要文案，常驻会把卡片撑高。 -->
       <SettingsField
-        label="执行中超时（秒）"
-        label-for="running-timeout-seconds"
-        hint="绿灯（Running）超过该时长无新事件会被移除；默认 60 秒，范围 60–3600。慢 agent 可拉长。"
+        label="无响应超时（分钟）"
+        label-for="running-timeout-minutes"
+        hint="绿灯（Running）期间超过该时长没有任何新事件，就判定这一轮已结束并清掉灯；默认 1，范围 1–60。慢 agent 可拉长。"
       >
         <BaseInput
           v-model.number="runningTimeoutInput"
-          id="running-timeout-seconds"
+          id="running-timeout-minutes"
           type="number"
-          :min="MIN_RUNNING_TIMEOUT_SECONDS"
-          :max="MAX_RUNNING_TIMEOUT_SECONDS"
-          step="30"
+          :min="MIN_RUNNING_TIMEOUT_MINUTES"
+          :max="MAX_RUNNING_TIMEOUT_MINUTES"
+          step="1"
           @change="updateRunningTimeout"
         />
       </SettingsField>
@@ -268,69 +275,40 @@ async function saveTimeouts() {
       </SettingsField>
     </section>
 
-    <div class="general-cards__column">
-      <section class="ufo-card module-settings" aria-labelledby="agent-status-cells-title">
-        <div class="ufo-card__header">
-          <div class="ufo-heading-row">
-            <h2 id="agent-status-cells-title" class="ufo-card__title">窗口格子</h2>
-            <SettingsHint
-              text="有几个会话就显示几盏灯：上下贴边时横向排开、左右贴边时纵向排开、贴到四角时排成方块。这里限制的是「最多显示几盏」，超出的会话折叠成最后一格的 +N；只影响状态灯，不影响其它组件。"
-            />
-          </div>
-          <span class="ufo-card__hint">最多 {{ currentMaxCells }} 盏灯</span>
-        </div>
-
-        <SettingsField label="最多显示" label-id="max-cells-label">
-          <div class="module-settings__cap-row">
-            <!-- 刻度即档位：拖到哪档就是几盏灯，每档下方标注贴到四角时的方块形状。 -->
-            <BaseSlider
-              v-model="maxCellsIndex"
-              class="flex-1"
-              :min="0"
-              :max="AGENT_MAX_CELL_STEPS.length - 1"
-              :step="1"
-              :ticks="maxCellTicks"
-              aria-labelledby="max-cells-label"
-              :aria-value-text="`${currentMaxCells} 盏灯`"
-              @change="updateMaxCells"
-            />
-            <span class="module-settings__cap-value">
-              {{ currentMaxCells }} 盏<span v-if="currentCornerShape"> · 四角 {{ currentCornerShape }}</span>
-            </span>
-          </div>
-        </SettingsField>
-      </section>
+    <!-- 右卡 = 窗口与声音两行（原先的「窗口格子」「状态音效」两张卡合并；都不带卡头）。 -->
+    <section class="ufo-card module-settings">
+      <!-- 窗口格子：滑块贴右；「最多 N 盏灯」是刻度形状读不出的结论（3×3 要换算成盏数），走 state 常驻标题下面。 -->
+      <SettingsField
+        label="窗口格子"
+        :state="`最多 ${currentMaxCells} 盏灯`"
+        hint="有几个会话就显示几盏灯：上下贴边时横向排开、左右贴边时纵向排开、贴到四角时排成方块。这里限制的是「最多显示几盏」，超出的会话折叠成最后一格的 +N；只影响状态灯，不影响其它组件。"
+      >
+        <BaseSlider
+          v-model="maxCellsIndex"
+          class="module-settings__cap-slider"
+          :min="0"
+          :max="AGENT_MAX_CELL_STEPS.length - 1"
+          :step="1"
+          :ticks="maxCellTicks"
+          aria-label="最多显示几盏灯"
+          :aria-value-text="`${currentMaxCells} 盏灯`"
+          @change="updateMaxCells"
+        />
+      </SettingsField>
 
       <!--
-        状态音效：右列里「窗口格子」**下面**的一行（简介在左、开关在右）。
-        它配的是「有没有声音」，与左卡的时间参数、上面卡片的格子尺寸都不是一类 ——
-        塞进行为卡会像时间参数、塞进格子卡会像格子设置，所以自己占一行。
+        状态音效：它配的是「有没有声音」，与左卡的时间参数、上面的格子尺寸都不是一类，
+        但都是「灯怎么表现」的开关，合并在同一张卡里各占一行。
+        换音频说明是静态解释、不是可变读数 → 收进问号，行内不常驻灰字。
       -->
-      <section class="ufo-card module-settings light-sound" aria-labelledby="light-sound-title">
-        <div class="light-sound__text">
-          <div class="ufo-heading-row">
-            <h2 id="light-sound-title" class="ufo-card__title">状态音效</h2>
-            <SettingsHint text="红灯 / 黄灯 / 完成绿闪各播一段提示音；绿常亮不发声，绿闪落成黄常亮也不重复响。" />
-          </div>
-          <p class="ufo-card__hint">
-            换音频：把
-            <span class="light-sound__path">goError.mp3</span> /
-            <span class="light-sound__path">goWarn.mp3</span> /
-            <span class="light-sound__path">goSucc.mp3</span>
-            覆盖进安装路径下的 <span class="light-sound__path">data/bgm</span>（重启后生效）。
-          </p>
-        </div>
-        <BaseSwitch
-          v-model="soundEnabledInput"
-          aria-label="状态音效"
-          @change="updateSoundEnabled"
-        />
-      </section>
-    </div>
+      <SettingsField label="状态音效" :hint="soundHint">
+        <BaseSwitch v-model="soundEnabledInput" aria-label="状态音效" @change="updateSoundEnabled" />
+      </SettingsField>
+    </section>
   </div>
 
   <!-- 重置 / 保存是整页动作（保存的是左卡的两个时间参数，格子上限本就在 change 时落盘），
-       所以提到两卡之外，避免看起来只作用于右卡。 -->
+       所以提到两卡之外，避免看起来只作用于某一张卡。 -->
   <div class="module-settings__actions">
     <BaseButton variant="ghost" @click="resetInputs">重置</BaseButton>
     <BaseButton variant="primary" @click="saveTimeouts">保存</BaseButton>

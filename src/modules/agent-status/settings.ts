@@ -26,10 +26,11 @@ export const DEFAULT_TOKEN_UNIT: TokenUnit = 'tokens'
 /** 不解析（直连）的固定 id，与 Rust `NONE_RESOLVER` 一致。 */
 export const NONE_PROXY_RESOLVER = 'none'
 
-/** 代理解析器下拉项：id 存进配置并作 value，label 供 UI 展示。与 Rust `ProxyResolverInfo` 对应。 */
+/** 代理解析器下拉项：id 存进配置并作 value，label 供 UI 展示，description 是菜单里的一句说明。与 Rust `ProxyResolverInfo` 对应（旧后端可能不带说明，故可选）。 */
 export interface ProxyResolverInfo {
   id: string
   label: string
+  description?: string
 }
 
 /** 完成灯保留时长：默认 30 秒，可选 1 秒 ..= 24 小时。 */
@@ -37,10 +38,13 @@ export const DEFAULT_RETENTION_SECONDS = 30
 export const MIN_RETENTION_SECONDS = 1
 export const MAX_RETENTION_SECONDS = 86_400
 
-/** Running 无事件超时：默认 60 秒，可选 1 分钟 ..= 60 分钟（慢 agent 可拉长）。 */
+/** Running 无事件超时（界面标题「无响应超时」）：默认 60 秒，可选 1 分钟 ..= 60 分钟（慢 agent 可拉长）。 */
 export const DEFAULT_RUNNING_TIMEOUT_SECONDS = 60
 export const MIN_RUNNING_TIMEOUT_SECONDS = 60
 export const MAX_RUNNING_TIMEOUT_SECONDS = 60 * 60
+/** 同一区间的分钟口径（设置页输入用）：1 ..= 60 分钟。 */
+export const MIN_RUNNING_TIMEOUT_MINUTES = MIN_RUNNING_TIMEOUT_SECONDS / 60
+export const MAX_RUNNING_TIMEOUT_MINUTES = MAX_RUNNING_TIMEOUT_SECONDS / 60
 
 /**
  * 本模块可选的格子上限档位（主窗口「窗口格子」滑块用）：单模块最多 3×3 = 9。
@@ -287,10 +291,10 @@ export function retentionMsFromSeconds(seconds: number): number {
   )
 }
 
-/** 设置页输入（秒）→ 配置值（毫秒），顺便夹取范围。 */
-export function runningTimeoutMsFromSeconds(seconds: number): number {
+/** 设置页输入（分钟）→ 配置值（毫秒），顺便夹取范围。 */
+export function runningTimeoutMsFromMinutes(minutes: number): number {
   return clampMs(
-    seconds * 1000,
+    minutes * 60_000,
     MIN_RUNNING_TIMEOUT_SECONDS * 1000,
     MAX_RUNNING_TIMEOUT_SECONDS * 1000,
     DEFAULT_AGENT_STATUS_SETTINGS.running_timeout_ms
@@ -315,6 +319,11 @@ export function nearestRetentionChoice(value: unknown, fallback: number): number
 /** 配置值（毫秒）→ 设置页显示的秒数。 */
 export function toSeconds(ms: number): number {
   return Math.round(ms / 1000)
+}
+
+/** 配置值（毫秒）→ 「无响应超时」输入框显示的分钟数。 */
+export function toMinutes(ms: number): number {
+  return Math.round(ms / 60_000)
 }
 
 /** 向后端拉取可用的代理解析器列表（含 `none`）；由设置页自己按需调用。 */

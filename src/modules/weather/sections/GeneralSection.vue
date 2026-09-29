@@ -199,8 +199,9 @@ const locationModeOptions = [
         <SettingsHint text="API Key 将安全存储在系统凭据管理器中，不进入配置文件" />
       </header>
 
-      <!-- 遵循规范第 5.3 & 9.4 节：密钥管理专属交互 -->
+      <!-- 遵循规范第 5.3 & 9.4 节：密钥管理专属交互（输入 + 按钮 + 状态行是复合块，走 stacked） -->
       <SettingsField
+        stacked
         label="API Key"
         label-for="weather-api-key"
         :state="weatherStore.hasSavedKey ? '已保存至凭据管理器' : '未保存'"
@@ -273,18 +274,15 @@ const locationModeOptions = [
         label-for="weather-refresh-interval"
         hint="数据拉取间隔，范围 10~60 分钟（防额度耗尽）"
       >
-        <div class="flex items-center gap-2">
-          <div class="w-24">
-            <BaseInput
-              v-model="refreshIntervalInput"
-              id="weather-refresh-interval"
-              type="number"
-              :min="10"
-              :max="60"
-              @blur="saveCommonSettings"
-            />
-          </div>
-          <span class="text-xs text-[var(--ufo-muted)]">分钟</span>
+        <div class="w-24">
+          <BaseInput
+            v-model="refreshIntervalInput"
+            id="weather-refresh-interval"
+            type="number"
+            :min="10"
+            :max="60"
+            @blur="saveCommonSettings"
+          />
         </div>
       </SettingsField>
 
@@ -329,7 +327,9 @@ const locationModeOptions = [
 
       <!-- 手动模式时的城市搜索 -->
       <template v-if="locationModeInput === 'manual'">
+        <!-- 城市搜索：输入 + 搜索按钮的复合块，走 stacked -->
         <SettingsField
+          stacked
           label="当前指定城市"
           label-for="weather-city-search"
           :state="

@@ -519,6 +519,7 @@
   @apply flex min-h-0 flex-1 flex-col gap-1.5;
   overflow-y: auto;
   scrollbar-gutter: stable;
+  /* 提示窗是固定 300px 的小窗，滚动条保持 thin（主窗才吃 --ufo-scrollbar-w 的宽档） */
   scrollbar-width: thin;
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
@@ -601,36 +602,6 @@
   line-height: 15px;
 }
 
-/* ── 设置页「常规」：状态音效整页一行 ── */
-
-/*
- * 状态音效：右列里「窗口格子」下面的一行，简介在左、开关在右。
- *
- * ⚠️ 选择器必须带 `.ufo-card`（双类提权到 0,2,0）：卡片是 grid 容器且带 max-w-md，
- * 单类 `.light-sound` 与它同权重，谁生效取决于两个 CSS 文件的加载顺序 —— 那种依赖迟早会坏。
- * 这里还**不依赖父级容器类名**（右列是 `.general-cards__column` 还是别的容器都不影响）。
- */
-.ufo-card.light-sound {
-  @apply max-w-none items-center;
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-/* 左列：标题 + 两行说明，纵向排开。 */
-.light-sound__text {
-  @apply flex min-w-0 flex-col gap-1.5;
-}
-
-/* 文字块内部的子项同样要 min-width: 0，否则长目录路径会把这一列顶宽（同 `.ufo-card > *` 的坑）。 */
-.light-sound__text > * {
-  @apply min-w-0;
-}
-
-/* 文件名与目录用等宽字体：一眼看出是路径，也便于照着去资源管理器里找；路径无空格，允许任意断行。 */
-.light-sound__path {
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
-}
-
 .ep-panel {
   @apply grid w-full min-h-0 flex-1 gap-3;
   /* 两列填满主窗口剩余高度，各自的内容区域独立滚动。 */
@@ -669,7 +640,7 @@
 .ep-detail {
   overflow-y: auto;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -683,7 +654,7 @@
   @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
   @apply grid gap-1.5;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -921,7 +892,7 @@
   color: var(--ufo-muted);
   font-family: var(--font-mono);
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
 }
 
 .flow-editor__secrets {
@@ -1015,7 +986,7 @@
   background: var(--ufo-input);
   font-family: var(--font-mono);
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
 }
 
 .flow-editor__ref .flow-editor__hint {
@@ -1063,7 +1034,7 @@
  * 列表吃满剩余高度并内部滚动 —— 否则行多时会把底部「清除全部」挤出可视区。
  * ⚠️ 选择器必须两类权重：`.ufo-card` 自带 `@apply grid`（未分层，见 `src/assets/main.css` 卡片基类
  * 那条注释），单类 `.sr-list-card { @apply flex }` 压不过它 —— 真按 grid 渲染时卡里的 `flex-1`
- * 全部失效，三行还被 `align-content: normal`（= stretch）平摊富余高度。同 `.ufo-card.light-sound`。
+ * 全部失效，三行还被 `align-content: normal`（= stretch）平摊富余高度。同 `.push-panel > .push-master`。
  */
 .ufo-card.sr-list-card {
   @apply flex flex-col;
@@ -1079,7 +1050,7 @@
   @apply flex flex-col;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -1098,7 +1069,7 @@
   @apply grid gap-1.5;
   align-content: start;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -1240,7 +1211,7 @@
   @apply m-0 min-h-0 overflow-y-auto whitespace-pre-wrap text-[12.5px] leading-relaxed;
   color: var(--ufo-text);
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -1286,7 +1257,7 @@
 }
 
 /* 卡片基类带 max-w-md（给单列表单用），这里两栏都要撑满自己的网格列。
-   ⚠️ 与 `.ufo-card.light-sound`（见上文）同一条规矩：放开限宽的选择器必须有两类权重 ——
+   ⚠️ 放开限宽的选择器必须有两类权重（与 `.ufo-card.sr-list-card` 同一条规矩）——
    模块 CSS 排在 `main.css` **之前**，单类 `.push-master` 与 `.ufo-card` 同权重会被后者压回去，
    实际结果就是上半区缩回 448px 而下半区两栏正常（它们本来就是 `.push-split > .ufo-card`）。 */
 .push-panel > .push-master,
@@ -1306,25 +1277,10 @@
   }
 }
 
-/* ── 上半区：总开关 ── */
-/* 同下面两张卡：`content-start` 让标题行与勾选区贴顶排，不被 grid 的 stretch 拉开。 */
+/* ── 上半区：总开关卡（一行 SettingsField + 两组 stacked chips）── */
+/* 同下面两张卡：`content-start` 让各行贴顶排，不被 grid 的 stretch 拉开。 */
 .push-master {
   @apply my-0 flex flex-col content-start gap-3;
-}
-
-.push-master__head {
-  @apply flex flex-wrap items-center gap-3;
-}
-
-.push-master__title {
-  @apply m-0 text-[14px] font-semibold;
-  color: var(--ufo-text);
-}
-
-/* 「N 个服务 · M 个收件方」贴到行尾，窄栏时整体换行而不是挤压文案。 */
-.push-master__meta {
-  @apply ml-auto text-right text-[11.5px];
-  color: color-mix(in srgb, var(--ufo-muted) 78%, transparent);
 }
 
 .push-master__body {
@@ -1389,7 +1345,7 @@
   @apply m-0 min-h-0 flex-1 list-none overflow-y-auto p-0;
   @apply grid content-start gap-1.5;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -1449,13 +1405,13 @@
 .push-detail {
   overflow-y: auto;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
 /* 卡片头一行：左边标题与说明，右边是整块的「统一测试」。
    ⚠️ 基类 `.ufo-card__header` 是 `items-baseline`（为「标题 + 一行文字提示」设计的），
-   塞进按钮后要改成垂直居中；用双类提权，别指望文件顺序（同 `.ufo-card.light-sound`）。 */
+   塞进按钮后要改成垂直居中；用双类提权，别指望文件顺序（同 `.ufo-card.sr-list-card`）。 */
 .ufo-card__header.push-detail__head {
   @apply items-center;
 }
@@ -1542,59 +1498,9 @@
   @apply max-w-none;
 }
 
-/* ══ 顶部：转灯日志设置卡（只有一个 switch）══ */
+/* ══ 顶部：转灯日志设置卡（两行标准设置行，版式由 SettingsField 负责）══ */
 .lg-settings {
   @apply flex flex-col gap-2.5;
-}
-
-.lg-settings__head {
-  @apply flex items-center gap-3;
-}
-
-.lg-settings__text {
-  @apply grid min-w-0 gap-0.5;
-}
-
-.lg-settings__title {
-  @apply m-0 text-[14.5px] font-semibold;
-}
-
-.lg-settings__sub {
-  @apply m-0 text-[12px] leading-relaxed;
-  color: var(--ufo-muted);
-}
-
-/* 常驻读数：「当前在记什么」是状态读数，按约定不藏进问号角标。 */
-.lg-settings__state {
-  @apply ml-auto shrink-0 font-mono text-[11.5px];
-  color: var(--ufo-accent-text);
-}
-
-.lg-settings--off .lg-settings__state {
-  color: var(--ufo-muted);
-}
-
-/* 风险告知紧贴开关下方常驻：勾选项自身的风险不走 hover 提示。 */
-.lg-settings__risk {
-  @apply m-0 rounded-[10px] px-2.5 py-2 text-[11.5px] leading-relaxed;
-  background: color-mix(in srgb, var(--ufo-status-yellow) 14%, transparent);
-  color: var(--ufo-status-yellow-text);
-}
-
-/*
- * 「保留天数」那一组：标题行（左标题 + 右下拉）与下面的占用读数。
- *
- * ⚠️ 读数要贴着标题，别留出一大截：这一行的高由下拉触发器（42px）决定，标题是垂直居中的，
- * 所以「行底」比「标题底边」低约 13px —— 直接 gap 会让那行小字看着属于下一栏。
- * 负外边距把它提回标题下方约 6px（实测值，见 guide）。
- */
-.lg-retention {
-  @apply grid gap-0;
-}
-
-.lg-retention__usage {
-  @apply -mt-1.5 m-0 text-[11px];
-  color: var(--ufo-muted);
 }
 
 /* ══ 记录详情末尾那个可展开条目 ══
@@ -1611,7 +1517,7 @@
   background: var(--ufo-input);
   border-color: var(--ufo-border);
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -1809,7 +1715,7 @@
   @apply relative overflow-y-auto;
   overflow-anchor: none;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -1929,7 +1835,7 @@
 .lg-recard {
   @apply grid min-h-0 content-start gap-2 overflow-y-auto pr-0.5;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 

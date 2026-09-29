@@ -1,15 +1,17 @@
 <script setup lang="ts">
 /**
- * 设置页的字段原语：一行标签（可带说明图标与状态读数）+ 控件本身（默认插槽）。
+ * 设置页的字段原语：一行 = 左读右调。
  *
- * 两个字段的分工是硬约定（判据：换个人来看这行该不该常驻）：
- * - `hint` = **解释**「这东西干什么 / 取值范围 / 为什么要这样填」→ 收进标签旁的问号图标，
- *   光标悬浮或键盘聚焦才展开（见 `SettingsHint.vue`）。
- * - `state` = **当前状态读数**（已保存 / 未保存 / 已选中哪个）→ 常驻显示，不许藏进 hover：
- *   用户扫一眼就该知道这个字段现在是什么情形，要点开才看到等于没写。
+ * 默认版式（所有设置行统一）：
+ * - 左列：标题行（14px/600 文本 + 问号角标，**垂直居中**对齐），标题下面可选一行状态读数；
+ * - 右列：交互组件本身（默认插槽），贴右、相对左侧整块垂直居中。
  *
- * 版面默认竖排（标签行在上、控件在下）。控件很短而说明很长时（一个数字输入 + 一长串读数）
- * 竖排会把控件甩到下一行的左边、右边空一片，这时给 `inline`：标题与读数留在左、控件贴右。
+ * 两段文案的分工是硬约定（判据：控件自己说没说得出这件事）：
+ * - `hint` = **解释**「这东西干什么 / 单位与取值范围 / 为什么」→ 收进问号角标，悬浮才展开；
+ * - `state` = **控件读不出的当前事实**（密钥存没存进凭据管理器 / 日志占多少盘 / 选中了哪个城市）
+ *   → 常驻在标题下面。⚠️ 与控件面值重复的读数（输入框旁边的「当前 5 秒」）一律不写 —— 控件就是当前值。
+ * - `stacked` = 复合控件变体：输入框 + 按钮 + 状态行这类「一块小表单」装不进一行，控件整块落到
+ *   标题下面占满宽度。只给这种复合块和页内表单用，普通设置行不许用。
  */
 import SettingsHint from './SettingsHint.vue'
 
@@ -22,10 +24,10 @@ interface Props {
   labelFor?: string
   /** 解释性说明：渲染成问号图标，悬浮才展开。 */
   hint?: string
-  /** 状态读数：常驻显示在标签行右侧，不走悬浮。 */
+  /** 状态读数：常驻显示在标题下面（只放控件读不出的事实）。 */
   state?: string
-  /** 横排：标题与读数留在左、控件贴右（默认竖排）。 */
-  inline?: boolean
+  /** 复合控件变体：控件落到标题下面占满宽度（默认横排贴右）。 */
+  stacked?: boolean
 }
 
 withDefaults(defineProps<Props>(), {
@@ -34,72 +36,94 @@ withDefaults(defineProps<Props>(), {
   labelFor: undefined,
   hint: '',
   state: '',
-  inline: false,
+  stacked: false,
 })
 </script>
 
 <template>
-  <div class="settings-field" :class="{ 'settings-field--inline': inline }">
+  <div class="settings-field" :class="{ 'settings-field--stacked': stacked }">
     <!--
-      标签、图标、读数同一行（`.settings-field` 是 grid，每个子节点占一行）。
-      ⚠️ 图标不能塞进 `<label>` 里：那一下点击会顺带激活 `for` 指向的控件（开关被误动）。
+      左列：标题行 + 读数行。
+      ⚠️ 角标不能塞进 `<label>` 里：那一下点击会顺带激活 `for` 指向的控件（开关被误动）。
     -->
-    <div v-if="label || hint || state" class="settings-field__head">
-      <label v-if="label && labelFor" class="settings-field__label" :for="labelFor">
-        {{ label }}
-      </label>
-      <span v-else-if="label" :id="labelId" class="settings-field__label">
-        {{ label }}
-      </span>
+    <div v-if="label || hint || state" class="settings-field__text">
+      <div v-if="label || hint" class="settings-field__head">
+        <label v-if="label && labelFor" class="settings-field__label" :for="labelFor">
+          {{ label }}
+        </label>
+        <span v-else-if="label" :id="labelId" class="settings-field__label">
+          {{ label }}
+        </span>
 
-      <SettingsHint :text="hint" />
+        <SettingsHint :text="hint" />
+      </div>
 
       <span v-if="state" class="settings-field__state">{{ state }}</span>
     </div>
 
-    <slot />
+    <!-- 右列：交互组件（stacked 变体里落到标题下面占满宽度） -->
+    <div class="settings-field__control">
+      <slot />
+    </div>
   </div>
 </template>
 
 <style scoped>
+/*
+ * 默认横排：第一列吃掉剩余宽度（标题 + 角标 + 读数），第二列按控件自身宽度贴右。
+ * 控件列刻意用 `auto` 而不是 `1fr` —— 数字输入被拉满整行反而更难读。
+ */
 .settings-field {
   display: grid;
   min-width: 0;
-  gap: 7px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: center;
 }
 
-/* 标签行：文本在左、图标紧跟、读数顶到右边；放不下就整体换行（读数常是短句）。 */
+/* 复合控件变体：单列，控件整块落到标题下面占满宽度。 */
+.settings-field--stacked {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 7px;
+}
+
+.settings-field__text {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+/* 标题行：文本在左、角标紧跟，两者**垂直居中**对齐（14px 标题下 baseline 会让角标视觉下坠）。 */
 .settings-field__head {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-}
-
-/*
- * 横排：第一列吃掉剩余宽度（标签 + 角标 + 读数），第二列按控件自身宽度贴右。
- * 控件列刻意用 `auto` 而不是 `1fr` —— 数字输入被拉满整行反而更难读。
- */
-.settings-field--inline {
-  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 12px;
+  gap: 6px;
 }
 
 .settings-field__label {
   min-width: 0;
-  color: var(--ufo-muted);
-  font-size: 12px;
-  line-height: 1.35;
+  color: var(--ufo-text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
 }
 
+/* 读数在标题正下方：11.5px 灰字，长句自然折行、左对齐，不挤压控件列。 */
 .settings-field__state {
-  /* 读数靠右：与左边那组「标签 + 图标」拉开，视觉上不像标签的一部分 */
-  margin-left: auto;
-  color: color-mix(in srgb, var(--ufo-muted) 86%, transparent);
-  font-size: 11px;
-  line-height: 1.35;
-  text-align: right;
+  color: var(--ufo-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.settings-field__control {
+  justify-self: end;
+  min-width: 0;
+}
+
+.settings-field--stacked .settings-field__control {
+  justify-self: stretch;
 }
 </style>

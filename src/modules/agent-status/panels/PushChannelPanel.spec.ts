@@ -120,7 +120,7 @@ describe('PushChannelPanel', () => {
 
   it('总开关改动直接落到 store', async () => {
     const wrapper = await mountPanel()
-    await wrapper.get('.push-master__head input[type="checkbox"]').setValue(true)
+    await wrapper.get('.push-master input[type="checkbox"]').setValue(true)
     await flushPromises()
     expect(actions.setEnabled).toHaveBeenCalledWith(true)
   })

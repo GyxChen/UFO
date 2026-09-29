@@ -62,7 +62,6 @@ UI设计请使用:ui-ux-pro-max-skill
 - 主按钮：实心翠绿 + 深绿字；次按钮：描边幽灵
 - 字体：Plus Jakarta Sans（`--font-sans`）
 - Token 定义见 `src/assets/main.css`（`:root` + `@theme`）
-- 预览参考：`reference/mock/main-window/main-window-a-matte.html`
 
 ## 悬浮窗开发
 悬浮窗将来会引入更多的组件,因此悬浮窗的开发提示
@@ -94,7 +93,7 @@ src/
 │   ├── FloatingWindow.vue             # 外壳：拖拽 / 贴边 / 形态 / 窗口尺寸 / 提示窗路由 / 点组件开设置页
 │   ├── FloatingModuleHost.vue         # 宿主：挂载启用模块，汇总格子需求 → 窗口尺寸，按需求分槽
 │   ├── FloatingModuleSlot.vue         # 槽位：注入 floatingModuleKey，并在根节点标 data-module-id
-│   ├── FloatingModulesPanel.vue       # 主窗「悬浮窗设置」页：列表（开关 / 齿轮 / 排序）+ 三形态预览
+│   ├── FloatingModulesPanel.vue       # 主窗「悬浮窗设置」页（齿轮页签）：列表（开关 / 齿轮 / 排序）+ 格子大小 + 版本卡 + 三形态预览
 │   ├── FloatingShapePreview.vue       # 三形态预览：按真实比例等比缩放，色块按需求比例分槽
 │   └── tooltip/
 │       ├── TooltipRow.vue             # 信息卡的通用行（标签 + 值 + 语义色），各组件复用
@@ -161,7 +160,7 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
   变量缺失时回落 1（= 设计尺寸），与「没有槽位容器时 cq 单位退化、clamp 取到设计上限」的表现一致。
   ⚠️ 不乘倍率的两类：`@container` 里的 px 断点（那是**绝对可读性阈值**：槽位矮于 32/33px 就降级排版，与设计缩放无关）、以及信息卡（另一个固定尺寸的窗口，不参与格子缩放）。
   护栏：`src/components/floating/floating-module-scaling.spec.ts` 扫描所有模块样式，`clamp()` 的上限只要是 px 设计值就必须引用该变量。
-- **一格边长可调**（主窗「悬浮窗设置」页左列、组件列表下方的「格子大小」卡）：配置字段 `cell_px`（物理像素，32–96，默认 45）。它是**整个悬浮窗**的尺寸基准、同级组件共享，也是外壳仅剩的窗口级尺寸参数，因此留在外壳（`FloatingModuleConfig.cell_px`，`#[serde(default = "default_cell_px")]`；⚠️ 加这个字段**不得**升 `SCHEMA_VERSION`）。前端读配置一律走 `configCellPx()` / `cellSizeOf()`（`floating-modules.ts` / `floating-layout.ts`），不要直接取字段。
+- **一格边长可调**（「悬浮窗设置」页左列、组件列表下方的「格子大小」卡）：配置字段 `cell_px`（物理像素，32–96，默认 45）。它是**整个悬浮窗**的尺寸基准、同级组件共享，也是外壳仅剩的窗口级尺寸参数，因此留在外壳（`FloatingModuleConfig.cell_px`，`#[serde(default = "default_cell_px")]`；⚠️ 加这个字段**不得**升 `SCHEMA_VERSION`）。前端读配置一律走 `configCellPx()` / `cellSizeOf()`（`floating-modules.ts` / `floating-layout.ts`），不要直接取字段。
   - ⚠️ 滑块**拖动时只改本地值**（预览实时跟随），**松手（change）才落盘**：否则每动一像素就要写一次盘，并让真窗口重新吸附一次。
   - 悬浮窗侧 `baseSize` 取自 store（`FloatingWindow.vue`），配置事件到达后 `scheduleSnap()` 按新尺寸重算 → 贴边中也会就地更新。
   - ⚠️ 原生 range 会把越界值截到边界，所以「落盘前 clamp」这条防线主要挡程序化调用（0 会让窗口塌成一条线），由 `clampCellPx()` 与 Rust 侧 `validate()` 各管一半。
@@ -179,17 +178,15 @@ Rust 侧的对应结构见下文「Rust 侧结构」一节（组件在 `src-taur
 其它约定：
 
 - 模块 id 后端**没有白名单**（只校验长度 / 字符集）；配置里没出现的模块按定义里的 `defaultEnabled` 兜底，新模块不需要迁移配置。
-- 主窗第一页「悬浮窗设置」（方案 C：左列表 + 右三形态实时预览）**由注册表直接渲染**（`v-for` 遍历 `FLOATING_MODULE_DEFINITIONS`，名字 / 说明 / 默认态都取自定义），新增组件不用改 `MainWindow.vue`；开关走 `updateModuleEnabled(id, enabled)`，排序（拖拽或手柄上的 ↑/↓）走 `updateModuleOrder(ids)` 写同一个 `order` 字段，配置里没有该模块时就地补一条。
+- 「悬浮窗设置」（方案 C：左列表 + 右列「版本卡在上、三形态预览在下」）= 一级 tabbar **右端的齿轮图标页签**（进 tablist、参与方向键漫游），一页到底；点悬浮窗空白处也切到这页。页面**由注册表直接渲染**（`v-for` 遍历 `FLOATING_MODULE_DEFINITIONS`，名字 / 说明 / 默认态都取自定义），新增组件不用改 `MainWindow.vue`；开关走 `updateModuleEnabled(id, enabled)`，排序（拖拽或手柄上的 ↑/↓）走 `updateModuleOrder(ids)` 写同一个 `order` 字段，配置里没有该模块时就地补一条。原「关于」页已删，版本号是这张页右列顶部的卡（`AboutPanel`）。
 - 主窗是**两级导航**，两级都用 `ui/BaseTabs.vue`（variant 区分外观，键盘导航与 ARIA 关联只有一份）：
-  - 一级（`variant="underline"`，下划线）= 「悬浮窗设置」+ 每个有 `settings` 的组件各一页；`MainWindow.vue` 按注册表推页面，没有硬编码的 tab 数组。
+  - 一级（`variant="underline"`，下划线）= 每个有 `settings` 的组件各一页 + 右端「悬浮窗设置」（齿轮图标页签，`end: true`）；主题切换是 `#actions` 槽里的**动作钮**（不是 tab）。`MainWindow.vue` 按注册表推页面，没有硬编码的 tab 数组。
   - 二级（`variant="chips"`，胶囊）= 当前组件自己的设置分区，列它自己的 `settings.sections`。
-  - ⚠️ 「悬浮窗设置」**一页到底、没有二级**：它本身就是一块整体（列表 + 预览左右并排），再切一刀会把「改组件」和「看效果」拆开。二级只服务组件设置页。
+  - ⚠️ 「悬浮窗设置」页**一页到底、没有二级**：它本身就是一块整体（列表 + 预览左右并排 + 版本卡），再切一刀会把「改组件」和「看效果」拆开。二级只服务组件设置页。
   - ⚠️ 两级 tabbar 上下相邻，外观必须保持不同（下划线 vs 胶囊），否则看不出哪条是一级。组件名在屏幕上已由两级 tab 表达，组件页里那个 h1 用 `sr-only` 只留给读屏。
-- 组件自己的配置项回归组件自己的设置页：完成灯保留 / 执行中超时 / Token 单位 / 代理解析器 / **窗口格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 这四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「窗口格子上限」**只是本组件自己的配置**（`module_settings['agent-status'].max_cells`，滑块 1 / 2 / 3 / 4 / 6 / 9 封顶 3×3），只限制本模块大小、不改动其它组件；整窗仍按各组件需求之和（可超过 9）自动伸缩，页面文案已写明。⚠️ **「状态音效」是同一页里独立的一行**（简介在左、开关在右，`.ufo-card.light-sound`）：它配的是「有没有声音」，跟左卡的时间参数、右卡的格子尺寸都不是一类，塞进任一边都会被误读成只影响那一块，所以落在**右列「窗口格子」卡片下面**（右列由 `.general-cards__column` 纵向堆叠；列内卡片靠这条类名撑满列宽 —— `.general-cards > .ufo-card` 是直接子级选择器，够不到嵌套进去的卡片）。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页左列、组件列表下方的独立卡片**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
+- 组件自己的配置项回归组件自己的设置页：灯闪烁持续时间（秒，字段 `completed_retention_ms`）/ 无响应超时（分钟，字段仍是 `running_timeout_ms`；旧名「执行中超时」）/ Token 单位 / 代理解析器 / **窗口格子上限**都在「Agent 状态灯」的二级 tab「常规」里（`src/modules/agent-status/sections/GeneralSection.vue`，两块卡片用 `.general-cards` 横向并排，窄窗口塌成单列），信息卡拓展与会话记录各占一个 tab（`fill: true`）。⚠️ 这四项是**本组件自己的配置**，存在 `module_settings['agent-status']` 里（字段解释见 `src/modules/agent-status/settings.ts` 与 `src-tauri/src/modules/agent_status/settings.rs`），只有页面设在状态灯页；「窗口格子上限」**只是本组件自己的配置**（`module_settings['agent-status'].max_cells`，滑块 1 / 2 / 3 / 4 / 6 / 9 封顶 3×3），只限制本模块大小、不改动其它组件；整窗仍按各组件需求之和（可超过 9）自动伸缩，页面文案已写明。⚠️ **「常规」页两张卡都不带卡头**（原「行为 / 即时生效」「窗口格子 / 最多 N 盏灯」这类汇总标题已删——每行的 `SettingsField` 标题已说清是什么，卡头是噪音）：左卡四个取值行，右卡把「窗口格子」（滑块贴右）+「状态音效」（开关贴右）合并成两行，撑满宽度靠 `.general-cards > .ufo-card` 的 `max-w-none`（旧的 `.ufo-card.light-sound` / `.general-cards__column` 随合并删除）。⚠️ 另一个窗口级参数 **「格子大小」（`cell_px`）设在「悬浮窗设置」页左列、组件列表下方的独立卡片**（不在组件页）：它配的是「一格多少像素」，与组件无关，放组件页会让人以为只影响该组件。
 - **设置页的解释性 tips 一律走问号角标 `ui/SettingsHint.vue`**（光标悬浮 / 键盘聚焦 / 点按才展开，面板 `Teleport` 到 body、用 `placeContextMenu` 定位、z-index 70）：字段级交给 `SettingsField` 的 `hint`（自动渲染在标签行里，原来那行常驻灰字 `.settings-field__hint` 已删），区块级挂在卡片 / 区块标题旁（标题与角标同为 `.ufo-heading-row` 的**兄弟节点**，角标不能塞进标题元素里 —— `aria-labelledby` 会把角标的名字「说明」一起读成标题）。⚠️ 分工判据：**「这东西干什么 / 取值范围 / 为什么」= tip → 收进角标；「当前是什么状态」= 读数 → 常驻**（`SettingsField` 的 `state`，或 `.ufo-card__hint` 那类徽标），把读数藏进 hover 等于没写。⚠️ 勾选项自身的一句话说明与风险告知（如「提问可能含私有代码」）继续用原生 `title` 附着在选项上：每项文案不同，且风险必须落在勾选处。
-- 打开组件设置有两条路，走同一个事件：① 主窗组件列表行的齿轮；② 点悬浮窗上该组件的区域（槽位根节点的 `data-module-id` + 外壳 `moduleIdAt()` → `emitTo('main', OPEN_MODULE_SETTINGS_EVENT)`，点空白处传 null = 打开组件列表页）。打开后落到该组件**第一个分区**（`activeSections` 变化时重置），不会停在上次看的那一块。⚠️ 顺序必须是「先 showMainWindow 再 emitTo」：窗口还没打开时事件没人接。`pointercancel`（触摸取消）只清状态，**不当点击**，否则会莫名弹主窗。
-- 布局 mock 见 `reference/mock/floating-modules/floating-modules-index.html`（组件选择三套，采用第三套）；两级导航 mock 见 `reference/mock/settings-nav/settings-nav-index.html`（双层横条 / 左侧竖排 / 分段控件，采用第一套 A：二级用胶囊条）。
-- `reference/mock/` **按功能分子目录**（`floating-modules/` / `agent-status/` / `todo/` / `main-window/` / `settings-nav/`，与 `src/modules/<id>/` 同名）：每个 mock 只与同目录的兄弟互相链接，因此整组搬动不会坏链；引用某个 mock 时写全路径。
+- 打开组件设置有两条路，走同一个事件：① 「悬浮窗设置」页组件列表行的齿轮（切该组件页）；② 点悬浮窗上该组件的区域（槽位根节点的 `data-module-id` + 外壳 `moduleIdAt()` → `emitTo('main', OPEN_MODULE_SETTINGS_EVENT)`，点空白处传 null = 切到「悬浮窗设置」页）。打开后落到该组件**第一个分区**（`activeSections` 变化时重置），不会停在上次看的那一块。⚠️ 顺序必须是「先 showMainWindow 再 emitTo」：窗口还没打开时事件没人接。`pointercancel`（触摸取消）只清状态，**不当点击**，否则会莫名弹主窗。
 
 ### 外壳 / 模块的边界（加组件时的验收口径）
 
@@ -246,7 +243,7 @@ src-tauri/src/
 - Agent 状态灯信息卡的展示字段（自上而下顺序固定）：provider/phase、Endpoint（见「代理解析器」）、token 用量、**流程脚本拓展字段 + 刷新标注**、`prompt`（用户提问）。拓展字段紧跟 token 行、提问永远在最后（不要插回提问下面，否则与「字段属用量类」的视觉分组错位）。**不展示 session id**。这些字段属于 `AgentStatusTooltip.vue`，不是提示窗的公共契约。
 - ⚠️ **指示灯不要加 `title` 属性**：`title` 会触发 Windows 原生文字提示，与悬浮窗自己的 tooltip 重复且更简陋。无障碍信息只走 `aria-label`（不产生可见提示）。
 - ⚠️ **溢出格（`+N`）上报的是合成 key**（`@overflow:<layout>:<cells>`，编解码在 `src/modules/agent-status/lib/agent-status-layout.ts`）：悬停事件只带「模块 id + key」，而提示窗是**另一个窗口**，拿不到悬浮窗的形态与格子数 —— 把它们编进 key，两侧就能用**同一个** `partitionIndicatorSessions` 重算折叠清单，屏上的占比环与清单里的行必然同源。key 由模块自己解释，外壳照旧只当字符串转发，**不改任何对外契约**。
-- 溢出格本身是「**分片环**」：外圈按折叠会话的灯色占比切开（红 → 黄 → 绿，注意力优先级顺序，不是开始时间），环外两圈同色模糊光晕做层次，中间深色核心托住 `+N`。尺寸一律按**宽度**取百分比 + `aspect-ratio: 1`（三种形态下行宽都 ≤ 行高，是竖条那条约束的推广），放大倍率受槽位 `overflow: hidden` 约束不能再加。见 `reference/mock/agent-status/overflow-stack-index.html`（四套方案，采用 B）。
+- 溢出格本身是「**分片环**」：外圈按折叠会话的灯色占比切开（红 → 黄 → 绿，注意力优先级顺序，不是开始时间），环外两圈同色模糊光晕做层次，中间深色核心托住 `+N`。尺寸一律按**宽度**取百分比 + `aspect-ratio: 1`（三种形态下行宽都 ≤ 行高，是竖条那条约束的推广），放大倍率受槽位 `overflow: hidden` 约束不能再加。
 - 折叠清单的 `hasContent` 是「**有折叠才弹**」；清单为空（悬停期间会话结束）时卡片给一句兜底文案，不留空框。
 - ⚠️ tooltip 的 token 单位来自模块配置，而 `floatingModules` 是窗口级 store，由外壳在 `App.vue` 里 `start()`（三窗都起）；否则提示窗永远停留在 `fallbackConfig` 的默认单位，主窗口切换后不生效。
 
@@ -285,14 +282,14 @@ src-tauri/src/
 
 ### 信息卡拓展（按 endpoint 的 tooltip 拓展字段）
 
-tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置），而会话快照里的 base_url/upstream_url 只在会话存活时存在。因此改成按 endpoint 的持久化档案，配置面板挂在「Agent 状态灯」组件设置页的二级 tab「信息卡拓展」里（`悬浮窗设置` → 组件列表的齿轮 / 点悬浮窗上的状态灯），用左右主从布局配置各 endpoint。
+tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置），而会话快照里的 base_url/upstream_url 只在会话存活时存在。因此改成按 endpoint 的持久化档案，配置面板挂在「Agent 状态灯」组件设置页的二级 tab「信息卡拓展」里（齿轮页签「悬浮窗设置」→ 组件列表行的齿轮 / 点悬浮窗上的状态灯），用左右主从布局配置各 endpoint。
 
 - 数据源是 `endpoint_profiles.rs` 的持久化档案表（`<app-data>/endpoint-profiles.json`），**不靠会话存活**；monitor 每轮采集存活会话的 `upstream_url ?? base_url` 落盘，前端 `get_endpoint_profiles` + `endpoint-profiles` 事件读取。
 - ⚠️ **loopback（127.0.0.1 / localhost / ::1）一律不登记** —— 本地代理地址不是可配置对象，端口还会随重启变。有效 endpoint 口径与前端 `displayEndpoint` 一致：命中解析时登记反查出的**上游**，不是代理监听地址。
 - 去重键 `id` = `proxy::endpoint_identity` 归一的 `host:port`；只在出现未见过的 id 时才写盘（同一批 endpoint 每 500ms 都进来）。
 - 档案结构含 `extensions`（JSON map），**加拓展字段不改协议**。信息卡拓展的 per-endpoint 配置（流程脚本 `FlowConfig`）就整体存在 `extensions["flow"]` 下，不给 `EndpointProfile` 加字段。
 - ⚠️ `normalize_host_port` 早期把 `[::1]:8080` 切成 `[::1:8080`（漏 `]`），会让 loopback 判定失效、本地地址被登记；已由 `normalize_host_port_keeps_ipv6_brackets_and_port` 锁定。
-- 主窗两级 tabbar 都走 WAI-ARIA Tabs：roving tabindex + ←/→/Home/End（逻辑在 `ui/BaseTabs.vue`，两级共用）；id 约定 `${idPrefix}-tab-<key>` / `${idPrefix}-panel-<key>`，一级 idPrefix = `main`、二级 = `module`。悬浮窗设置页容器是 `.main-window--wide`（突破 `.ufo-card` 的 `max-w-md` 限宽，列表 + 预览并排），组件设置页是 `.main-window--stack`（分区内容纵向堆叠）。
+- 主窗两级 tabbar 都走 WAI-ARIA Tabs：roving tabindex + ←/→/Home/End（逻辑在 `ui/BaseTabs.vue`，两级共用）；id 约定 `${idPrefix}-tab-<key>` / `${idPrefix}-panel-<key>`，一级 idPrefix = `main`、二级 = `module`。「悬浮窗设置」页容器是 `.main-window--stack`（整页滚：`.module-catalog` 两列 = 列表 + 格子大小 / 版本卡 + 预览，窄窗塌单列），带 `fill` 的组件分区才用 `.main-window--wide`（外层不滚、内层各列各自滚）。
 - ⚠️ 这两个面板**占满内容区高度、左右两列各自滚**（`.ep-panel` / `.sr-panel`）：grid `items-stretch` + `grid-template-rows: minmax(0,1fr)`，左卡 `h-full` + flex 列（列表 `flex-1` 内部滚，底部「手动添加 / 清除全部」贴卡底），右列自己 `overflow-y: auto`。别改回 `max-h` 或让列表随内容长高：那会把右侧和底部按钮挤出可视区。
 - ⚠️ 占满高度靠一条**完整的高度链**，缺一环就退化成「整页滚动、面板不占满」：
   `.main-window--wide`（flex-1 + overflow-hidden）→ `.module-page--fill` → `.module-page__section--fill` → `.ep-panel` / `.sr-panel`。
@@ -344,7 +341,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 「灯为什么不动 / 为什么乱跳」原先查不到：兼容层的静默忽略、内核的四条 `return false`、巡检器的六类丢弃，在外部都与「灯本来就不该动」同形。现在把每一次裁决落成一行 JSONL，让链路从「只能复现」变成「可以回查」。
 
 - **后端**：`src-tauri/src/modules/agent_status/status/log/`（`record` / `paths` / `sink` / `config` / `runtime` / `commands`），22 个 `LogStage` + 68 个 `LogReason` —— 理由必须是**具名枚举**（自由文本没法聚合也没法验收）。存储是 JSONL 而不是 SQLite：hook 短命进程也必须记账，而 hook 禁开 AppData 的库。贯穿键是 `trace_id`（hook 生成 `<pid>-<纳秒>`，同时是 inbox 文件名），⚠️ **不用** payload 可控的 `event_id` —— 拿它拼路径就是路径注入。
-- **界面落位（不新开二级分区）**：① 会话记录页顶部一张**占满宽度**的设置卡；② 日志本体是「记录详情」末尾的一个**可展开条目**（折叠态 = 一条结论 + 两行摘要 + 行尾「导出本会话」与展开图标钮）；③ 展开成**整窗两栏浮层**（左流水按 `key` 过滤、右 = 选中那条的全部字段）。外壳照 `.jse-modal` 那套类名，⚠️ 但**没有复用 `ScriptEditorModal.vue`** —— 它没有 slot。版面见 `reference/mock/status-log/`。
+- **界面落位（不新开二级分区）**：① 会话记录页顶部一张**占满宽度**的设置卡；② 日志本体是「记录详情」末尾的一个**可展开条目**（折叠态 = 一条结论 + 两行摘要 + 行尾「导出本会话」与展开图标钮）；③ 展开成**整窗两栏浮层**（左流水按 `key` 过滤、右 = 选中那条的全部字段）。外壳照 `.jse-modal` 那套类名，⚠️ 但**没有复用 `ScriptEditorModal.vue`** —— 它没有 slot。
 - **一个 switch 是唯一入口**（记不记）：关 = `{level:"off", hook_enabled:false}` 完全不记；开 = `{level:"verbose", hook_enabled:true}` 明细级 + hook 侧同记。四档分段控件与独立 hook 开关都不再出现在界面上，但 Rust `LogConfig` 的字段结构保留。⚠️ 两个字段必须**成对**写（只写 level 会留下 `hook_enabled:false`，hook 那一侧永远正是瞎的）；⚠️ 落盘走 `updateModuleSettings` 的**模块层浅合并**，`log` 必须整块提交，否则 `retention_days` 等未暴露字段被抹掉。
 - **`retention_days` 是唯一的回收旋钮**（设置页一个**下拉，只有 7 / 14 两档**；默认 7 天、夹取区间 1–14，两边默认值由 `settings.spec.ts` 的 `?raw` 断言锁同源。盘上若留着旧数字输入框写的 1–90，界面就近取档并写回一次 —— 显示与事实不许分离）。体积上限刻意不给入口：两个旋钮会让人分不清「留多久」与「占多少」谁说了算；但它仍在背后削最旧的整天，所以设置卡必须常驻显示**目录占用**（`LogDiskUsage` 随 `StatusLogPage.usage` 带三处；这行小字写在「保留天数」标题**下面**、相距约 6px，右边那一格给下拉），并在本次运行内真削过时写明 —— 不许让「保留 N 天」成为一个会被静默打破的承诺。
 - **读侧不再有内存驻留层**：分页、计数、导出全部按盘（`log/scan.rs`）。原先那份内存环形缓冲既封顶能看多少也封顶能导多少，已连同 `ring_capacity` 配置字段一起删掉（没有消费者的旋钮就是骗人的设置）。行身份是盘上坐标 `(UTC日, 当日序号, 起始字节)` 的 `id`，它同时是前端 `:key`、去重键与翻页锚点；线协议里不再有进程内 `seq`。
@@ -367,7 +364,7 @@ tooltip 的拓展字段**跟着 endpoint 走**（同一上游共用一套配置�
 - **正文 = 固定一行状态 + 勾选的若干行**：`{平台} {事件}`（如「claude 在等你」）**固定发**，没有开关；`config.content` 可勾 `endpoint` / `prompt`（提问） / `script`（脚本内容） / `session_id` 四项，勾了才多一行 `标签: 值`，取不到值就整行不出现。标题前缀是常量 `PUSH_TITLE_PREFIX = "UFO"`，**不再可配**。
 - ⚠️ **四项默认全不勾**：ntfy 主题公开可订阅，提问与脚本结果可能含密钥或私有代码，出网后不受控；勾选处必须写明风险，不许做成默认值。`waiting_reason` 刻意不在选项里（它是平台注入的文案，比用户输入更易含敏感上下文）。
 - ⚠️ **二级分区别再重复左上角标题与说明**：二级 tabbar 已经说明是哪一区（`ExtensionsSection` / `RecordsSection` / `PushSection` 都只留 `aria-label`）。推送面板的版面是硬约定：上半区**按内容高**（`grid-template-rows: auto minmax(0, 1fr)`，曾写死 40%，控件删掉后会在中间留一片空白），下半区双栏吃满剩余高度、两列各自滚。
-- ⚠️ **放开卡片 `max-w-md` 必须用两个类权重**（`.push-panel > .push-master` / `.push-split > .ufo-card`，同 `.ufo-card.light-sound`）：模块 CSS 排在 `main.css` **之前**，单类覆盖与 `.ufo-card` 同权重、由加载顺序定胜负，写成 `.push-master { @apply max-w-none }` 会被压回去（实测上半区缩成 448px）。护栏：`agent-status-css.spec.ts` 扫全部 `max-w-none` 的选择器权重。
+- ⚠️ **放开卡片 `max-w-md` 必须用两个类权重**（`.push-panel > .push-master` / `.push-split > .ufo-card`，同 `.ufo-card.sr-list-card`）：模块 CSS 排在 `main.css` **之前**，单类覆盖与 `.ufo-card` 同权重、由加载顺序定胜负，写成 `.push-master { @apply max-w-none }` 会被压回去（实测上半区缩成 448px）。护栏：`agent-status-css.spec.ts` 扫全部 `max-w-none` 的选择器权重。
 - **主题行 = 名字 | 主题串 | 移除**（`.push-topic`，`grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto`，主题串等宽）。两个格子都是行内输入框、改完即存，所以行本身**不是 `<button>`**；移除复用「信息卡拓展」的 `.ep-list__remove` / `--armed` 两步确认。⚠️ **主题不是密钥**：它按用户要求明文显示、明文落配置，push 侧整套凭据路径（`set_push_secret` / `delete_push_secret` / `SecretView` / 级联清凭据 / `notice`）已删；`flow` 那边用自己的 `KeyringSecrets`，不受影响。代价与孤儿凭据见 guide §12。
 - **调度**：一次灯变 → 该服务下**每个主题各一条**；连续失败按主题行退避 `60s × 2^n` 封顶 600s；投递跑在专用 worker 线程串行队列。（节流与静默期已删 —— 去重靠内核的「灯变了」判定。）⚠️ agent 全停 = 零出网。
 - 地址策略与 flow **刻意不同**：push 的地址是用户显式填的固定字段，允许局域网自建服务器（flow 那边拦私网是因为跑用户脚本）。

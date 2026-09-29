@@ -85,9 +85,10 @@ describe('StatusLogSettingsCard', () => {
   it('shows the switch as off when no log block was stored', async () => {
     const wrapper = await cardWith({})
     expect(wrapper.find('input[type=checkbox]').attributes('checked')).toBeUndefined()
-    // 新版面不再常驻「正在记 / 已关闭」档位读数，也不再单列风险句：
-    // 卡上那句常驻说明同时兜住两件事 —— 关闭 = 不写盘、且不影响下面的会话存档（红线）。
-    expect(wrapper.get('.lg-settings__sub').text()).toContain('不影响下面的会话存档')
+    // 卡头常驻说明已收进问号角标（面板 Teleport 到 body，常驻 DOM）：
+    // 红线句必须还在 —— 关闭 = 不写盘、且不影响下面的会话存档。
+    const pops = [...document.body.querySelectorAll('.settings-hint__pop')].map(p => p.textContent ?? '')
+    expect(pops.some(t => t.includes('不影响下面的会话存档'))).toBe(true)
     // 保留天数那一栏在关闭态照样可用：不再写新的不等于已有账不必回收。
     expect(wrapper.findComponent(BaseSelect).exists()).toBe(true)
   })
@@ -177,9 +178,9 @@ describe('StatusLogSettingsCard', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('占用 1.5 MiB · 3 个文件 · 最早 09-22')
-    // 位置：这行小字在标题**下面**（`.lg-retention__usage`），不再占标签行右侧 —— 那一格给了下拉。
-    expect(wrapper.get('.lg-retention__usage').text()).toContain('占用 1.5 MiB')
-    expect(wrapper.find('.settings-field__state').exists(), '读数不许又挤回标签行').toBe(false)
+    // 位置：读数走 `SettingsField` 的 state，在标题**下面**一行 —— 右侧那一格属于下拉控件。
+    expect(wrapper.get('.settings-field__state').text()).toContain('占用 1.5 MiB')
+    expect(wrapper.get('.settings-field__head').text(), '读数不许挤回标题行').not.toContain('占用')
     // 容量线动过手就必须写出来：界面上只有天数一个旋钮，不说等于承诺了一个做不到的保留期。
     expect(wrapper.text()).toContain('更早的已按容量上限回收')
   })

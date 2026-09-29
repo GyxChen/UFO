@@ -215,6 +215,10 @@ impl ProxyResolver for CcSwitchResolver {
         "cc-switch"
     }
 
+    fn description(&self) -> &'static str {
+        "从 cc-switch 配置反查上游"
+    }
+
     fn resolve_upstream(&self, app: AgentApp, local_base_url: &str) -> Option<String> {
         let root = self.root.as_ref()?;
         let info = self.proxy_info(&root.join("cc-switch.db"), app);

@@ -252,9 +252,9 @@
  * 概览之下的滚动区：整棵未完成树都在这里，超出一屏就滚。
  * `flex: 1 1 auto` + `min-height: 0` 才能在定高窗口里滚（少了 min-height 会顶破容器）；
  * `scrollbar-gutter: stable` 让出现滚动条时不挤窄内容（浮窗规范的一致要求）。
- * 滚动条用全站统一的 Matte 细滚动条（与 agent-status / 脚本编辑框同一套口径，见 `main.css`）：
- * `scrollbar-width: thin` + `scrollbar-color: 半透明白 透明` —— 轨道透明透出毛玻璃底，
- * 滑块半透明白；没了这三条就是又粗又亮的系统默认滚动条。
+ * 滚动条用全站统一的 Matte 口径（见 `main.css`）：`scrollbar-width` + `scrollbar-color: 半透明白 透明`
+ * —— 轨道透明透出毛玻璃底，滑块半透明白；没了这三条就是又粗又亮的系统默认滚动条。
+ * ⚠️ 这里是提示窗（固定 300px 小窗），保持 `thin`，不吃主窗的 --ufo-scrollbar-w 宽档。
  */
 .todo-tooltip__scroll {
   display: flex;
@@ -364,7 +364,7 @@
   gap: 12px;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
@@ -392,7 +392,7 @@
   gap: 10px;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 

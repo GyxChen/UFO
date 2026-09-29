@@ -367,7 +367,7 @@ function onPanelKeydown(event: KeyboardEvent): void {
   user-select: none;
   -webkit-user-select: none;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
   transform-origin: top left;
 }
 

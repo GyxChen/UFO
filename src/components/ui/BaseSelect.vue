@@ -8,6 +8,8 @@ interface SelectOption {
   value: string
   /** 选项显示文案。 */
   label: string
+  /** 选项说明（可选）：菜单里跟在名字下面，说清「选了这个会发生什么」。 */
+  description?: string
   /** 是否禁用该选项。 */
   disabled?: boolean
 }
@@ -236,7 +238,10 @@ onBeforeUnmount(() => {
           @mousedown.prevent
           @click="onOptionClick(index)"
         >
-          <span class="base-select__option-label">{{ option.label }}</span>
+          <span class="base-select__option-main">
+            <span class="base-select__option-label">{{ option.label }}</span>
+            <span v-if="option.description" class="base-select__option-desc">{{ option.description }}</span>
+          </span>
           <svg class="base-select__check" viewBox="0 0 24 24" aria-hidden="true">
             <path
               d="m5 12 4.5 4.5L19 7"
@@ -259,21 +264,26 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+/*
+ * 触发器（A 方案 · 紧凑下拉）：34px 高、单一描边、箭头不再压在灰色小方块上。
+ * 现状的「丑」来自一个控件叠了三层框（黑底 + 边框 + 箭头底块），这里只留「底 + 边」两层。
+ */
 .base-select__trigger {
   display: flex;
   box-sizing: border-box;
   width: 100%;
-  height: 42px;
+  height: 34px;
   align-items: center;
-  gap: 10px;
-  padding: 0 9px 0 12px;
+  gap: 5px;
+  padding: 0 7px 0 11px;
   border: 1px solid var(--ufo-border-strong);
-  border-radius: 11px;
+  border-radius: 9px;
   outline: none;
   background: var(--ufo-input);
   color: var(--ufo-text);
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
   box-shadow:
@@ -315,30 +325,27 @@ onBeforeUnmount(() => {
   color: var(--ufo-muted);
 }
 
+/* 裸箭头：只有一支描边 chevron，hover / 展开时变强调色并翻转，不再有底块；盒子贴图标，不留空腔 */
 .base-select__chevron {
   display: inline-flex;
-  width: 26px;
-  height: 26px;
+  width: 13px;
+  height: 13px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  background: var(--ufo-overlay-raised);
   color: var(--ufo-muted);
   transition:
-    background-color 150ms ease-out,
     color 150ms ease-out,
     transform 160ms ease-out;
 }
 
 .base-select__chevron svg {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
 }
 
 .base-select__trigger:hover .base-select__chevron,
 .base-select--open .base-select__chevron {
-  background: var(--ufo-accent-soft);
   color: var(--ufo-accent-text);
 }
 
@@ -346,14 +353,20 @@ onBeforeUnmount(() => {
   transform: rotate(180deg);
 }
 
+/*
+ * 菜单：带说明后比触发器宽，按内容展开并**右对齐**（R）——
+ * 下拉常钉在设置行右缘，而 `.main-window` 是 overflow-x-hidden，往右长会被窗口裁掉。
+ */
 .base-select__menu {
   position: absolute;
   z-index: 40;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
   display: grid;
   box-sizing: border-box;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
+  max-width: 320px;
   max-height: 236px;
   gap: 2px;
   overflow-y: auto;
@@ -366,7 +379,7 @@ onBeforeUnmount(() => {
     0 4px 12px rgba(0, 0, 0, 0.24),
     inset 0 1px 0 rgba(255, 255, 255, 0.045);
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: var(--ufo-scrollbar-w);
 }
 
 .base-select__option {
@@ -411,12 +424,33 @@ onBeforeUnmount(() => {
   opacity: 0.42;
 }
 
-.base-select__option-label {
+/* 名字 + 说明两列叠放；说明只有一行，读不出「选了这个会发生什么」才是这个菜单存在的意义 */
+.base-select__option-main {
+  display: grid;
   min-width: 0;
   flex: 1;
+  gap: 1px;
+}
+
+.base-select__option-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.base-select__option-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--ufo-muted);
+}
+
+.base-select__option--selected .base-select__option-desc {
+  color: color-mix(in srgb, var(--ufo-accent-text) 72%, transparent);
 }
 
 .base-select__check {
