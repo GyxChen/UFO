@@ -199,7 +199,7 @@ body {
 
 /* 浮层主体分两栏：左 = 本会话流水（选一条），右 = 那条记录的完整信息。
    与信息卡拓展 / 会话记录同一套主从语言，不新造第三种。 */
-.lg-split { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 1.35fr); gap: 12px; min-height: 0; }
+.lg-split { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); gap: 12px; min-height: 0; }
 .lg-split > * { min-height: 0; }
 .lg-recard { display: grid; gap: 8px; align-content: start; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #4f4f4f transparent; min-height: 0; padding-right: 2px; }
 .lg-recard__head { display: flex; align-items: center; gap: 8px; }
@@ -246,7 +246,7 @@ body {
 
 /* 链路展开：一条 trace 的全部行按时间正序摊开 */
 .lg-chain { display: grid; gap: 0; margin: 2px 0 0; padding: 8px 0 8px 14px; border-left: 1px dashed var(--ufo-border-strong); }
-.lg-chain__item { display: grid; grid-template-columns: 58px auto minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 4px 0; font-size: 11.5px; }
+.lg-chain__item { display: grid; grid-template-columns: 58px auto minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 4px 0; font-size: 11.5px; overflow-wrap: anywhere; }
 .lg-chain__item b { font-weight: 600; }
 .lg-chain__why { color: var(--ufo-muted); }
 

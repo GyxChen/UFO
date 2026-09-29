@@ -34,6 +34,7 @@ mod config;
 mod paths;
 mod record;
 mod runtime;
+mod scan;
 mod sink;
 
 /// 实时广播的事件名：monitor 每轮把新增的几条推给面板（载荷是一页日志）。
@@ -43,7 +44,7 @@ mod sink;
 pub const STATUS_LOG_EVENT: &str = "agent-status-log";
 
 pub(crate) use commands::{
-    clear_status_log, export_status_log, get_status_log, set_status_log_view,
+    clear_status_log, count_status_log, export_status_log, get_status_log, set_status_log_view,
 };
 pub(crate) use config::{LogConfig, LogLevel};
 pub(crate) use paths::log_dir;
@@ -51,5 +52,7 @@ pub(crate) use record::{
     excerpt, length_of, wire_name, CleanupReport, EventVerdict, LogEntry, LogReason, LogStage,
     LogWriter,
 };
-pub(crate) use runtime::{ExportedLog, LogState, StatusLogEntry, StatusLogPage, StatusLogQuery};
+pub(crate) use runtime::{
+    ExportedLog, LogState, StatusLogCount, StatusLogEntry, StatusLogPage, StatusLogQuery,
+};
 pub(crate) use sink::Sink;

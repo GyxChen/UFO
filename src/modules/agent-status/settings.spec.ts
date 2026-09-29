@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import type { FloatingModuleConfig } from '@/lib/floating-modules'
+import logConfigRs from '../../../src-tauri/src/modules/agent_status/status/log/config.rs?raw'
 import {
   AGENT_STATUS_MODULE_ID,
   DEFAULT_AGENT_STATUS_SETTINGS,
   DEFAULT_LOG_SETTINGS,
+  MAX_LOG_RETENTION_DAYS,
   MAX_RETENTION_SECONDS,
   MAX_RUNNING_TIMEOUT_SECONDS,
+  MIN_LOG_RETENTION_DAYS,
+  LOG_RETENTION_DAYS_CHOICES,
   agentStatusSettings,
   logBlockWithSwitch,
   logSwitchOn,
+  nearestRetentionChoice,
   retentionMsFromSeconds,
   runningTimeoutMsFromSeconds,
   toSeconds,
@@ -73,25 +78,25 @@ describe('agentStatusSettings', () => {
 
   it('keeps the un-exposed log fields when the switch flips', () => {
     // ⚠️ 落盘走 `updateModuleSettings`（模块层浅合并）：整块提交时漏掉的字段会被抹掉，
-    // 所以保留期 / 体积上限 / 环形容量这些「界面上没有」的值必须跟着一起写回。
-    const current = { ...DEFAULT_LOG_SETTINGS, retention_days: 3, ring_capacity: 900 }
+    // 所以保留期 / 体积上限 / 尾部续读这些「界面上没有」的值必须跟着一起写回。
+    const current = { ...DEFAULT_LOG_SETTINGS, retention_days: 14, live_tail_bytes: 1048576 }
     const next = logBlockWithSwitch(current, true)
-    expect(next.retention_days).toBe(3)
-    expect(next.ring_capacity).toBe(900)
+    expect(next.retention_days).toBe(14)
+    expect(next.live_tail_bytes).toBe(1048576)
     expect(next.level).toBe('verbose')
   })
 
   it('reads a stored log block and clamps each field on its own', () => {
     const settings = agentStatusSettings(
       configWith({
-        log: { level: 'verbose', hook_enabled: true, retention_days: 999, ring_capacity: '5000' },
+        log: { level: 'verbose', hook_enabled: true, retention_days: 999, live_tail_bytes: '5000' },
       })
     )
     expect(settings.log.level).toBe('verbose')
     expect(settings.log.hook_enabled).toBe(true)
-    // 越界的保留期被夹住，同块里写错类型的环形容量各自回落，不牵连别的字段。
-    expect(settings.log.retention_days).toBe(90)
-    expect(settings.log.ring_capacity).toBe(DEFAULT_LOG_SETTINGS.ring_capacity)
+    // 越界的保留期被夹到上限（14），同块里写错类型的续读窗口各自回落，不牵连别的字段。
+    expect(settings.log.retention_days).toBe(MAX_LOG_RETENTION_DAYS)
+    expect(settings.log.live_tail_bytes).toBe(DEFAULT_LOG_SETTINGS.live_tail_bytes)
   })
 
   it('falls back to recording, not to silence, when a stored level is unreadable', () => {
@@ -138,6 +143,66 @@ describe('agentStatusSettings', () => {
     expect(settings.running_timeout_ms).toBe(DEFAULT_AGENT_STATUS_SETTINGS.running_timeout_ms)
     expect(settings.token_unit).toBe('tokens')
     expect(settings.proxy_resolver).toBe('none')
+  })
+})
+
+/**
+ * 保留天数是界面上唯一的回收旋钮，它的默认值与上下界都必须与 Rust 同源。
+ *
+ * 手法照 `push-providers.spec.ts` / `status-log-reasons.spec.ts`：`?raw` 读 Rust 源，正则抠常量再比。
+ * 两边不一致的代价是看得见的错报 —— 面板写 7 天、实际留 14 天，或下拉给出一档而后台把它夹掉。
+ */
+describe('日志保留天数的跨语言口径', () => {
+  /** 从 `log/config.rs` 里抠出一个 `const NAME: u32 = N;`。 */
+  function rustConst(name: string): number {
+    const found = new RegExp(`const ${name}: u32 = (\\d+);`).exec(logConfigRs)
+    if (!found) throw new Error(`没能在 log/config.rs 里找到 ${name} —— 它改名或挪文件了`)
+    return Number(found[1])
+  }
+
+  it('默认值与 Rust 的 DEFAULT_RETENTION_DAYS 同值', () => {
+    expect(rustConst('DEFAULT_RETENTION_DAYS')).toBe(7)
+    expect(DEFAULT_LOG_SETTINGS.retention_days).toBe(rustConst('DEFAULT_RETENTION_DAYS'))
+    expect(DEFAULT_AGENT_STATUS_SETTINGS.log.retention_days).toBe(7)
+  })
+
+  it('上下界与 Rust 的 MIN/MAX_RETENTION_DAYS 同值', () => {
+    expect(MIN_LOG_RETENTION_DAYS).toBe(rustConst('MIN_RETENTION_DAYS'))
+    expect(MAX_LOG_RETENTION_DAYS).toBe(rustConst('MAX_RETENTION_DAYS'))
+  })
+
+  it('配置块里越界或写错类型的天数都夹进区间', () => {
+    expect(agentStatusSettings(configWith({ log: { retention_days: 999 } })).log.retention_days).toBe(
+      MAX_LOG_RETENTION_DAYS
+    )
+    expect(agentStatusSettings(configWith({ log: { retention_days: 0 } })).log.retention_days).toBe(
+      MIN_LOG_RETENTION_DAYS
+    )
+    // 类型不对（字符串）回落默认，不跟着 '7' 这种写法走。
+    expect(
+      agentStatusSettings(configWith({ log: { retention_days: '30' } })).log.retention_days
+    ).toBe(DEFAULT_LOG_SETTINGS.retention_days)
+  })
+
+  /**
+   * 界面上那个下拉只有两档（7 / 14），而旧版数字输入框能在盘上留下 1–90 之间的任何数。
+   * 「就近取档」必须永远落在两档之内，且两档都在 Rust 的夹取区间里 —— 否则界面显示一个
+   * 后端马上又会夹掉的数，就是「面板说 14 天、实际留 X 天」。
+   */
+  it('下拉只有两档，任意盘上值都就近取到其中一档', () => {
+    expect([...LOG_RETENTION_DAYS_CHOICES]).toEqual([7, 14])
+    for (const choice of LOG_RETENTION_DAYS_CHOICES) {
+      expect(choice).toBeGreaterThanOrEqual(MIN_LOG_RETENTION_DAYS)
+      expect(choice).toBeLessThanOrEqual(MAX_LOG_RETENTION_DAYS)
+      expect(nearestRetentionChoice(choice, 7)).toBe(choice)
+    }
+
+    expect(nearestRetentionChoice(3, 7)).toBe(7)
+    expect(nearestRetentionChoice(12, 7)).toBe(14)
+    expect(nearestRetentionChoice(999, 7)).toBe(MAX_LOG_RETENTION_DAYS)
+    // 空串 / NaN（读不到值）回落当前值，不该顺手改档位。
+    expect(nearestRetentionChoice('', 14)).toBe(14)
+    expect(nearestRetentionChoice(Number.NaN, 14)).toBe(14)
   })
 })
 

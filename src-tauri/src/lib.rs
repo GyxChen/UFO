@@ -43,9 +43,9 @@ use modules::agent_status::{
     settings::{adopt_legacy_fields, config_hook, AgentStatusSettings},
     sound::read_light_sound,
     status::{
-        clear_status_log, dismiss_status_session, export_status_log, get_proxy_resolvers,
-        get_status_log, get_status_snapshot, now_ms, set_status_log_view, set_tooltip_interactive,
-        spawn_monitor, LogConfig, LogState, StatusState,
+        clear_status_log, count_status_log, dismiss_status_session, export_status_log,
+        get_proxy_resolvers, get_status_log, get_status_snapshot, now_ms, set_status_log_view,
+        set_tooltip_interactive, spawn_monitor, LogConfig, LogState, StatusState,
     },
 };
 use modules::weather::settings::adopt_legacy_fields as adopt_weather_legacy_fields;
@@ -274,6 +274,7 @@ pub fn run() {
             delete_session_record,
             clear_session_records,
             get_status_log,
+            count_status_log,
             clear_status_log,
             export_status_log,
             set_status_log_view,

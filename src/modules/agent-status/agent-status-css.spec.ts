@@ -18,6 +18,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import { OVERFLOW_TOOLTIP_METRICS } from './lib/tooltip-size'
+import { LOG_ROW_HEIGHT_PX } from './lib/status-log'
+import overlayRaw from './panels/StatusLogOverlay.vue?raw'
 
 /** 模块样式文件：路径 → 原文。 */
 const moduleStyles = import.meta.glob('/src/modules/agent-status/*.css', {
@@ -404,8 +406,9 @@ describe('模块样式 · 设置页卡片必须真的撑满列宽', () => {
    */
   it('keeps the transition-log lists pinned to the top and the modal chain unbroken', () => {
     const css = agentStatusCss()
-    // `.sr-list` 用的是普通声明（align-content: start），`.lg-rows` 走 @apply content-start：两种写法等价。
-    for (const header of ['.sr-list {', '.lg-rows {']) {
+    // `.sr-list` 是普通 grid 列表，靠 `align-content: start` 钉住行；`.lg-rows` 已换成
+    // 虚拟列表（条目绝对定位，不再有 grid 行轨），所以这里只查前者。
+    for (const header of ['.sr-list {']) {
       const body = blockAfter(css, header)
       expect(body, `${header} 规则必须存在`).not.toBe('')
       expect(
@@ -439,6 +442,15 @@ describe('模块样式 · 设置页卡片必须真的撑满列宽', () => {
     expect(modal, '不许改回 fixed：那会盖住标签页并伸出窗口圆角').not.toContain('fixed')
     const split = blockAfter(css, '.lg-split {')
     expect(split, '浮层两栏都要能独立滚').toContain('min-h-0')
+    // 浮层左右 = 流水 : 详情 = 1.8 : 1（用户点名：行是长文本，宽度给流水）。
+    expect(decl(split, 'grid-template-columns'), '两栏比例必须是 1.8fr : 1fr').toContain(
+      'minmax(0, 1.8fr) minmax(0, 1fr)'
+    )
+    // ⚠️ 2:1 下右栏只剩约 320px：长标量（URL、session id）必须能断行，
+    // 否则一个 `base_url=https://…` 就顶出横向滚动（实测链路行内容 189px / 列宽 178px）。
+    for (const selector of ['.lg-rec__fields dd {', '.lg-rec__raw {', '.lg-chain__item {']) {
+      expect(blockAfter(css, selector), `${selector} 必须允许长标量断行`).toContain('overflow-wrap: anywhere')
+    }
   })
 
   /**
@@ -530,5 +542,60 @@ describe('模块样式 · 设置页卡片必须真的撑满列宽', () => {
     expect(css, '折叠块内的每一行摘要也要放行收缩').toMatch(
       /\.lg-inline > \*,\s*\.lg-inline__rows > li,\s*\.sr-detail__prompt > \*/
     )
+  })
+})
+
+/**
+ * 转灯日志浮层的虚拟列表护栏（@tanstack/vue-virtual + 等高行）。
+ *
+ * 钉住四条「改回去就错但不会报错」的：
+ * 1. **行高只有一个来源**，且与 `lib/status-log.ts` 的常量（库的估算值）同值 —— 两边各写一个数，
+ *    滚动条长度就和真实内容高度脱钩（拖到底还差一截 / 末尾多一大片空白）。
+ * 2. **垫高必须是一个独立元素，不许回到 padding**：Tailwind 全局 `box-sizing: border-box`，
+ *    padding 一旦超过可视高就把滚动容器自己撑到整表高度（无头 Chrome 实测 `clientHeight` 5910px），
+ *    内部滚动当场失效，底栏被整页滚走。所以 `.lg-rows` 既不能有 padding，也不能绑 padding。
+ * 3. `overflow-anchor: none`：浏览器在「上方内容变长」时反向补 `scrollTop`，而虚拟列表恰好在
+ *    反复回收上方条目 —— 让它插手就是滚动打抖。
+ * 4. 左栏的高度链多的一环（`.lg-pane`）必须仍然允许收缩，且空态/按钮在滚动区**外面**。
+ */
+describe('agent-status.css · 转灯日志虚拟列表', () => {
+  it('行高只有一个来源，且与库的估算常量同值', () => {
+    const css = agentStatusCss()
+    const declared = /--lg-row-h:\s*(\d+)px/.exec(ruleBody(css, '.lg-rows'))
+    expect(declared, '.lg-rows 里要声明 --lg-row-h').toBeTruthy()
+    expect(Number(declared?.[1])).toBe(LOG_ROW_HEIGHT_PX)
+
+    const row = blockAfter(css, '.lg-row {')
+    expect(row, '行必须按 --lg-row-h 定高（虚拟列表的估算前提）').toContain('var(--lg-row-h)')
+    expect(row, '单行版式必须放行收缩，否则长摘要把列表顶出横向滚动').toContain('overflow-hidden')
+  })
+
+  it('垫高是一个元素而不是 padding，容器自己只由版面定高', () => {
+    const css = agentStatusCss()
+    const rows = ruleBody(css, '.lg-rows')
+    expect(rows, '滚动容器必须 relative：条目按它定位').toContain('relative')
+    expect(rows, '滚动落在容器自己').toContain('overflow-y-auto')
+    expect(rows, '滚动条出现时不许挤内容宽度').toContain('scrollbar-gutter: stable')
+    expect(rows, '必须关掉滚动锚定，否则回收上方条目会让滚动打抖').toContain('overflow-anchor: none')
+    // border-box 下 padding 会把容器顶高 —— 这一条是本轮 bug 的直接成因。
+    expect(/@apply[^;]*\bp[-\d]/.test(rows), '.lg-rows 不许有 padding（垫高改用占位元素）').toBe(false)
+    expect(rows, '条目不再排成 grid 行：结构变了就别留半套旧声明').not.toContain('grid')
+
+    const sizer = ruleBody(css, '.lg-rows__sizer')
+    expect(sizer, '总高占位元素必须 relative').toContain('relative')
+    const cell = ruleBody(css, '.lg-rows__cell')
+    expect(cell, '条目必须绝对定位（偏移由库给出）').toContain('absolute')
+
+    // 组件侧同一件事：绑 padding 当垫高就是回到老坑；虚拟列表则由库驱动。
+    expect(overlayRaw, '组件不许再用 padding 垫高').not.toMatch(/paddingTop|paddingBottom/)
+    expect(overlayRaw, '左栏必须走 @tanstack/vue-virtual').toContain('useVirtualizer')
+  })
+
+  it('左栏包装层允许收缩，脚注在滚动区外面', () => {
+    const css = agentStatusCss()
+    const pane = blockAfter(css, '.lg-pane {')
+    expect(pane, '.lg-pane 必须存在（空态与「看更早的」住在里面）').not.toBe('')
+    expect(pane).toContain('min-h-0')
+    expect(pane, '滚动区吃满、脚注按内容高').toContain('minmax(0, 1fr)')
   })
 })

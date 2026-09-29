@@ -16,6 +16,7 @@
     "check": "cargo check --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
+    "@tanstack/vue-virtual": "^3.13.39",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-shell": "^2.3.5",

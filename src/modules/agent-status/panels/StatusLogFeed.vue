@@ -11,10 +11,11 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { save } from '@tauri-apps/plugin-dialog'
-import { useStatusLogStore, EXPORT_LIMIT } from '../stores/statusLog'
+import { useStatusLogStore } from '../stores/statusLog'
 import {
   STAGE_LABELS,
   formatLogClock,
+  logCountLabel,
   logHeadline,
   logPhaseChange,
   logTone,
@@ -23,6 +24,7 @@ import {
 import { agentStatusSettings, logSwitchOn } from '../settings'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import BaseLoadingOverlay from '@/components/ui/BaseLoadingOverlay.vue'
 import StatusLogOverlay from './StatusLogOverlay.vue'
 
 const props = defineProps<{
@@ -41,6 +43,21 @@ const open = ref(false)
 
 /** 行内反馈（导出结果 / 失败原因）；本项目禁止 alert/confirm，一律 `role="status"`。 */
 const feedback = ref('')
+
+/**
+ * 导出是否在飞：后端要按条件扫完整个日志目录（可能被配到几百 MiB）才回。
+ * 这段期间挂遮罩并挡住按钮 —— 重复点一次就是多扫一遍全目录。
+ */
+const exporting = ref(false)
+
+/**
+ * 条数文案：按盘精确数 + 「截至」时刻（后端 3 秒节流 + 缓存，所以跟着 head 前进重算不心疼）。
+ *
+ * 查询只带 `key`：这一行说的是「这个会话在盘上一共多少条」，不该被浮层那套过滤条件影响。
+ */
+const countLabel = computed(() =>
+  logCountLabel('本会话', log.count, log.countState)
+)
 
 /** 折叠态露出的行：第一条做结论，后两条做摘要。 */
 const shown = computed(() => log.peek.slice(0, 3))
@@ -61,6 +78,8 @@ watch(
   async () => {
     feedback.value = ''
     await log.refreshPeek(props.sessionKey)
+    const query = { key: props.sessionKey }
+    await log.refreshCount(query, props.sessionKey)
   },
   { immediate: true }
 )
@@ -76,8 +95,13 @@ function collapse() {
   feedback.value = ''
 }
 
-/** 导出这个会话的全部可见记录：路径由原生另存为给出，取消即不发命令。 */
+/**
+ * 导出这个会话的**全部**记录（按盘扫，不受内存环形容量封顶）：路径由原生另存为给出，取消即不发命令。
+ *
+ * ⚠️ 不传 `limit`：这条命令的语义是「这个会话在盘上有多少条就写多少条」。
+ */
 async function exportSession() {
+  if (exporting.value) return
   feedback.value = ''
   const target = await save({
     title: '导出这个会话的转灯日志',
@@ -85,11 +109,17 @@ async function exportSession() {
     filters: [{ name: 'JSONL', extensions: ['jsonl', 'log', 'txt'] }],
   })
   if (!target) return
+  exporting.value = true
   try {
-    const result = await log.exportTo(target, { key: props.sessionKey, limit: EXPORT_LIMIT })
-    feedback.value = `已导出 ${result.entries} 条 → ${result.path}`
+    const result = await log.exportTo(target, { key: props.sessionKey })
+    // 被预算截断时不许只报条数：那会让人以为拿到的是全部。
+    feedback.value = result.stopped_by_budget
+      ? `目录过大，导出被截断（只写了 ${result.entries} 条，不完整）`
+      : `已导出 ${result.entries} 条（盘上命中全量）`
   } catch (error) {
     feedback.value = `导出失败：${error}`
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -111,16 +141,23 @@ function phaseParts(text: string) {
     <div class="lg-inline__head">
       <h4 class="lg-inline__label">转灯日志</h4>
       <span class="lg-inline__count">
-        {{ recording ? log.peekLabel : '已关闭 · 零写盘' }}
+        {{ recording ? countLabel : '已关闭 · 零写盘' }}
       </span>
       <span class="lg-inline__acts">
-        <BaseButton v-if="recording && headline" variant="ghost" size="sm" @click="exportSession">
+        <BaseButton
+          v-if="recording && headline"
+          variant="ghost"
+          size="sm"
+          :disabled="exporting"
+          @click="exportSession"
+        >
           导出本会话
         </BaseButton>
         <button
           v-if="recording && headline"
           type="button"
           class="lg-inline__expand"
+          :disabled="exporting"
           title="在整窗中查看完整链路"
           aria-label="在整窗中查看完整链路"
           @click="expand"
@@ -154,7 +191,7 @@ function phaseParts(text: string) {
         </template>
       </p>
       <ul class="lg-inline__rows">
-        <li v-for="entry in preview" :key="entry.seq" :data-tone="logTone(entry)">
+        <li v-for="entry in preview" :key="entry.id" :data-tone="logTone(entry)">
           <span class="lg-inline__time">{{ formatLogClock(entry.ts_ms) }}</span>
           <span class="lg-row__stage">{{ STAGE_LABELS[entry.stage] }}</span>
           <em>{{ entry.reason ?? STAGE_LABELS[entry.stage] }}</em>
@@ -170,6 +207,12 @@ function phaseParts(text: string) {
     <p v-else class="lg-inline__off">先在左侧选择一条会话记录。</p>
 
     <p v-if="feedback" class="lg-inline__feedback" role="status">{{ feedback }}</p>
+
+    <!--
+      导出遮罩：这一块的祖先是 `.lg-inline`（CSS 里给它加了 `relative`），所以只盖这一条，
+      不会把整张详情卡压住 —— 用户仍能看见右边的字段表在原地。
+    -->
+    <BaseLoadingOverlay :loading="exporting" text="正在扫描日志目录…" tone="solid" placement="inline" />
 
     <StatusLogOverlay v-if="open && sessionKey" :session-key="sessionKey" @close="collapse" />
   </div>

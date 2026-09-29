@@ -53,9 +53,10 @@ use tokens::TokenTracker;
 // 全部收在 `pub(crate)` —— 本 crate 不对外导出 API，放开成 `pub` 只会让私有类型撞上
 // 「public interface 里出现 crate-private 类型」的限制。
 pub(crate) use log::{
-    clear_status_log, export_status_log, get_status_log, set_status_log_view, CleanupReport,
-    EventVerdict, ExportedLog, LogConfig, LogEntry, LogReason, LogStage, LogState, LogWriter,
-    LogLevel, StatusLogEntry, StatusLogPage, StatusLogQuery, wire_name, STATUS_LOG_EVENT,
+    clear_status_log, count_status_log, export_status_log, get_status_log, set_status_log_view,
+    CleanupReport, EventVerdict, ExportedLog, LogConfig, LogEntry, LogReason, LogStage, LogState,
+    LogWriter, LogLevel, StatusLogCount, StatusLogEntry, StatusLogPage, StatusLogQuery, wire_name,
+    STATUS_LOG_EVENT,
 };
 use serde_json::json;
 // 内核裁决化的两个返回值类型（`EventVerdict` / `CleanupReport`）由 kernel 直接 use，不必再导出。
@@ -463,8 +464,10 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
         if changed {
             emit_snapshot(&app, &state);
         }
-        // 转灯日志：把本轮新写入的行读进内存环形缓冲（**含 hook 写的那些**，这是唯一真源）。
+        // 转灯日志：占用读数按自己的节流刷（日志关着也要刷 —— 盘上已有的文件仍在被回收），
+        // 再把本轮新写入的行读进内存环形缓冲（**含 hook 写的那些**，这是唯一真源）。
         // 广播要压在最后一步：本轮自己写的行也得进这一批，否则面板看到的顺序会晚一轮。
+        state.log.refresh_usage();
         let fresh = state.log.drain();
         if !fresh.is_empty() && state.log.viewer_attached() {
             // 每轮一批而不是逐条 emit：一轮可能落几十条，逐条会把 IPC 打成噪声。

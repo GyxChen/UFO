@@ -13,9 +13,9 @@
 //! 本文件只管**读**（tail）与**删**（回收），三方零协调。
 
 use std::{
-    collections::VecDeque,
+    collections::HashSet,
     fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -25,18 +25,37 @@ use serde::{Deserialize, Serialize};
 use super::super::model::now_ms;
 use super::config::{LogConfig, LogLevel};
 use super::paths::{
-    evict_for_total_cap, file_name, is_expired, log_dir, parse_file_name, pick_active_seq, utc_day,
+    evict_for_total_cap, file_name, is_expired, log_dir, parse_file_name, pick_active_seq,
+    utc_day, LogPosition,
 };
 use super::record::{LogEntry, LogReason, LogStage, LogWriter};
 use super::sink::Sink;
 
-/// 环形缓冲里的一条：带一个单调递增的游标号，供前端「向上翻页」当 cursor 用。
-#[derive(Debug, Clone)]
-struct Ringed {
-    /// 内存内单调序号（重启后从 0 重新起，因此只在本进程内有意义）。
-    seq: u64,
-    entry: LogEntry,
+/// 日志目录的占用读数：设置页常驻显示它，用户才知道这套账现在吃了多少盘。
+///
+/// 存在的理由是一条诚实性约束：保留天数是界面上唯一的旋钮，但体积上限那条硬界仍在背后
+/// 削最旧的整天 —— 只说「保留 N 天」会变成一个会被静默打破的承诺。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LogDiskUsage {
+    /// 认识的文件合计字节数（不认识的名称不计入，与 [`super::paths::parse_file_name`] 同口径）。
+    pub bytes: u64,
+    /// 认识的文件个数。
+    pub files: usize,
+    /// 最早一天的日期（`YYYY-MM-DD`）；目录空时为 `None`。
+    pub oldest_day: Option<String>,
+    /// 本次运行内是否删过「还没到保留天数、只因超出体积上限而被削掉」的整天文件。
+    /// ⚠️ 只说本次运行：进程启动前删掉的那次无从知道，宁可少说不猜。
+    pub cut_by_size_cap: bool,
 }
+
+/// 占用刷新的最小间隔：与 `sweep()` 的节流同量级，免得每轮（500ms）都去 `read_dir`。
+const USAGE_REFRESH_MS: i64 = 5_000;
+
+/// 同一条查询两次计数之间的最小间隔：一次计数 = 把该条件涉及的目录整个翻完，
+/// 节流 + 缓存是它唯一的成本防线（否则「换一次会话」就是一次全目录扫描）。
+const COUNT_MIN_INTERVAL_MS: i64 = 3_000;
+/// 计数缓存的条数（按查询的 JSON 认，超出逐出最旧的）。
+const COUNT_CACHE_SLOTS: usize = 4;
 
 /// tail 游标：读到「哪一天的第几个文件的哪个字节」为止。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,33 +75,39 @@ impl Cursor {
 /// 日志运行态的可变部分。只在 monitor 线程写、命令侧读，因此整体一把锁。
 #[derive(Debug, Default)]
 struct Runtime {
-    /// 内存里留着的最近若干条（容量来自配置 `ring_capacity`）。
-    ring: VecDeque<Ringed>,
-    /// 下一条要发的游标号。
+    /// 进过内存的行数水位：面板只拿它判断「这一轮有没有新行」，不参与身份、翻页与计数。
     next_seq: u64,
-    /// 因为超出环形容量而被挤掉的历史条数（面板要说明「上面还有 N 条」）。
-    dropped: u64,
     /// tail 游标：None = 还一次都没读过。
     cursor: Option<Cursor>,
-    /// 面板是否开着：关着时不广播（环形缓冲照收，成本极低）。
+    /// 面板是否开着：关着时不广播（盘上照样在写，读侧随时能按盘分页）。
     viewer: bool,
     /// 上次回收文件的时刻（与 monitor 的 10 秒清理同频）。
     last_sweep: i64,
+    /// 目录占用读数：由 [`LogState::refresh_usage`] 按 `USAGE_REFRESH_MS` 刷新，读侧只取这份。
+    usage: LogDiskUsage,
+    /// 上次刷新占用的时刻；`0` = 强制下一条来更新（`clear` / 删过文件后这么置）。
+    usage_at: i64,
+    /// 本次运行内是否因超出体积上限删过还没过保留期的文件（粘住，直到清空或重启）。
+    size_cut: bool,
+    /// 计数缓存：`(查询的 JSON, 结果)`。一次计数 = 把该条件涉及的目录翻完，是最贵的读，
+    /// 所以同一条查询在 [`COUNT_MIN_INTERVAL_MS`] 内直接回这份缓存（`as_of_ms` 一起回，
+    /// 界面自己显示「截至」）。有新行落盘 / 删过文件 / 清空 ⇒ 整份作废。
+    counts: Vec<(String, StatusLogCount)>,
     /// 是否已经做过启动播种（第一次只读文件尾巴，不把整个保留期灌进内存）。
     seeded: bool,
 }
 
 impl Runtime {
-    /// 入环形缓冲，并把这条算作「本轮新增」（供广播，带着它的游标号）。满了就挤掉最旧的。
-    fn push(&mut self, entry: LogEntry, capacity: usize, fresh: &mut Vec<StatusLogEntry>) {
-        let seq = self.next_seq;
-        self.next_seq = seq.saturating_add(1);
-        fresh.push(StatusLogEntry { seq, entry: entry.clone() });
-        self.ring.push_back(Ringed { seq, entry });
-        while self.ring.len() > capacity {
-            self.ring.pop_front();
-            self.dropped = self.dropped.saturating_add(1);
-        }
+    /// 把本轮 tail 到的一条记进「待广播」，并把水位往前推一格。
+    ///
+    /// ⚠️ 这里**不再留一份内存副本**：分页、计数、导出全部按盘读，环形缓冲就成了只写不读的
+    /// 死结构（原先正是它给导出封顶）。`next_seq` 只剩「有没有新行进来过」这一个用途。
+    fn record(&mut self, entry: LogEntry, pos: LogPosition, fresh: &mut Vec<StatusLogEntry>) {
+        self.next_seq = self.next_seq.saturating_add(1);
+        fresh.push(StatusLogEntry {
+            id: pos.id(),
+            entry,
+        });
     }
 }
 
@@ -224,7 +249,6 @@ impl LogState {
                 });
             }
         }
-        let capacity = config.ring_capacity.max(1) as usize;
         let mut fresh = Vec::new();
         for (day, seq, size) in files {
             // 本文件的起点。拿它和游标比「谁在谁前面」，才知道这个文件读完了没有。
@@ -247,62 +271,128 @@ impl LogState {
             if size <= from {
                 continue;
             }
-            let (lines, consumed) = read_from(&dir.join(file_name(&day, seq)), from, size);
-            for line in lines {
+            let (lines, consumed) = read_from(
+                &dir.join(file_name(&day, seq)),
+                from,
+                size,
+                READ_WINDOW_BYTES,
+            );
+            for (offset, line) in lines {
                 if let Some(entry) = parse_line(&line) {
-                    runtime.push(entry, capacity, &mut fresh);
+                    // 每条都带着它刚被读出来的盘上坐标：实时广播与按盘分页因此是同一个身份。
+                    runtime.record(
+                        entry,
+                        LogPosition {
+                            day: day.clone(),
+                            file_seq: seq,
+                            offset,
+                        },
+                        &mut fresh,
+                    );
                 }
             }
             runtime.cursor = Some(Cursor { day, seq, offset: consumed });
+        }
+        // 盘上多了行 ⇒ 「截至某刻共 N 条」已经过期，缓存整份作废。
+        // ⚠️ 这里必须在**已持有的守卫**上直接清：std Mutex 不可重入，调 `self.void_counts()`
+        //   会当场自死锁（表现是 `cargo test` 一片挂住，而不是报错）。
+        if !fresh.is_empty() {
+            runtime.counts.clear();
         }
         fresh
     }
 
     /// 按条件取一页（面板与导出共用）。返回**新→旧**，`before_seq` 是上一页最后一条的游标。
     pub fn page(&self, query: &StatusLogQuery) -> StatusLogPage {
-        let Ok(runtime) = self.runtime.lock() else {
-            return StatusLogPage::empty(self.dir());
-        };
         // 前端传 0（或认不出的值）时按缺省页大小走，别让面板一次刷出空列表。
         let limit = usize::from(if query.limit == 0 { default_limit() } else { query.limit });
-        let mut entries = Vec::with_capacity(limit.min(runtime.ring.len()));
-        for item in runtime.ring.iter().rev() {
-            if query.before_seq.is_some_and(|before| item.seq >= before) {
-                continue;
-            }
-            if !query.matches(&item.entry) {
-                continue;
-            }
-            entries.push(StatusLogEntry {
-                seq: item.seq,
-                entry: item.entry.clone(),
-            });
-            if entries.len() >= limit {
-                break;
+        let disk = super::scan::read_page(
+            &self.dir(),
+            query,
+            limit,
+            super::scan::SCAN_BYTE_BUDGET,
+            super::scan::SCAN_BLOCK_BYTES,
+        );
+        let (head, usage) = match self.runtime.lock() {
+            Ok(runtime) => (runtime.next_seq, runtime.usage.clone()),
+            Err(poisoned) => (poisoned.into_inner().next_seq, LogDiskUsage::default()),
+        };
+        StatusLogPage {
+            head,
+            dir: self.dir().to_string_lossy().to_string(),
+            usage,
+            next_before: disk.next_before,
+            exhausted: disk.exhausted,
+            scanned_bytes: disk.scanned_bytes,
+            entries: disk
+                .entries
+                .into_iter()
+                .map(|(position, entry)| StatusLogEntry {
+                    id: position.id(),
+                    entry,
+                })
+                .collect(),
+        }
+    }
+
+    /// 按盘精确计数（同一条查询在 [`COUNT_MIN_INTERVAL_MS`] 内走缓存）。
+    ///
+    /// 为什么不塞进 [`page`]：分页天生早停（凑满 `limit` 就返回），要出「命中总数」就必须
+    /// 一路扫到目录头 —— 那等于把最贵的操作绑死在每次点击上。独立成一条命令才好控制时机、
+    /// 才好缓存、也才好让界面显示「计数中…」。
+    pub fn count(&self, query: &StatusLogQuery) -> StatusLogCount {
+        let key = serde_json::to_string(query).unwrap_or_default();
+        let now = now_ms();
+        if let Ok(runtime) = self.runtime.lock() {
+            if let Some((_, cached)) = runtime.counts.iter().find(|(name, _)| *name == key) {
+                if now.saturating_sub(cached.as_of_ms) < COUNT_MIN_INTERVAL_MS {
+                    return cached.clone();
+                }
             }
         }
-        StatusLogPage {
-            head: runtime.next_seq,
-            total: runtime.ring.len(),
-            dropped: runtime.dropped,
-            dir: self.dir().to_string_lossy().to_string(),
-            entries,
+        let stats = super::scan::count_matching(&self.dir(), query, super::scan::SCAN_BYTE_BUDGET);
+        let fresh = StatusLogCount {
+            total: stats.matched,
+            as_of_ms: now,
+            scanned_bytes: stats.scanned_bytes,
+        };
+        if let Ok(mut runtime) = self.runtime.lock() {
+            runtime.counts.retain(|(name, _)| *name != key);
+            runtime.counts.push((key, fresh.clone()));
+            // 只留最近几条：面板会换过滤条件，攒一堆用不到的键只是占地方。
+            while runtime.counts.len() > COUNT_CACHE_SLOTS {
+                runtime.counts.remove(0);
+            }
+        }
+        fresh
+    }
+
+    /// 作废计数缓存：盘上多了行、少了文件或被清空，「截至某刻共 N 条」就不再是最新事实。
+    fn void_counts(&self) {
+        if let Ok(mut runtime) = self.runtime.lock() {
+            runtime.counts.clear();
         }
     }
 
     /// 把一批新条目包成「一页」（实时广播用）。
     ///
     /// 形状与 [`page`] **完全一致** —— 前端因此只需要一种数据结构：首屏拉取与增量推送
-    /// 走同一个 `applyList`，不必为 live 路径再写一套解析。
+    /// 走同一个 `applyPage`，不必为 live 路径再写一套解析。
+    ///
+    /// ⚠️ 增量包里的 `next_before` / `exhausted` / `scanned_bytes` **没有意义**（这几条不是
+    /// 「从某个锚点往回翻」翻出来的），前端合并时只取 `entries`，翻页锚点一律以分页结果为准。
     pub fn page_of(&self, entries: &[StatusLogEntry]) -> StatusLogPage {
-        let Ok(runtime) = self.runtime.lock() else {
-            return StatusLogPage::empty(self.dir());
+        let (head, usage) = match self.runtime.lock() {
+            Ok(runtime) => (runtime.next_seq, runtime.usage.clone()),
+            Err(poisoned) => (poisoned.into_inner().next_seq, LogDiskUsage::default()),
         };
         StatusLogPage {
-            head: runtime.next_seq,
-            total: runtime.ring.len(),
-            dropped: runtime.dropped,
+            head,
             dir: self.dir().to_string_lossy().to_string(),
+            usage,
+            next_before: None,
+            exhausted: false,
+            scanned_bytes: 0,
             entries: entries.to_vec(),
         }
     }
@@ -320,6 +410,40 @@ impl LogState {
             .lock()
             .map(|runtime| runtime.viewer)
             .unwrap_or(false)
+    }
+
+    /// 刷新日志目录的占用读数（monitor 每轮调一次，内部按 `USAGE_REFRESH_MS` 节流）。
+    ///
+    /// ⚠️ 这份数**不跟档位走**：日志关着只是不再写，盘上已有的文件仍会按保留期与体积上限
+    /// 被回收，所以设置页的占用读数不能跟着 `level = off` 一起停更。
+    pub fn refresh_usage(&self) {
+        let now = now_ms();
+        {
+            let Ok(runtime) = self.runtime.lock() else {
+                return;
+            };
+            if now.saturating_sub(runtime.usage_at) < USAGE_REFRESH_MS {
+                return;
+            }
+        }
+        // `list_files` 只认本系统写的文件，因此合计与回收口径一致（不会把别人的文件算进来）。
+        let files = list_files(&self.dir());
+        let bytes: u64 = files.iter().map(|(_, size)| *size).sum();
+        let oldest_day = files
+            .iter()
+            .filter_map(|(name, _)| parse_file_name(name).map(|(day, _)| day))
+            .min();
+        let Ok(mut runtime) = self.runtime.lock() else {
+            return;
+        };
+        let size_cut = runtime.size_cut;
+        runtime.usage = LogDiskUsage {
+            bytes,
+            files: files.len(),
+            oldest_day,
+            cut_by_size_cap: size_cut,
+        };
+        runtime.usage_at = now;
     }
 
     /// 清空：**另起一个全新的活动文件**，其余日志文件删除、内存清零。
@@ -349,6 +473,9 @@ impl LogState {
             cleared.cursor = parse_file_name(&next).map(|(day, seq)| Cursor { day, seq, offset: 0 });
             *runtime = cleared;
         }
+        // 清空改动了盘上的量：让下一次刷新立刻重算（`usage_at` 已随 `Runtime::default()` 归零），
+        // 否则命令紧接着返回的那一页仍带着清空前的占用数字。
+        self.refresh_usage();
     }
 
     /// 按天与按量回收：**当天的活动文件永不删**（可能正被 hook 持有追加句柄）。
@@ -376,22 +503,33 @@ impl LogState {
             &today,
             pick_active_seq(&files, &today, config.max_file_bytes),
         );
-        let mut victims: Vec<String> = files
+        // 过了保留期的整天：这批是"用户说的保留期到了"，删它不算食言。
+        let expired: HashSet<String> = files
             .iter()
             .filter(|(name, _)| is_expired(name, &today, config.retention_days))
             .map(|(name, _)| name.clone())
             .collect();
+        let mut victims: Vec<String> = expired.iter().cloned().collect();
         let active_seq = parse_file_name(&active).map_or(0, |(_, seq)| seq);
+        // 体积上限那条名单里可能混着 expired 的，两路合并后照常去重。
         victims.extend(evict_for_total_cap(&files, &today, active_seq, config.max_total_bytes));
         victims.sort();
         victims.dedup();
         let mut removed = 0;
+        let mut size_cut = false;
         for name in victims {
             if name == active {
                 continue;
             }
             match fs::remove_file(dir.join(&name)) {
-                Ok(()) => removed += 1,
+                Ok(()) => {
+                    removed += 1;
+                    // 没到保留期却被删 = 是体积上限动的手。这件事必须记下来：设置页只有
+                    // 「保留 N 天」一个旋钮，不记就等于让用户以为删掉的账还在。
+                    if !expired.contains(&name) {
+                        size_cut = true;
+                    }
+                }
                 // 文件被占用：本轮放弃，不重试也不报错（下一轮还会再来）。
                 Err(_) => self.report(
                     LogEntry::decided(
@@ -403,45 +541,103 @@ impl LogState {
                 ),
             }
         }
+        if removed > 0 || size_cut {
+            if let Ok(mut runtime) = self.runtime.lock() {
+                runtime.size_cut |= size_cut;
+                // 盘上的量变了：让下一轮 `refresh_usage` 立刻重算，而不是再等满节流窗口。
+                runtime.usage_at = 0;
+            }
+            // 删过文件 ⇒ 计数同样过期。
+            self.void_counts();
+        }
         removed
     }
 
-    /// 导出一份诊断文件。
+    /// 导出一份诊断文件：**按当前条件把盘上命中的行全部写出去**。
     ///
     /// `path = Some(...)`：写到用户在「另存为」对话框里选的位置；`None`：落到
     /// `<日志目录>/export/diagnose-*.jsonl`，作为对话框不可用时的退路。
-    /// 表头写明「哪台机器、什么配置、按什么条件导出」，否则一份日志发出去没法判读。
+    ///
+    /// ⚠️ 数据源是磁盘，不是内存环形缓冲：原先这里调 `page()`，于是「导出」被环形容量
+    /// 悄悄封顶（默认 5000 条）—— 用户以为拿到了完整账，其实只有最近那一段。现在逐文件
+    /// 正序流式写（`scan::scan_forward` + `BufWriter`），条数上界由目录的保留策略决定。
+    /// 表头只写「开打前就知道的事」（机器、配置、条件、覆盖范围）；条数要扫完才知道，
+    /// 所以它在返回值里给界面，不在表头里留一个骗人的占位。
     pub fn export_to(&self, path: Option<String>, query: &StatusLogQuery) -> Result<ExportedLog, String> {
-        let page = self.page(query);
+        // 生产入口用完整预算；单测走 `_with_budget` 来验证「被截断」这条分支真的会说出去。
+        self.export_to_with_budget(path, query, super::scan::SCAN_BYTE_BUDGET)
+    }
+
+    /// 同上，但扫描预算由调用方给（只为了能把「预算截断 ⇒ 结果不完整」这条路径测出来）。
+    fn export_to_with_budget(
+        &self,
+        path: Option<String>,
+        query: &StatusLogQuery,
+        budget: u64,
+    ) -> Result<ExportedLog, String> {
+        let dir = self.dir();
         let target = match path {
-            Some(raw) => validate_export_target(&raw, &self.dir())?,
+            Some(raw) => validate_export_target(&raw, &dir)?,
             None => {
-                let dir = self.dir().join("export");
-                fs::create_dir_all(&dir).map_err(|error| format!("无法创建导出目录：{error}"))?;
-                dir.join(format!("diagnose-{}-{now}.jsonl", utc_day(now_ms()), now = now_ms()))
+                let export_dir = dir.join("export");
+                fs::create_dir_all(&export_dir)
+                    .map_err(|error| format!("无法创建导出目录：{error}"))?;
+                export_dir.join(format!(
+                    "diagnose-{}-{now}.jsonl",
+                    utc_day(now_ms()),
+                    now = now_ms()
+                ))
             }
         };
         let header = serde_json::json!({
             "kind": "ufo-status-log-export",
             "exported_at_ms": now_ms(),
             "app_version": env!("CARGO_PKG_VERSION"),
-            "log_dir": page.dir,
+            "log_dir": dir.to_string_lossy(),
             "config": self.config(),
             "query": query,
-            "entries": page.entries.len(),
-            "dropped_from_ring": page.dropped,
+            // 覆盖范围说死：导出的边界是盘上的保留策略，不再是环形容量。
+            "coverage": "按 query 扫过日志目录内全部命中行（受 retention_days / max_total_bytes 约束）",
         });
-        let mut body = header.to_string();
-        body.push('\n');
-        // 文件按**旧→新**写（与面板的新→旧相反）：发给人看的时间线顺着读才不别扭。
-        for item in page.entries.iter().rev() {
-            body.push_str(&item.entry.line());
-            body.push('\n');
+        let file = File::create(&target).map_err(|error| format!("导出文件创建失败：{error}"))?;
+        let mut writer = BufWriter::with_capacity(64 * 1024, file);
+        // 写失败只记第一次：盘都写坏了，后面每条都会失败，重复赋值没有意义，也不许在这里 panic。
+        let mut failure: Option<String> = None;
+        if let Err(error) = writer
+            .write_all(header.to_string().as_bytes())
+            .and_then(|_| writer.write_all(b"\n"))
+        {
+            failure = Some(format!("导出写入失败：{error}"));
         }
-        fs::write(&target, body).map_err(|error| format!("导出写入失败：{error}"))?;
+        // 文件按**旧→新**写（与面板的新→旧相反）：发给人看的时间线顺着读才不别扭。
+        let stats = super::scan::scan_forward(&dir, query, budget, |_, entry| {
+            if failure.is_some() {
+                return;
+            }
+            let line = entry.line();
+            if let Err(error) = writer
+                .write_all(line.as_bytes())
+                .and_then(|_| writer.write_all(b"\n"))
+            {
+                failure = Some(format!("导出写入失败：{error}"));
+            }
+        });
+        if failure.is_none() {
+            if let Err(error) = writer.flush() {
+                failure = Some(format!("导出写入失败：{error}"));
+            }
+        }
+        drop(writer);
+        if let Some(error) = failure {
+            // 失败不留半个文件：用户拿到的要么是一份完整的账，要么什么都没有。
+            let _ = fs::remove_file(&target);
+            return Err(error);
+        }
         Ok(ExportedLog {
             path: target.to_string_lossy().to_string(),
-            entries: page.entries.len(),
+            entries: stats.matched,
+            scanned_bytes: stats.scanned_bytes,
+            stopped_by_budget: stats.stopped_by_budget,
         })
     }
 }
@@ -499,41 +695,61 @@ fn under_dir(path: &Path, dir: &Path) -> bool {
     path.strip_prefix(dir).is_ok()
 }
 
-/// 从文件的 `from` 字节读到 `size`：返回**完整行**与新的读取位置。
+/// 一轮里最多读多少字节：积压再多也不至于把 monitor 卡在一轮里。
+pub(super) const READ_WINDOW_BYTES: u64 = 4 * 1024 * 1024;
+
+/// 从文件的 `from` 字节读到 `size`（单次最多 `window` 字节）：返回**行**（各带它的起始
+/// 绝对偏移）与新的读取位置。
 ///
-/// ⚠️ 半行必须留给下一轮（hook 可能正在写），因此 `consumed` 只推进到最后一个换行符之后；
-/// 否则下一轮从半行中间开始读，那条记录就永久丢了。
-fn read_from(path: &Path, from: u64, size: u64) -> (Vec<String>, u64) {
+/// ⚠️ 两条推进规则方向相反，都必须在：
+/// - 尾部**半行**留给下一轮（hook 可能正在写），所以 `consumed` 只推进到最后一个换行之后 ——
+///   推过了头，那条记录就永久丢了（本项目靠这条纪律避过一次漏读）。
+/// - 但**整个窗口一个换行都没有**时不能原地不动：那是一条比窗口还长的行，游标不动就等于
+///   tailer 每轮重读同一窗、从此再也跟不到新行。此时按「后面还有没有字节」区分两者 ——
+///   读满了窗口还没换行 ⇒ 超长行，整窗当坏行跳过；正好读到文件尾 ⇒ 是在写的半行，不动。
+pub(super) fn read_from(path: &Path, from: u64, size: u64, window: u64) -> (Vec<(u64, String)>, u64) {
     let Ok(mut file) = File::open(path) else {
         return (Vec::new(), from);
     };
     if file.seek(SeekFrom::Start(from)).is_err() {
         return (Vec::new(), from);
     }
-    // 一轮最多读 4 MiB：积压再多也不至于把 monitor 卡在一轮里。
-    let want = size.saturating_sub(from).min(4 * 1024 * 1024) as usize;
+    let want = size.saturating_sub(from).min(window) as usize;
     let mut buffer = vec![0u8; want];
     let read = file.read(&mut buffer).unwrap_or(0);
     let chunk = &buffer[..read];
-    let lines = chunk
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.iter().all(|byte| byte.is_ascii_whitespace()))
-        .filter_map(|line| String::from_utf8(line.to_vec()).ok())
-        .collect();
+    // `split_inclusive` 让每段自带结尾换行，于是「这段占多少字节」可以直接累进偏移；
+    // 最后一段通常没有换行（那正是正在被追加的半行），照旧交出去由 `parse_line` 判生死。
+    let mut lines: Vec<(u64, String)> = Vec::new();
+    let mut cursor = from;
+    for piece in chunk.split_inclusive(|byte| *byte == b'\n') {
+        let body = match piece.split_last() {
+            Some((b'\n', rest)) => rest,
+            _ => piece,
+        };
+        if !body.iter().all(|byte| byte.is_ascii_whitespace()) {
+            if let Ok(line) = String::from_utf8(body.to_vec()) {
+                lines.push((cursor, line));
+            }
+        }
+        cursor = cursor.saturating_add(piece.len() as u64);
+    }
     let consumed = if chunk.last().is_some_and(|byte| *byte == b'\n') {
         from + read as u64
     } else {
-        // 没有结尾换行：只认到最后一个换行符为止，前面没有换行就一个字节都不算读过。
-        from + chunk
-            .iter()
-            .rposition(|byte| *byte == b'\n')
-            .map_or(0, |index| index as u64 + 1)
+        match chunk.iter().rposition(|byte| *byte == b'\n') {
+            Some(index) => from + index as u64 + 1,
+            // 窗口读满还没有换行 ⇒ 后面仍有字节，这是一条比窗口还长的行：整窗当坏行跳过。
+            None if (from + read as u64) < size => from + read as u64,
+            // 正好读到文件尾 ⇒ 是正在被追加的半行，一个字节都不算读过，留给下一轮。
+            None => from,
+        }
     };
     (lines, consumed)
 }
 
 /// 反序列化一行；坏行直接丢（写到一半被截断的残留），**不报错、不重试**。
-fn parse_line(line: &str) -> Option<LogEntry> {
+pub(super) fn parse_line(line: &str) -> Option<LogEntry> {
     serde_json::from_str(line).ok()
 }
 
@@ -566,10 +782,12 @@ fn touch(path: &Path) {
 /// 查询条件（命令侧入参；全部可选，缺省 = 全量最近一页）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusLogQuery {
-    /// 上一页最后一条的游标：只取比它更旧的。
+    /// 上一页最后一条的**盘上坐标**：只取比它更旧的。`None` = 从最新一条开始。
+    ///
+    /// ⚠️ 这里不留「进程内游标」那种锚点：它在重启后归零，跨会话翻页会串到别的行上去。
     #[serde(default)]
-    pub before_seq: Option<u64>,
-    /// 一页多少条。
+    pub before: Option<LogPosition>,
+    /// 一页多少条 —— **只有分页读它**：导出与计数忽略它（它们要的是盘上全部命中）。
     #[serde(default = "default_limit")]
     pub limit: u16,
     /// 只看某个会话（`provider:session_id`）。
@@ -603,7 +821,7 @@ fn default_limit() -> u16 {
 impl Default for StatusLogQuery {
     fn default() -> Self {
         Self {
-            before_seq: None,
+            before: None,
             limit: default_limit(),
             key: None,
             trace_id: None,
@@ -618,7 +836,9 @@ impl Default for StatusLogQuery {
 impl StatusLogQuery {
     /// 判断一条日志是否命中过滤。前端传的是线协议字符串，**认不出的取值不匹配任何东西**
     /// （而不是「忽略该条件」—— 那会让一个拼错的过滤静默变成全量，比空列表更难查）。
-    fn matches(&self, entry: &LogEntry) -> bool {
+    ///
+    /// 按盘扫描（`scan.rs`）也用它做最终判定：那边只走子串预筛，真判在这里。
+    pub(super) fn matches(&self, entry: &LogEntry) -> bool {
         if self.key.as_deref().is_some_and(|key| entry.key.as_deref() != Some(key)) {
             return false;
         }
@@ -654,37 +874,44 @@ impl StatusLogQuery {
 /// 一页日志（命令返回值，也是实时广播的载荷）。
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusLogPage {
-    /// 当前环形缓冲的游标水位：前端拿它当「最新位置」，翻页时回填 `before_seq`。
+    /// 环形缓冲的水位：只用来判断「这一轮有没有新行进过内存」，不参与身份、翻页与计数。
     pub head: u64,
-    /// 内存里现在留了多少条。
-    pub total: usize,
-    /// 被环形容量挤掉多少条（面板据此说明「更早的只能去文件里看」）。
-    pub dropped: u64,
     /// 日志目录：面板常驻显示它，用户才知道去哪翻历史。
     pub dir: String,
+    /// 目录占用读数：设置页与浮层都靠它说清"这套账吃了多少盘、最早到哪天"。
+    pub usage: LogDiskUsage,
+    /// 下一页的锚点（本页**最后一条**的盘上坐标）；实时增量包里没有意义，为 `None`。
+    pub next_before: Option<LogPosition>,
+    /// 已经翻到目录头：面板据此收起「看更早的」，否则它会一直点、一直空。
+    pub exhausted: bool,
+    /// 为凑齐这一页读了多少字节（极端目录上「这一页为什么慢」的唯一线索）。
+    pub scanned_bytes: u64,
     /// 命中的条目，**新→旧**。
     pub entries: Vec<StatusLogEntry>,
 }
 
-impl StatusLogPage {
-    /// 取不到运行态时的空页（前端永远拿到一个结构完整的对象）。
-    fn empty(dir: PathBuf) -> Self {
-        Self {
-            head: 0,
-            total: 0,
-            dropped: 0,
-            dir: dir.to_string_lossy().to_string(),
-            entries: Vec::new(),
-        }
-    }
-}
-
-/// 一条日志加上它的内存游标号（分页与「跟随最新」都靠它）。
+/// 一条日志加上它的盘上身份。
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusLogEntry {
-    pub seq: u64,
+    /// 行身份（[`LogPosition::id`]）：前端 `:key`、合并去重、选中比对都只用它。
+    ///
+    /// ⚠️ 原先这里还带一个进程内 `seq` 当翻页游标 —— 盘上坐标能同时当身份与游标，
+    /// 两个字段留着就会有人拿错那个（重启归零的 `seq` 去翻页会串到别的行上）。
+    pub id: String,
     #[serde(flatten)]
     pub entry: LogEntry,
+}
+
+/// 一次按盘计数的结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusLogCount {
+    /// 命中总条数 —— **精确值**，不是下界，所以界面再也不许出现「N+ / 约」。
+    pub total: u64,
+    /// 这次扫描开始的时刻：计数是一个瞬时快照，界面必须说成「截至 HH:MM:SS 共 N 条」。
+    /// 有了这个时刻，"会过期的精确数"就变成"永远为真的历史事实"，不需要任何含糊写法。
+    pub as_of_ms: i64,
+    /// 实际扫描字节（诊断「这个数为什么慢」）。
+    pub scanned_bytes: u64,
 }
 
 /// 一次导出的结果。
@@ -692,8 +919,12 @@ pub struct StatusLogEntry {
 pub struct ExportedLog {
     /// 写在哪：用户选的绝对路径，或（未给路径时）日志目录内的 `export/` 子目录。
     pub path: String,
-    /// 带出去多少条。
-    pub entries: usize,
+    /// 实际写到文件里多少条 = **盘上命中总数**（不再是「内存环形装得下的那一段」）。
+    pub entries: u64,
+    /// 为拿到这份结果读了多少字节：判「这次导出为什么慢」的唯一线索。
+    pub scanned_bytes: u64,
+    /// 撞到扫描预算 ⇒ 这份**不完整**。正常情况下恒为 false，为真时界面必须说出来。
+    pub stopped_by_budget: bool,
 }
 
 /// 取枚举的线协议字符串：统一走 serde，避免手抄一份 match 与枚举漂移。
@@ -783,41 +1014,84 @@ mod tests {
         log.report(entry(LogStage::KernelVerdict, Some(LogReason::StaleSequence)));
         let fresh = log.drain();
         assert_eq!(fresh.len(), 2, "两条都该被 tail 回来");
-        // 广播用的形状与查询结果一致：条目外面套一层游标号。
+        // 广播用的形状与查询结果一致：条目外面套一层**盘上身份**（不是进程内游标）。
         assert_eq!(fresh[0].entry.stage, LogStage::LightTransition);
-        assert_eq!(fresh[0].seq, 0, "游标号按写入顺序递增");
+        assert!(
+            !fresh[0].id.is_empty(),
+            "增量行也要带盘上坐标，否则前端没法把它和分页结果认成同一条"
+        );
         assert_eq!(log.drain().len(), 0, "游标已推过去，第二轮不该重复");
         let page = log.page(&StatusLogQuery::default());
         assert_eq!(page.entries.len(), 2);
-        assert_eq!(page.total, 2);
         assert_eq!(
             page.entries[0].entry.stage,
             LogStage::KernelVerdict,
             "面板顺序是新→旧"
         );
-        // 翻页：`before_seq` 是「只取比它更旧的」，所以要拿第一页**末尾那条**的游标当锚点。
+        // 翻页：锚点 = 本页最后一条的盘上坐标，下一页严格取比它更旧的（锚点自身不再出现）。
         let first = log.page(&StatusLogQuery {
             limit: 1,
             ..Default::default()
         });
         assert_eq!(first.entries.len(), 1);
-        assert_eq!(first.head, 2, "head 是环形水位：前端靠它判断有没有新数据");
+        assert_eq!(first.head, 2, "head 是环形水位：前端靠它判断有没有新行进来");
+        let anchor = first.next_before.clone().expect("分页必须给出下一页的锚点");
         let older = log.page(&StatusLogQuery {
-            before_seq: Some(first.entries[0].seq),
+            before: Some(anchor),
             limit: 10,
             ..Default::default()
         });
         assert_eq!(older.entries.len(), 1);
         assert_eq!(older.entries[0].entry.stage, LogStage::LightTransition);
-        // 翻到底就该是空的 —— 同一页反复捞回来会让「跟随最新」永远停在旧数据上。
+        assert!(
+            older.exhausted,
+            "翻到目录头要声明到底了，否则「看更早的」会一直点、一直空"
+        );
+        // 再翻一次就该是空的（同一页反复捞回来会让「跟随最新」永远停在旧数据上）。
         assert!(log
             .page(&StatusLogQuery {
-                before_seq: Some(older.entries[0].seq),
+                before: older.next_before.clone(),
                 limit: 10,
                 ..Default::default()
             })
             .entries
             .is_empty());
+    }
+
+    /// 计数按盘数、同查询走缓存、有新行就作废。
+    #[test]
+    fn count_is_exact_on_disk_and_cached_until_new_lines_arrive() {
+        let temp = TempDir::new("log-runtime-count-cache");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        log.report_batch(&(0..12).map(|_| entry(LogStage::LightTransition, None)).collect::<Vec<_>>());
+        assert_eq!(log.drain().len(), 12, "先把这 12 行 tail 掉，水位才对齐");
+        let query = StatusLogQuery::default();
+        assert_eq!(log.count(&query).total, 12, "精确数，不是下界 —— 界面因此不许写「12+」");
+
+        // 同一条查询 3 秒内第二次问：该命中缓存（`as_of_ms` 一模一样，也不该多扫一遍盘）。
+        let first = log.count(&query);
+        let second = log.count(&query);
+        assert_eq!(second.as_of_ms, first.as_of_ms, "节流窗口内该回同一份缓存");
+        assert_eq!(second.scanned_bytes, first.scanned_bytes, "缓存命中时不该重新扫盘");
+
+        // 又落一条 ⇒ 「截至那刻共 N 条」过期，缓存必须整份作废、重新扫。
+        log.report(entry(LogStage::SessionReaped, None));
+        assert_eq!(log.drain().len(), 1);
+        let refreshed = log.count(&query);
+        assert_eq!(refreshed.total, 13);
+        assert_ne!(refreshed.as_of_ms, first.as_of_ms, "该给出一个新的「截至」时刻");
+
+        // 换一条查询（按会话过滤）也要各算各的，不共用一份缓存。
+        let by_key = StatusLogQuery {
+            key: Some("claude:s1".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(log.count(&by_key).total, 13, "夹具里的行都带同一个 key");
+        let other = StatusLogQuery {
+            key: Some("codex:nope".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(log.count(&other).total, 0);
     }
 
     #[test]
@@ -844,19 +1118,25 @@ mod tests {
                 .filter(|item| item.entry.stage == LogStage::IdleLanternCleared)
                 .count(),
             0,
-            "旧一天的文件不该被整份灌进环形缓冲"
+            "播种只看最新文件的尾巴：旧一天的行不该被整份灌进这一轮"
         );
-        assert_eq!(fresh.len(), 2, "今天的两行必须进内存");
+        assert_eq!(fresh.len(), 2, "今天的两行必须进这一轮");
 
         // 第二轮：新写的一行要读得回来。游标一旦被旧文件顶回去，这一轮就永远是 0。
         log.report(entry(LogStage::SessionReaped, None));
         assert_eq!(log.drain().len(), 1, "跨天后的第二轮还得跟得上");
+        // 按盘分页会把「更早一天」那三行一起给出 —— 这正是改造的目的（能翻到昨天），
+        // 与 tailer 的播种范围是两件事：后者只决定「哪几行算本轮新增」。
         let page = log.page(&StatusLogQuery {
             key: Some("claude:s1".to_string()),
             limit: 50,
             ..Default::default()
         });
-        assert_eq!(page.entries.len(), 3, "按会话过滤要能捞到今天的这三行");
+        assert_eq!(page.entries.len(), 6, "今天三条 + 种下的旧一天三条，同属这个会话的都该捞到");
+        assert!(
+            page.entries[0].entry.stage == LogStage::SessionReaped,
+            "顺序仍是新→旧"
+        );
     }
 
     #[test]
@@ -937,6 +1217,111 @@ mod tests {
         // 清空后继续写要能读回来（游标跟着新文件走，否则面板从此不再更新）。
         log.report(entry(LogStage::LightTransition, Some(LogReason::PhaseChanged)));
         assert_eq!(log.drain().len(), 1);
+    }
+
+    /// 占用读数的基本形状：几个文件、多少字节、最早哪天，没删过就不许宣称削过。
+    #[test]
+    fn usage_reports_bytes_files_and_the_oldest_day() {
+        let temp = TempDir::new("log-runtime-usage");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        log.refresh_usage();
+        let empty = log.page(&StatusLogQuery::default()).usage;
+        assert_eq!(empty.files, 0, "空目录该报 0 个文件");
+        assert_eq!(empty.oldest_day, None, "没有文件就没有「最早一天」");
+
+        // ⚠️ 刷新按 `USAGE_REFRESH_MS` 节流：上面那一次已经把 `usage_at` 拨到当下，
+        // 所以「写过之后」要换一份运行态来验，否则第二次刷新被节流挡掉、读数还是旧的。
+        let written_temp = TempDir::new("log-runtime-usage-written");
+        let written = LogState::new(written_temp.path().to_path_buf(), recording());
+        written.report(entry(LogStage::LightTransition, Some(LogReason::PhaseChanged)));
+        written.refresh_usage();
+        let usage = written.page(&StatusLogQuery::default()).usage;
+        assert_eq!(usage.files, 1);
+        assert!(usage.bytes > 0, "写过一行就该有字节数");
+        assert_eq!(usage.oldest_day.as_deref(), Some(utc_day(now_ms()).as_str()));
+        assert!(!usage.cut_by_size_cap, "一次都没删过，不该宣称被容量削过");
+    }
+
+    /**
+     * 「没到保留期就被删」必须与「到期了才删」分得开 —— 界面上只有天数这一个旋钮，
+     * 把容量线的删除说成天线的结果，等于让用户以为他要的 90 天还在。
+     */
+    #[test]
+    fn a_size_eviction_is_flagged_but_a_retention_one_is_not() {
+        let yesterday = utc_day(now_ms() - 86_400_000);
+
+        // 留 90 天：昨天那个文件远没到期，只有超出总量上限才会动它。
+        let temp = TempDir::new("log-runtime-usage-cut");
+        let log = LogState::new(
+            temp.path().to_path_buf(),
+            LogConfig {
+                retention_days: 90,
+                max_total_bytes: 64 * 1024,
+                ..recording()
+            },
+        );
+        log.report(entry(LogStage::LightTransition, Some(LogReason::PhaseChanged)));
+        fs::write(
+            log.dir().join(file_name(&yesterday, 0)),
+            "x".repeat(100 * 1024),
+        )
+        .expect("种一个比总量上限还大的昨天文件");
+        assert_eq!(log.sweep(), 1, "总量超上限：从最旧的整天开始删");
+        log.refresh_usage();
+        assert!(
+            log.page(&StatusLogQuery::default()).usage.cut_by_size_cap,
+            "删的是没到期的一天 = 容量线动的手，必须报出来"
+        );
+
+        // 同一天的文件，换成「到期了」的情形：同样的删除动作，含义完全不同。
+        let temp2 = TempDir::new("log-runtime-usage-expired");
+        let log2 = LogState::new(
+            temp2.path().to_path_buf(),
+            LogConfig {
+                retention_days: 1,
+                max_total_bytes: 512 * 1024 * 1024,
+                ..recording()
+            },
+        );
+        // 这一份运行态一次都没写过（目录还不存在），所以先把日志目录建出来再种文件。
+        fs::create_dir_all(log2.dir()).expect("日志目录");
+        fs::write(log2.dir().join(file_name(&yesterday, 0)), "x").expect("种一个昨天的文件");
+        assert_eq!(log2.sweep(), 1, "过保留期该删掉昨天");
+        log2.refresh_usage();
+        assert!(
+            !log2.page(&StatusLogQuery::default()).usage.cut_by_size_cap,
+            "到期的删除不该算容量削的"
+        );
+    }
+
+    /// 清空是一次「重新开始」：占用归零，粘住的容量削标记也不该再挂着。
+    #[test]
+    fn clear_resets_usage_and_the_size_cut_flag() {
+        let temp = TempDir::new("log-runtime-usage-clear");
+        let yesterday = utc_day(now_ms() - 86_400_000);
+        let log = LogState::new(
+            temp.path().to_path_buf(),
+            LogConfig {
+                retention_days: 90,
+                max_total_bytes: 64 * 1024,
+                ..recording()
+            },
+        );
+        fs::create_dir_all(log.dir()).expect("日志目录");
+        fs::write(
+            log.dir().join(file_name(&yesterday, 0)),
+            "x".repeat(70 * 1024),
+        )
+        .expect("种一个必须被容量线削掉的文件");
+        assert_eq!(log.sweep(), 1);
+        log.refresh_usage();
+        assert!(log.page(&StatusLogQuery::default()).usage.cut_by_size_cap);
+
+        log.clear();
+        let usage = log.page(&StatusLogQuery::default()).usage;
+        assert!(!usage.cut_by_size_cap, "清空之后不该还欠着一次容量回收的说法");
+        assert_eq!(usage.files, 1, "只剩那个新建的空活动文件");
+        assert_eq!(usage.bytes, 0);
     }
 
     #[test]
@@ -1069,23 +1454,153 @@ mod tests {
         let path = temp.path().join("half.jsonl");
         fs::write(&path, b"{\"a\":1}\n{\"b\":2").unwrap();
         let size = fs::metadata(&path).unwrap().len();
-        let (lines, consumed) = read_from(&path, 0, size);
+        let (lines, consumed) = read_from(&path, 0, size, READ_WINDOW_BYTES);
         assert_eq!(lines.len(), 2, "两段文本都交出去，坏的那段由 parse_line 丢");
         // `{"a":1}` 是 7 字节 + 换行 = 8：只推进到换行之后，剩下半行留给下次。
         assert_eq!(consumed, 8, "半行不能被算成已读，否则那条永久丢");
+        // 第一条的起始偏移就是 0，第二条落在换行之后 —— 行身份全靠这两个数。
+        assert_eq!(lines[0].0, 0);
+        assert_eq!(lines[1].0, 8);
     }
 
+    /**
+     * 一条比窗口还长的行**不许把 tailer 卡死**：游标必须往前爬，否则每轮重读同一窗，
+     * 后面所有新行就永远读不到了（这是 `read_from` 旧实现里的真实停滞形态）。
+     */
     #[test]
-    fn ring_drops_oldest_and_counts_it() {
-        let mut runtime = Runtime::default();
-        for _ in 0..105 {
-            let mut fresh = Vec::new();
-            runtime.push(entry(LogStage::HookAttempt, None), 100, &mut fresh);
+    fn a_line_longer_than_the_window_does_not_stall_the_reader() {
+        let temp = TempDir::new("log-runtime-longline");
+        let path = temp.path().join("long.jsonl");
+        // 一条 100 字节、中间一个换行都没有的行，后面跟着一条正常的。
+        let long = "x".repeat(100);
+        fs::write(&path, format!("{long}\n\"tail\":1\n")).unwrap();
+        let size = fs::metadata(&path).unwrap().len();
+        let mut offset = 0;
+        let mut rounds = 0;
+        loop {
+            let (_lines, consumed) = read_from(&path, offset, size, 16);
+            rounds += 1;
+            if rounds > 40 {
+                panic!("扫描没在合理轮数内走完：窗口推进逻辑又停摆了");
+            }
+            if consumed <= offset {
+                break;
+            }
+            offset = consumed;
         }
-        assert_eq!(runtime.ring.len(), 100);
-        assert_eq!(runtime.dropped, 5);
-        assert_eq!(runtime.next_seq, 105);
-        assert_eq!(runtime.cursor, None, "记账不该动 tail 游标");
+        assert_eq!(offset, size, "超长行也要一路爬到文件尾");
+    }
+
+    /**
+     * 导出的边界是**盘**，不是一页、也不是当年的内存环形缓冲。
+     *
+     * 这是用户点名的第一条：原先导出走 `page()`，于是它被环形容量（默认 5000）悄悄封顶 ——
+     * 用户以为拿到完整账。现在写 600 行：一页只有 50 条，计数与导出都必须是 600。
+     */
+    #[test]
+    fn export_writes_every_matching_line_on_disk_beyond_one_page() {
+        let temp = TempDir::new("log-runtime-export-disk");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        let lines: Vec<LogEntry> = (0..600)
+            .map(|index| {
+                entry(LogStage::LightTransition, Some(LogReason::PhaseChanged))
+                    .with_detail(serde_json::json!({ "n": index }))
+            })
+            .collect();
+        log.report_batch(&lines);
+        assert_eq!(log.drain().len(), 600, "600 行都该被 tail 回来");
+
+        let page = log.page(&StatusLogQuery {
+            limit: 50,
+            ..Default::default()
+        });
+        assert_eq!(page.entries.len(), 50, "一页就是 50 条");
+        assert!(!page.exhausted, "还有更旧的没翻完，面板要留着「看更早的」");
+        assert_eq!(
+            log.count(&StatusLogQuery::default()).total,
+            600,
+            "计数按盘数，与环形容量无关"
+        );
+
+        let exported = log
+            .export_to(None, &StatusLogQuery::default())
+            .expect("导出成功");
+        assert_eq!(exported.entries, 600, "导出按盘算，不受环形容量封顶");
+        assert!(!exported.stopped_by_budget, "没撞预算就不许自称不完整");
+
+        let raw = fs::read_to_string(&exported.path).expect("文件在");
+        let rows: Vec<&str> = raw.lines().collect();
+        assert_eq!(rows.len(), 601, "表头 + 600 行");
+        let header: serde_json::Value = serde_json::from_str(rows[0]).unwrap();
+        assert!(header.get("coverage").is_some(), "表头要写明覆盖范围");
+        assert!(
+            header.get("dropped_from_ring").is_none(),
+            "导出与环形容量无关，留着那句等于宣称假因果"
+        );
+        // 文件按旧→新写：最后一条是环形早就挤掉的那一批的末尾。
+        let last: LogEntry = serde_json::from_str(rows[600]).unwrap();
+        assert_eq!(last.stage, LogStage::LightTransition);
+    }
+
+    /// 实时那一路与按盘那一路必须给出**同一个身份**，否则前端合并去重是空谈。
+    #[test]
+    fn ring_entries_carry_the_same_position_the_scanner_computes() {
+        let temp = TempDir::new("log-runtime-same-id");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        log.report_batch(&[
+            entry(LogStage::LightTransition, Some(LogReason::PhaseChanged)),
+            entry(LogStage::KernelVerdict, Some(LogReason::StaleSequence)),
+        ]);
+        let live: Vec<String> = log.drain().into_iter().map(|item| item.id).collect();
+        assert_eq!(live.len(), 2);
+
+        let mut scanned: Vec<String> = Vec::new();
+        let stats = super::super::scan::scan_forward(
+            &log.dir(),
+            &StatusLogQuery::default(),
+            u64::MAX,
+            |position, _| scanned.push(position.id()),
+        );
+        assert_eq!(scanned, live, "同一行两条路算出的坐标必须逐字相等");
+        assert_eq!(stats.matched, 2);
+        assert!(stats.files > 0);
+    }
+
+    /// 写不出去就不许留下半个文件：用户拿到的要么完整、要么什么都没有。
+    #[test]
+    fn a_failed_export_leaves_no_file_behind() {
+        let temp = TempDir::new("log-runtime-export-fail");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        log.report(entry(LogStage::HookAttempt, None));
+        // 父目录还不存在 ⇒ `File::create` 必然失败。
+        let target = temp.path().join("nope").join("out.jsonl");
+        let error = log
+            .export_to(Some(target.to_string_lossy().to_string()), &StatusLogQuery::default())
+            .expect_err("父目录不存在，创建必须失败");
+        assert!(!error.is_empty(), "错误文案要能看懂为什么失败");
+        assert!(!target.exists(), "失败之后不该在那儿留下东西");
+    }
+
+    /// 被扫描预算截断时，结果必须自己说明"这不完整"。
+    #[test]
+    fn an_export_cut_by_budget_says_so() {
+        let temp = TempDir::new("log-runtime-export-budget");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        log.report(entry(LogStage::LightTransition, Some(LogReason::PhaseChanged)));
+        let today = utc_day(now_ms());
+        fs::write(
+            log.dir().join(file_name(&today, 1)),
+            fs::read_to_string(log.dir().join(file_name(&today, 0)))
+                .expect("第一个文件在")
+                .as_bytes(),
+        )
+        .expect("种第二个文件");
+        assert_eq!(list_files(&log.dir()).len(), 2, "两个文件才走得完「换文件时撞预算」这条路");
+
+        let exported = log
+            .export_to_with_budget(None, &StatusLogQuery::default(), 1)
+            .expect("预算截断不是错误，是一份不完整的结果");
+        assert!(exported.stopped_by_budget, "1 字节的预算必须被判定为不完整");
     }
 
     #[test]

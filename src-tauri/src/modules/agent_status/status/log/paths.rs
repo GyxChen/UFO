@@ -9,6 +9,31 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
+/// 一条日志在盘上的坐标：哪一天的第几个文件 + 该行在文件里的**起始字节偏移**。
+///
+/// 为什么用它当「行身份」而不是行号：日志文件只追加，已写行的起始偏移永不移动，所以这个
+/// 三元组稳定可比；而行号要回答「倒数第 N 行」必须先数完整个文件，且跨文件不可比。
+/// 它同时是**翻页游标**（倒序扫描从某个坐标往回走）与**去重键**（实时广播的行与按盘读回的
+/// 行第一次拥有同一个身份），前端 `:key` 与合并去重都只用 [`LogPosition::id`]。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LogPosition {
+    /// UTC 日期（`YYYY-MM-DD`），与文件名同源。
+    pub day: String,
+    /// 当日文件序号（文件名里那个 `.<seq>`，与内存游标 `seq` 无关）。
+    pub file_seq: u32,
+    /// 该行在文件里的起始字节偏移（不含上一行的换行符）。
+    pub offset: u64,
+}
+
+impl LogPosition {
+    /// 稳定身份串：前端与后端都只比这个值，不在别处手拼三元组（拼法一改就去重失效）。
+    pub fn id(&self) -> String {
+        format!("{}.{}.{}", self.day, self.file_seq, self.offset)
+    }
+}
+
 /// 日志目录：与 inbox 同级，跟着 `status_dir` 走（`--status-dir` 覆盖时一起覆盖）。
 pub fn log_dir(status_dir: &Path) -> PathBuf {
     status_dir.join("log")
@@ -327,5 +352,32 @@ mod tests {
     fn log_dir_sits_next_to_inbox() {
         let dir = log_dir(Path::new("/x/status"));
         assert_eq!(dir, PathBuf::from("/x/status/log"));
+    }
+
+    /**
+     * 行身份的两条性质：跨天可比、同行稳定。
+     *
+     * 翻页游标与去重键都建在这两条上 —— 序号在跨天时从 0 重来，所以必须按 `(日期, 序号, 偏移)`
+     * 比；而「实时那一路」与「按盘读回那一路」要能对上，同一行算两次就得给出同一个串。
+     */
+    #[test]
+    fn position_orders_across_days_and_stays_stable_for_one_line() {
+        let older = LogPosition {
+            day: "2026-09-27".to_string(),
+            file_seq: 2,
+            offset: 900,
+        };
+        let newer = LogPosition {
+            day: "2026-09-28".to_string(),
+            file_seq: 0,
+            offset: 0,
+        };
+        // 排序口径与文件名一致：`(日期, 序号, 偏移)` 字典序即写入序（比较发生在 `scan.rs`）。
+        let older_key = (older.day.as_str(), older.file_seq, older.offset);
+        let newer_key = (newer.day.as_str(), newer.file_seq, newer.offset);
+        assert!(older_key < newer_key, "新一天从 0 号重来，但整体仍比昨天更新");
+        assert_eq!(older.id(), "2026-09-27.2.900");
+        assert_eq!(older.clone().id(), older.id(), "同一行算两次必须得到同一个身份");
+        assert_ne!(older.id(), newer.id());
     }
 }

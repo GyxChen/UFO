@@ -12,6 +12,17 @@
 /** 实时广播的事件名（Rust `log::STATUS_LOG_EVENT` 的另一份，两边必须一致）。 */
 export const STATUS_LOG_EVENT = 'agent-status-log'
 
+/**
+ * 浮层左栏一行的行高（CSS 像素），虚拟列表用它估算总高。
+ *
+ * ⚠️ 必须与 `agent-status.css` 里 `--lg-row-h` 同值（`agent-status-css.spec.ts` 对撞）。
+ * 两边漂了不会崩，只是滚动条长度与真实高度不符 —— 虚拟列表最典型的「拖到底还差一截」。
+ */
+export const LOG_ROW_HEIGHT_PX = 30
+
+/** 视口上下各多渲染几行：滚动时少露白，快速拖动时也不会先看到一片空。 */
+export const LOG_OVERSCAN_ROWS = 6
+
 /** 环节（一次信号在链路上经过的那一站）。 */
 export type LogStageWire =
   | 'hook_attempt'
@@ -151,14 +162,29 @@ export interface LogEntry {
   detail?: Record<string, unknown>
 }
 
-/** 面板 / 广播里的一条：内存游标号 + 展平的日志行。 */
-export type StatusLogEntry = { seq: number } & LogEntry
+/**
+ * 面板 / 广播里的一条：盘上身份 + 展平的日志行。
+ *
+ * ⚠️ `:key`、合并去重、选中比对一律用 `id`（= `(日期, 文件序号, 起始字节)`）。
+ * 线协议里已经没有进程内游标了：那种数重启归零，拿它翻页会串到别的行上。
+ */
+export type StatusLogEntry = { id: string } & LogEntry
+
+/** 一条日志在盘上的坐标（与 Rust `LogPosition` 同名字段），既是行身份也是翻页锚点。 */
+export interface LogPosition {
+  /** UTC 日期（`YYYY-MM-DD`）。 */
+  day: string
+  /** 当日文件序号（文件名里那个）。 */
+  file_seq: number
+  /** 该行在文件里的起始字节偏移。 */
+  offset: number
+}
 
 /** 查询条件（与 Rust `StatusLogQuery` 同名；全部可选）。 */
 export interface StatusLogQuery {
-  /** 上一页最后一条的游标：只取比它更旧的。 */
-  before_seq?: number | null
-  /** 一页多少条（缺省 200）。 */
+  /** 上一页最后一条的盘上坐标：只取比它更旧的。缺省 = 从最新一条开始。 */
+  before?: LogPosition | null
+  /** 一页多少条（缺省 200）。⚠️ 只有分页读它：导出与计数忽略它。 */
   limit?: number
   /** 只看某个会话（`provider:session_id`）。 */
   key?: string | null
@@ -174,26 +200,110 @@ export interface StatusLogQuery {
   since_ms?: number | null
 }
 
-/** 一页日志（命令返回值，也是实时广播的载荷）。 */
+/** 日志目录的占用读数（字段与 Rust `LogDiskUsage` 同名同义）。 */
+export interface LogDiskUsage {
+  /** 认识的文件合计字节数。 */
+  bytes: number
+  /** 文件个数。 */
+  files: number
+  /** 最早一天的日期（`YYYY-MM-DD`）；目录空时为 null。 */
+  oldest_day: string | null
+  /** 本次运行内是否删过「还没到保留天数、只因超出体积上限」的整天文件。 */
+  cut_by_size_cap: boolean
+}
+
+/** 缺省占用读数：后端还没答话时也要能渲染（面板不许判 undefined）。 */
+export function emptyLogUsage(): LogDiskUsage {
+  return { bytes: 0, files: 0, oldest_day: null, cut_by_size_cap: false }
+}
+
+/**
+ * 一页日志（命令返回值，也是实时广播的载荷）。
+ *
+ * ⚠️ 这里**没有**「一共多少条」：那曾经是环形缓冲的条数，而它被当成会话条数写过文案
+ * （「本会话 50+ 条」就是这么来的）。条数走 `count_status_log`，能不能继续翻走 `exhausted`。
+ */
 export interface StatusLogPage {
-  /** 环形缓冲的游标水位：前端当「最新位置」，翻页时回填 `before_seq`。 */
+  /** 环形水位：只用来判断「这一轮有没有新行进过内存」，不参与身份、翻页与计数。 */
   head: number
-  /** 内存里现在留了多少条。 */
-  total: number
-  /** 被环形容量挤掉多少条（面板据此说明「更早的只能去文件里看」）。 */
-  dropped: number
   /** 日志目录：常驻显示它，用户才知道去哪翻历史。 */
   dir: string
+  /** 目录占用读数：设置页靠它说清「这套账吃了多少盘、最早到哪天」。 */
+  usage: LogDiskUsage
+  /** 下一页的锚点（本页最后一条的坐标）；实时增量包里为 null（它不是从锚点翻出来的）。 */
+  next_before: LogPosition | null
+  /** 已经翻到目录头：据此收起「看更早的」，否则它会一直点、一直空。 */
+  exhausted: boolean
+  /** 为凑齐这一页读了多少字节。 */
+  scanned_bytes: number
   /** 命中的条目，**新→旧**。 */
   entries: StatusLogEntry[]
+}
+
+/** 一次按盘精确计数的结果（与 Rust `StatusLogCount` 同名同义）。 */
+export interface StatusLogCount {
+  /** 命中总条数：精确值，不是下界 —— 界面因此再也不许出现「N+ / 约」。 */
+  total: number
+  /** 这次扫描的时刻：计数是瞬时快照，界面要写成「截至 HH:MM:SS 共 N 条」。 */
+  as_of_ms: number
+  /** 实际扫描字节（诊断「这个数为什么慢」用）。 */
+  scanned_bytes: number
+}
+
+/** 字节数 → 人类可读。达到 1 MiB 用 MiB，否则 KiB，都只留一位小数（够判断量级）。 */
+export function formatLogBytes(bytes: number): string {
+  const mib = bytes / (1024 * 1024)
+  if (mib >= 1) return `${mib.toFixed(1)} MiB`
+  return `${(bytes / 1024).toFixed(1)} KiB`
+}
+
+/**
+ * 占用读数文案：`占用 24.7 MiB · 9 个文件 · 最早 09-22`。
+ *
+ * ⚠️ `cut_by_size_cap` 那句必须留着：界面上只有「保留天数」一个旋钮，而容量那条线
+ * 仍会在量特别大时削掉最旧的整天 —— 不说出来，「保留 N 天」就是个会被静默打破的承诺。
+ * 它只反映本次运行（启动前删掉的那次无从知道），所以没置位时什么都不补，宁可少说。
+ */
+export function logUsageLabel(usage: LogDiskUsage): string {
+  if (!usage.files) return '还没写过日志'
+  const parts = [`占用 ${formatLogBytes(usage.bytes)}`, `${usage.files} 个文件`]
+  if (usage.oldest_day) parts.push(`最早 ${usage.oldest_day.slice(5)}`)
+  if (usage.cut_by_size_cap) parts.push('更早的已按容量上限回收')
+  return parts.join(' · ')
+}
+
+/** 计数处于哪一步：四态各有文案，任何一档都不许出现「+」或「约」。 */
+export type LogCountState = 'idle' | 'loading' | 'ready' | 'failed'
+
+/**
+ * 计数文案：`本会话 12 条 · 截至 14:22:31`。
+ *
+ * `as_of` 那个时刻是这条能写精确数的前提 —— 它把「一个会过期的精确值」变成
+ * 「一句永远为真的历史事实」，于是既不需要「N+」这种含糊，也不用担心数字在眼前变了。
+ *
+ * @param prefix 「本会话」/「共」这类主语，两处调用只差主语与查询条件
+ */
+export function logCountLabel(
+  prefix: string,
+  count: StatusLogCount | null,
+  state: LogCountState
+): string {
+  if (state === 'loading' || state === 'idle') return `${prefix}计数中…`
+  if (state === 'failed') return `${prefix}计数暂时读不到`
+  if (!count) return `${prefix}计数中…`
+  return `${prefix} ${count.total} 条 · 截至 ${formatLogClock(count.as_of_ms)}`
 }
 
 /** 一次导出的结果。 */
 export interface ExportedLog {
   /** 实际写到哪（用户选的路径，或未给路径时的日志目录内 `export/`）。 */
   path: string
-  /** 带出去多少条。 */
+  /** 带出去多少条 = **盘上命中总数**（不再等于「内存环形装得下的那一段」）。 */
   entries: number
+  /** 为拿到这份结果读了多少字节（判「这次导出为什么慢」的唯一线索）。 */
+  scanned_bytes: number
+  /** 撞到扫描预算 ⇒ 这份**不完整**，界面必须说出来，不许只报条数。 */
+  stopped_by_budget: boolean
 }
 
 /** 环节 → 界面短标签（徽标用，宽度有限，词要短）。 */

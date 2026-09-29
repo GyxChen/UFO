@@ -3,7 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   STATUS_LOG_EVENT,
+  emptyLogUsage,
   type ExportedLog,
+  type LogDiskUsage,
+  type LogPosition,
+  type StatusLogCount,
   type StatusLogEntry,
   type StatusLogPage,
   type StatusLogQuery,
@@ -11,34 +15,43 @@ import {
 
 let stopListener: UnlistenFn | undefined
 
-/** 客户端最多留多少条在内存里（后端环形 5000，面板再截一层免得把主窗拖慢）。 */
-const CLIENT_CAP = 1200
-
-/** 缺省页大小：与 Rust `StatusLogQuery` 的 `default_limit` 对齐，别两边各写一个数。 */
-const DEFAULT_LIMIT = 200
-
-/** 详情条目一次最多读多少行：够数出「本会话多少条」，又不至于把整段日志搬进主窗。 */
+/** 详情条目一次最多读多少行：折叠态只露摘要那几条，其余靠「看更早的」与浮层。 */
 export const PEEK_WINDOW = 50
 
-/** 导出时一次带多少条：按后端环形容量取，导出的语义是「把当前看得见的都带走」。 */
-export const EXPORT_LIMIT = 5000
+/** 浮层右栏「同一条信号的其它行」一次最多读多少行（与 PEEK_WINDOW 同数不同用途）。 */
+export const TRACE_WINDOW = 50
 
 /** 空页：后端还没答话时也要有个结构完整的对象可渲染（面板不许判 undefined）。 */
 function emptyPage(): StatusLogPage {
-  return { head: 0, total: 0, dropped: 0, dir: '', entries: [] }
+  return {
+    head: 0,
+    dir: '',
+    usage: emptyLogUsage(),
+    next_before: null,
+    exhausted: true,
+    scanned_bytes: 0,
+    entries: [],
+  }
 }
 
 /**
  * 收到的载荷必须是页形状：事件可能被旧二进制或别的窗口发歪，
  * 结构不对就整份丢掉（比按半个对象更新状态安全）。
+ *
+ * `usage` 也在这道校验里：它是设置页那个占用读数的唯一来源，缺了它界面会显示「还没写过日志」，
+ * 那是**错误的读数**而不是空白 —— 所以宁可不认这一页。
  */
 function isPage(value: unknown): value is StatusLogPage {
   const page = value as StatusLogPage | null
   return (
     !!page &&
     typeof page.head === 'number' &&
+    typeof page.exhausted === 'boolean' &&
     Array.isArray(page.entries) &&
-    typeof page.dir === 'string'
+    typeof page.dir === 'string' &&
+    !!page.usage &&
+    typeof page.usage.bytes === 'number' &&
+    typeof page.usage.files === 'number'
   )
 }
 
@@ -53,14 +66,16 @@ export const useStatusLogStore = defineStore('status-log', {
   state: () => ({
     /** 面板顺序：新→旧（与后端 `StatusLogPage.entries` 同序）。 */
     entries: [] as StatusLogEntry[],
-    /** 后端环形缓冲的游标水位：判断有没有新数据、翻页锚点都靠它。 */
+    /** 环形水位：只用来判断「这一轮有没有新行进来过」，据此触发重算计数。 */
     head: 0,
-    /** 当前环形缓冲里总共多少条。 */
-    total: 0,
-    /** 被环形容量挤掉多少条（面板要说明「更早的只能去文件里翻」）。 */
-    dropped: 0,
     /** 日志目录：常驻显示，用户才知道去哪翻历史。 */
     dir: '',
+    /** 目录占用读数（字节 / 文件数 / 最早一天 / 是否被容量线削过）：设置页常驻显示。 */
+    usage: emptyLogUsage() as LogDiskUsage,
+    /** 下一页的锚点（最近一次**分页**结果的 `next_before`）；null = 还没翻过页。 */
+    nextBefore: null as LogPosition | null,
+    /** 已经翻到目录头：「看更早的」据此收起。 */
+    exhausted: true,
     /** 是否已经 `start()` 过（幂等，重复调不重新订阅）。 */
     started: false,
     /** 首次拉取是否完成：区分「真的没有日志」与「还没读到」。 */
@@ -69,10 +84,15 @@ export const useStatusLogStore = defineStore('status-log', {
     connection: 'starting' as 'starting' | 'connected' | 'degraded',
     /** 跟随最新：关掉后新行不再挤进视图，攒着的条数走 `pending`。 */
     following: true,
+    /**
+     * 列表是否**钉在顶部**（由组件的 scroll 回调写）。
+     *
+     * ⚠️ 只有在顶部时才让实时行前插：用户翻到中间看某一段时，前插会把那一整段挤走，
+     * 而等高行的前插锚定补偿要读旧首行位置再回滚，是这类列表最容易错的一块 —— 用「钉顶才跟」换掉它。
+     */
+    pinned: true,
     /** 暂停跟随期间收到的条数。 */
     pending: 0,
-    /** 是否还能往上翻（后端返回的页满了才可能还有更旧的）。 */
-    canPageBack: false,
     /** 翻页在途标记，避免连点重复请求。 */
     loadingMore: false,
     /**
@@ -81,19 +101,23 @@ export const useStatusLogStore = defineStore('status-log', {
      * 与 `entries`（浮层的过滤视图）分开存：两处查询条件不同，共用一份会互相顶掉。
      */
     peek: [] as StatusLogEntry[],
+    /**
+     * 最近一次按盘计数的结果（精确值 + 它是截至哪一刻的数）。
+     *
+     * ⚠️ 条数**不来自** `entries.length`：那是「已经翻进来的行数」，与「这个会话有多少条」
+     * 是两回事 —— 把前者写成后者，就是当年那句「本会话 50+ 条」的成因。
+     */
+    count: null as StatusLogCount | null,
+    /** 计数进行到哪一步：四态各有自己的文案，任何一档都不许出现「+」或「约」。 */
+    countState: 'idle' as 'idle' | 'loading' | 'ready' | 'failed',
+    /** 这份计数属于哪个查询（换会话 / 换过滤时要能看出是不是在答当前这个问题）。 */
+    countKey: '',
   }),
 
   getters: {
-    /**
-     * 条目的计数文案。
-     *
-     * ⚠️ 后端 `total` 是**整个环形缓冲**的条数，不是这个会话的，直接拿来写「本会话 N 条」就是错报。
-     * 所以计数按 peek 实际捞到的条数说：捞满了就报「N+」—— 宁可少说，不含糊其辞。
-     */
-    peekLabel(): string {
-      if (!this.peek.length) return '本会话 0 条'
-      if (this.peek.length >= PEEK_WINDOW) return `本会话 ${PEEK_WINDOW}+ 条`
-      return `本会话 ${this.peek.length} 条`
+    /** 还能不能往上翻：到底了就不该再留按钮（点了什么也不会有）。 */
+    canPageBack(): boolean {
+      return !this.exhausted
     },
   },
 
@@ -107,6 +131,9 @@ export const useStatusLogStore = defineStore('status-log', {
     async start() {
       if (this.started) return
       this.started = true
+      // 重新进这一页 = 视图从头看起，跟随状态也归位（上次可能停在「人已滚走」）。
+      this.following = true
+      this.pinned = true
       try {
         await invoke('set_status_log_view', { attached: true })
         stopListener = await listen<unknown>(STATUS_LOG_EVENT, event => {
@@ -135,32 +162,33 @@ export const useStatusLogStore = defineStore('status-log', {
      * 吸收一页数据。
      *
      * - `replace`：整份换掉（首拉、清空、改了过滤条件之后重新拉）。
-     * - `merge`：广播来的**增量**前插，按 `seq` 去重（同一轮可能和首拉重叠）。
+     * - `merge`：广播来的**增量**前插，按 `id`（盘上坐标）去重（同一轮可能和首拉重叠）。
      */
     applyPage(page: StatusLogPage, mode: 'replace' | 'merge') {
       this.head = page.head
-      this.total = page.total
-      this.dropped = page.dropped
       this.dir = page.dir
+      this.usage = page.usage
       this.loaded = true
       this.connection = 'connected'
 
       if (mode === 'replace') {
-        this.entries = page.entries.slice(0, CLIENT_CAP)
+        this.entries = page.entries
         this.pending = 0
-        this.canPageBack = page.entries.length >= DEFAULT_LIMIT
+        // 翻页锚点与「到底没有」只认**分页**结果：实时增量包不带这两个值。
+        this.nextBefore = page.next_before
+        this.exhausted = page.exhausted
         return
       }
-      if (!this.following) {
-        // 暂停跟随时新行照单收下条数，但不改画面：用户可能正盯着中间某一行。
+      if (!this.following || !this.pinned) {
+        // 暂停跟随、或人已经滚离顶部：新行只累计条数，不动画面（浮层那颗 chip 负责「跟回最新」）。
         this.pending += page.entries.length
         return
       }
-      const known = new Set(this.entries.map(entry => entry.seq))
-      const fresh = page.entries.filter(entry => !known.has(entry.seq))
+      // 实时行与分页行共用盘上坐标做身份 ⇒ 这一轮和首拉重叠的部分自然被摘掉。
+      const known = new Set(this.entries.map(entry => entry.id))
+      const fresh = page.entries.filter(entry => !known.has(entry.id))
       if (!fresh.length) return
-      this.entries = [...fresh, ...this.entries].slice(0, CLIENT_CAP)
-      this.canPageBack = this.entries.length >= CLIENT_CAP || this.canPageBack
+      this.entries = [...fresh, ...this.entries]
     },
 
     /** 按条件重新拉一页（环节 / 只看被拒 / 换了选中会话都走这里）。 */
@@ -170,6 +198,44 @@ export const useStatusLogStore = defineStore('status-log', {
       } catch (error) {
         this.connection = 'degraded'
         console.warn('status log query failed', error)
+      }
+    },
+
+    /**
+     * 按条件精确重算条数（`count_status_log`）。
+     *
+     * ⚠️ 这条命令必定把该条件涉及的目录整个翻完，成本靠后端「3 秒节流 + 4 条 LRU 缓存」兜；
+     * 前端因此只在「选中会话变了」与「head 前进（盘上确实多了行）」两个时机调它，不自建定时器。
+     * 失败要说「读不到」而不是留着上一个数 —— 旧数会被当成事实。
+     * `identity` 是这次查询归属的键（选中会话 / 过滤条件串），用来丢弃迟到的回包。
+     */
+    async refreshCount(query: StatusLogQuery, identity: string) {
+      this.countKey = identity
+      this.countState = 'loading'
+      try {
+        const count = await invoke<StatusLogCount>('count_status_log', { query })
+        if (this.countKey === identity) {
+          this.count = count
+          this.countState = 'ready'
+        }
+      } catch (error) {
+        if (this.countKey === identity) {
+          this.countState = 'failed'
+        }
+        console.warn('status log count failed', error)
+      }
+    },
+
+    /** 按 `trace_id` 读一条信号的完整链路（浮层右栏用，不受那边勾选的过滤条件影响）。 */
+    async queryTrace(traceId: string): Promise<StatusLogEntry[]> {
+      try {
+        const page = await invoke<StatusLogPage>('get_status_log', {
+          query: { trace_id: traceId, limit: TRACE_WINDOW },
+        })
+        return page.entries
+      } catch (error) {
+        console.warn('status log trace query failed', error)
+        return []
       }
     },
 
@@ -196,22 +262,22 @@ export const useStatusLogStore = defineStore('status-log', {
       }
     },
 
-    /** 往上翻更旧的：`before_seq` 取当前**最后一条**的游标（后端语义是「比它更旧」）。 */
+    /** 往上翻更旧的：锚点 = 上一次分页给的 `next_before`（后端语义「严格比它更旧」）。 */
     async loadOlder(query: StatusLogQuery) {
-      const last = this.entries[this.entries.length - 1]
-      if (!last || this.loadingMore) return
+      if (this.loadingMore || this.exhausted) return
       this.loadingMore = true
       try {
         const page = await invoke<StatusLogPage>('get_status_log', {
-          query: { ...query, before_seq: last.seq },
+          query: { ...query, before: this.nextBefore },
         })
-        const known = new Set(this.entries.map(entry => entry.seq))
-        // 旧行接在下面，保持整份新→旧。
-        this.entries = [...this.entries, ...page.entries.filter(entry => !known.has(entry.seq))].slice(
-          0,
-          CLIENT_CAP
-        )
-        this.canPageBack = page.entries.length >= (query.limit ?? DEFAULT_LIMIT)
+        const known = new Set(this.entries.map(entry => entry.id))
+        // 旧行接在下面，保持整份新→旧；驻留多少由「用户真翻过几页」决定，不再有前端上限。
+        this.entries = [
+          ...this.entries,
+          ...page.entries.filter(entry => !known.has(entry.id)),
+        ]
+        this.nextBefore = page.next_before
+        this.exhausted = page.exhausted
       } catch (error) {
         console.warn('status log paging failed', error)
       } finally {

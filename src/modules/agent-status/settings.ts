@@ -74,12 +74,26 @@ export interface LogSettings {
   max_total_bytes: number
   /** 每轮增量读活动文件最多读多少字节（64 KiB–4 MiB）。 */
   live_tail_bytes: number
-  /** 内存环形缓冲留多少条给面板（500–50000）。 */
-  ring_capacity: number
 }
 
 const KIB = 1024
 const MIB = 1024 * KIB
+
+/**
+ * 日志保留天数的夹取边界，与 Rust `log/config.rs` 的 `MIN/MAX_RETENTION_DAYS` 同值。
+ * 它是界面上**唯一**的回收旋钮（下拉只有 `LOG_RETENTION_DAYS_CHOICES` 那两档）：体积上限
+ * （`max_total_bytes`）刻意不给入口 —— 两个旋钮会让用户分不清「留多久」与「占多少」谁说了算；
+ * 容量那条线只在量特别大时兜底，并靠设置页的占用读数把它是否动过手写出来（见 `logUsageLabel`）。
+ *
+ * ⚠️ 上限 14 是产品决定：这套账是排障工具，两周之外的裁决已经没有价值，
+ * 再长只是让盘上多躺着没人翻的提问摘录。`MIN` 仍留 1 是给手改配置的人 —— 那种意图是「少留」，
+ * 夹到 1 天比拒绝或回默认更贴近它。
+ */
+export const MIN_LOG_RETENTION_DAYS = 1
+export const MAX_LOG_RETENTION_DAYS = 14
+
+/** 下拉里可选的保留天数（界面上只有这两档）。 */
+export const LOG_RETENTION_DAYS_CHOICES = [7, 14] as const
 
 /**
  * 缺 `log` 块时的默认值：**与 Rust `LogConfig::default()` 必须逐字段一致**。
@@ -91,11 +105,12 @@ const MIB = 1024 * KIB
 export const DEFAULT_LOG_SETTINGS: LogSettings = {
   level: 'off',
   hook_enabled: false,
-  retention_days: 14,
+  // 默认留 7 天：这套账是主动排障工具，两周的量在明细级下没必要常驻磁盘。
+  // ⚠️ 与 Rust `DEFAULT_RETENTION_DAYS` 必须同值，`settings.spec.ts` 用 ?raw 跨语言锁住它。
+  retention_days: 7,
   max_file_bytes: 8 * MIB,
   max_total_bytes: 96 * MIB,
   live_tail_bytes: 256 * KIB,
-  ring_capacity: 5000,
 }
 
 /**
@@ -146,11 +161,15 @@ export function logSettings(raw: Record<string, unknown> | undefined): LogSettin
   return {
     level: readLevel(fields.level, present),
     hook_enabled: typeof fields.hook_enabled === 'boolean' ? fields.hook_enabled : DEFAULT_LOG_SETTINGS.hook_enabled,
-    retention_days: readClampedInt(fields.retention_days, DEFAULT_LOG_SETTINGS.retention_days, 1, 90),
+    retention_days: readClampedInt(
+      fields.retention_days,
+      DEFAULT_LOG_SETTINGS.retention_days,
+      MIN_LOG_RETENTION_DAYS,
+      MAX_LOG_RETENTION_DAYS
+    ),
     max_file_bytes: readClampedInt(fields.max_file_bytes, DEFAULT_LOG_SETTINGS.max_file_bytes, 64 * KIB, 64 * MIB),
     max_total_bytes: readClampedInt(fields.max_total_bytes, DEFAULT_LOG_SETTINGS.max_total_bytes, MIB, 512 * MIB),
     live_tail_bytes: readClampedInt(fields.live_tail_bytes, DEFAULT_LOG_SETTINGS.live_tail_bytes, 64 * KIB, 4 * MIB),
-    ring_capacity: readClampedInt(fields.ring_capacity, DEFAULT_LOG_SETTINGS.ring_capacity, 500, 50_000),
   }
 }
 
@@ -275,6 +294,21 @@ export function runningTimeoutMsFromSeconds(seconds: number): number {
     MIN_RUNNING_TIMEOUT_SECONDS * 1000,
     MAX_RUNNING_TIMEOUT_SECONDS * 1000,
     DEFAULT_AGENT_STATUS_SETTINGS.running_timeout_ms
+  )
+}
+
+/**
+ * 任意值 → 下拉里真能选中的那一档（先夹进 `MIN–MAX`，再取最近的选择）。
+ *
+ * 为什么必须就近取而不是原样显示：旧版是数字输入框，盘上可能留着 1–90 之间的任何数，
+ * 而下拉只有两档 —— 界面显示一个选不出来的数，就是「面板说 14 天、后端按 3 天删」。
+ * 取完最近一档后调用方要把它写回去（见设置卡的回写）。
+ */
+export function nearestRetentionChoice(value: unknown, fallback: number): number {
+  const days = readClampedInt(value, fallback, MIN_LOG_RETENTION_DAYS, MAX_LOG_RETENTION_DAYS)
+  return LOG_RETENTION_DAYS_CHOICES.reduce(
+    (best, choice) => (Math.abs(choice - days) < Math.abs(best - days) ? choice : best),
+    LOG_RETENTION_DAYS_CHOICES[0]
   )
 }
 

@@ -68,8 +68,6 @@ pub struct LogConfig {
     pub max_total_bytes: u64,
     /// 启动时从活动文件末尾读多少字节做「历史播种」。
     pub live_tail_bytes: u64,
-    /// 内存环形缓冲容量：面板与命令只看这份，不做全量驻留。
-    pub ring_capacity: u32,
 }
 
 // 默认关：设置页只有**一个 switch**（关 = 完全不记，开 = 明细级 + hook 侧也记）。
@@ -80,9 +78,15 @@ const DEFAULT_LEVEL: LogLevel = LogLevel::Off;
 // 他的意图明显是「要记」—— 静默变成不记比静默变成少记一档更难查（写错的字段只影响它自己）。
 const FALLBACK_LEVEL: LogLevel = LogLevel::Normal;
 const DEFAULT_HOOK_ENABLED: bool = false;
-const DEFAULT_RETENTION_DAYS: u32 = 14;
+// 保留天数是**界面上唯一的回收旋钮**（设置页那个下拉，只有 7 / 14 两档），默认 7 天。
+// 上限 14 是产品决定：这套账用来排「灯为什么不动」，两周之外的裁决已无价值，
+// 再长只是让盘上多躺着没人翻的提问摘录。
+// 体积上限（`max_total_bytes`）刻意不给旋钮：它是兜异常量的硬界，两个入口会让用户分不清
+// 「留多久」与「占多少」谁说了算 —— 但它照样会在量特别大时削掉最旧整天，因此设置页必须
+// 把目录实际占用与「削过没有」常驻显示出来（见 `runtime::LogDiskUsage`）。
+const DEFAULT_RETENTION_DAYS: u32 = 7;
 const MIN_RETENTION_DAYS: u32 = 1;
-const MAX_RETENTION_DAYS: u32 = 90;
+const MAX_RETENTION_DAYS: u32 = 14;
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
 const DEFAULT_MAX_FILE_BYTES: u64 = 8 * MIB;
@@ -94,9 +98,6 @@ const MAX_MAX_TOTAL_BYTES: u64 = 512 * MIB;
 const DEFAULT_LIVE_TAIL_BYTES: u64 = 256 * KIB;
 const MIN_LIVE_TAIL_BYTES: u64 = 64 * KIB;
 const MAX_LIVE_TAIL_BYTES: u64 = 4 * MIB;
-const DEFAULT_RING_CAPACITY: u64 = 5_000;
-const MIN_RING_CAPACITY: u64 = 500;
-const MAX_RING_CAPACITY: u64 = 50_000;
 
 impl Default for LogConfig {
     fn default() -> Self {
@@ -107,7 +108,6 @@ impl Default for LogConfig {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             live_tail_bytes: DEFAULT_LIVE_TAIL_BYTES,
-            ring_capacity: DEFAULT_RING_CAPACITY as u32,
         }
     }
 }
@@ -135,8 +135,6 @@ impl LogConfig {
                 .clamp(MIN_MAX_TOTAL_BYTES, MAX_MAX_TOTAL_BYTES),
             live_tail_bytes: read_u64(raw.get("live_tail_bytes"), defaults.live_tail_bytes)
                 .clamp(MIN_LIVE_TAIL_BYTES, MAX_LIVE_TAIL_BYTES),
-            ring_capacity: read_u64(raw.get("ring_capacity"), u64::from(defaults.ring_capacity))
-                .clamp(MIN_RING_CAPACITY, MAX_RING_CAPACITY) as u32,
         }
     }
 
@@ -232,14 +230,14 @@ mod tests {
                 "level": 12,
                 "retention_days": "30",
                 "max_file_bytes": "8000000",
-                "ring_capacity": null,
+                "live_tail_bytes": null,
             },
         })));
         assert!(!config.hook_enabled, "写对的字段保住");
         assert_eq!(config.level, LogLevel::Normal, "档位类型不对只回落档位");
         assert_eq!(config.retention_days, DEFAULT_RETENTION_DAYS);
         assert_eq!(config.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
-        assert_eq!(config.ring_capacity, DEFAULT_RING_CAPACITY as u32);
+        assert_eq!(config.live_tail_bytes, DEFAULT_LIVE_TAIL_BYTES);
     }
 
     /**
@@ -271,14 +269,12 @@ mod tests {
                 "max_file_bytes": 1,
                 "max_total_bytes": u64::MAX,
                 "live_tail_bytes": 0,
-                "ring_capacity": 10_000_000,
             }
         })));
         assert_eq!(config.retention_days, MIN_RETENTION_DAYS);
         assert_eq!(config.max_file_bytes, MIN_MAX_FILE_BYTES);
         assert_eq!(config.max_total_bytes, MAX_MAX_TOTAL_BYTES);
         assert_eq!(config.live_tail_bytes, MIN_LIVE_TAIL_BYTES);
-        assert_eq!(config.ring_capacity, MAX_RING_CAPACITY as u32);
     }
 
     #[test]
@@ -310,5 +306,18 @@ mod tests {
             retention_days: 3,
             ..LogConfig::default()
         }));
+    }
+
+    /**
+     * 保留天数的默认值是产品决定，钉住它防止单侧漂移。
+     *
+     * 界面上「保留天数」是**唯一**的回收旋钮（体积上限不给入口），所以前端设置页显示的默认值
+     * 与这里必须一模一样：不一致就是「面板写 7 天、实际留 14 天」。跨语言的那条同源断言在
+     * `src/modules/agent-status/settings.spec.ts`（`?raw` 读本文件）。
+     */
+    #[test]
+    fn retention_default_is_seven_days() {
+        assert_eq!(DEFAULT_RETENTION_DAYS, 7);
+        assert_eq!(LogConfig::default().retention_days, DEFAULT_RETENTION_DAYS);
     }
 }

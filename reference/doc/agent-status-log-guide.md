@@ -52,7 +52,9 @@
 - **只有 GUI 回收**（`LogState::sweep`，与 monitor 的 10 秒清理同频）：先删**严格早于今天 UTC** 的整天文件，再按总量上限从最旧整天开始删。当天的文件永不 unlink —— 它可能正被某个 hook 持有追加句柄。
 - 分文件用 **UTC**，UI 显示本地时间。原 `hook-debug.log` 那个「函数名叫 `chrono_local_now`、算的其实是 UTC 秒」的坑在此显式化了。
 
-**读端只有一条路**：GUI 自己写的行也落同一个文件，内存环形缓冲**只由 tailer 喂**（每轮 `seek(offset) + read_to_end`，半行留给下一轮）。系统里因此只有一份真相，不需要「内存一份 + 文件一份」再对账 —— 与 `codex_rollout.rs` 增量读字节是同一套路。
+**读端只有一条路 = 盘上那份**。GUI 自己写的行也落同一个文件；tailer 每轮 `seek(offset)` 续读（半行留给下一轮），并且**给每条记住它的盘上坐标** `(UTC日, 当日序号, 起始字节)`。
+
+面板的分页、计数与导出**全部按盘读**（`log/scan.rs`），内存里不再驻留任何"可看范围"—— 早先那份环形缓冲既封顶了能看多少、也封顶了能导多少，已经整块删掉（连 `ring_capacity` 这个配置字段一起：没有消费者的旋钮就是骗人的设置）。`next_seq` 只保留一个用途：告诉前端「这一轮有没有新行进来过」。
 
 ## 3. `trace_id`：贯穿一条信号的 id
 
@@ -105,11 +107,10 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 |---|---|---|
 | `level` | `"off"` | off / minimal / normal / verbose |
 | `hook_enabled` | `false` | bool |
-| `retention_days` | 14 | 1–90 |
+| `retention_days` | 7 | 1–90 |
 | `max_file_bytes` | 8 MiB | 64 KiB–64 MiB |
 | `max_total_bytes` | 96 MiB | 1 MiB–512 MiB |
 | `live_tail_bytes` | 256 KiB | 64 KiB–4 MiB |
-| `ring_capacity` | 5000 | 500–50000 |
 
 ⚠️ **关日志只有 `level = off` 一处，界面上也只有那一个 switch。** 曾经并存过 `enabled` ∧ `level != off` 两个入口（效果完全一致、界面互相遮蔽），也曾经把四档做成一个分段控件 —— 现在都不在了：一个行为只留一个入口。switch 的两个取值就是 §5 表里那一对：开 = `{level: "verbose", hook_enabled: true}`，关 = `{level: "off", hook_enabled: false}`。
 
@@ -117,7 +118,9 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 
 ⚠️ **落盘必须整块提交。** 外壳的 `updateModuleSettings` 是**模块层浅合并**：`{ log: { level } }` 会把 `retention_days` 等未暴露字段直接抹掉。前端用 `logBlockWithSwitch(current, on)` 返回完整一块。
 
-⚠️ 前端有一份同口径的默认值与范围（`settings.ts` 的 `DEFAULT_LOG_SETTINGS`），两边必须一致，否则「面板显示 14 天、实际留 30 天」。
+⚠️ 前端有一份同口径的默认值与范围（`settings.ts` 的 `DEFAULT_LOG_SETTINGS`），两边必须一致，否则「面板显示 7 天、实际留 90 天」。跨语言那条断言在 `settings.spec.ts`（`?raw` 读本目录的 `log/config.rs` 抠常量）。
+
+⚠️ **`retention_days` 是界面上唯一的回收旋钮**（设置页那个数字输入框）。`max_file_bytes` / `max_total_bytes` 继续存在但**不给 UI 入口**：两个旋钮会让人分不清「留多久」与「占多少」谁说了算，而容量那条线只在量特别大时才先撞。它既然仍会在背后削掉最旧的整天，界面就必须把**目录实际占用**与「削过没有」常驻写出来（`LogDiskUsage`，随 `StatusLogPage.usage` 到三处）—— 否则"保留 90 天"是个会被静默打破的承诺。
 
 **两个「回落」是分开定义的，别混成一个常量**（`log/config.rs` 的 `DEFAULT_LEVEL` 与 `FALLBACK_LEVEL`）：
 
@@ -130,29 +133,33 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 
 ## 7. 读端与查看面
 
-命令四个（注册三处：`#[tauri::command]` + `lib.rs` 的 `generate_handler!` + `permissions/status.toml`，权限拆两份 capability）：
+命令五个（注册三处：`#[tauri::command]` + `lib.rs` 的 `generate_handler!` + `permissions/status.toml`，权限拆两份 capability）：
 
 | 命令 | 授权范围 |
 |---|---|
 | `get_status_log(query?)` | 三个窗口（`default.json`） |
-| `clear_status_log` / `export_status_log(path?, query?)` / `set_status_log_view(attached)` | 只主窗（`main-module-settings.json`） |
+| `clear_status_log` / `export_status_log(path?, query?)` / `count_status_log(query?)` / `set_status_log_view(attached)` | 只主窗（`main-module-settings.json`） |
+
+⚠️ `get_status_log` / `export_status_log` / `count_status_log` 三条都是 **`async` + `spawn_blocking`**：它们现在要读盘（分页要倒着翻文件，计数与导出要扫完整目录），而非 async 命令跑在**主线程** —— 几百 MiB 的目录能把窗口事件循环冻住几秒到几十秒。带引用入参的 async 命令必须返回 `Result`（tauri 宏要求）。`count_status_log` 归 manage 那一侧是因为它**必定**全目录扫描，是"贵"的读，而它唯一的调用方在主窗。
 
 - **实时推送按批**：monitor 每轮 `drain()` 一次，只有面板开着（`set_status_log_view(true)`）且非空才 `emit(STATUS_LOG_EVENT, page)`。逐条 emit 在一次几百条时会把 IPC 打成噪声。
 - 广播载荷与查询结果是**同一个形状**（`StatusLogPage`），前端只需一套 `applyPage`。
-- 前端 store 合并按 `seq` 去重后**前插**，不是整份替换 —— 日志是只增的流水，覆盖会把用户正在翻的那一段抽掉。
+- 前端 store 合并按 **`id`（盘上坐标）**去重后前插，不是整份替换 —— 日志是只增的流水，覆盖会把用户正在翻的那一段抽掉。线协议里已经没有 `seq`：那是进程内计数器，重启归零，拿它去重或翻页都会串到别的行上。
+- **只有列表钉在顶部时才前插**（`store.pinned` 由组件的 scroll 回调写）。人在看中间那一段时前插会把那一段挤走；等高行的锚定补偿要读旧首行位置再回滚，是这类列表最容易错的一块 —— 用「钉顶才跟」换掉它，攒下的条数由那颗「攒了 N 条，跟回最新」的 chip 兜住。
+- 翻页锚点是上一页的 `next_before`（语义「严格比它更旧」）；`exhausted` 为真时收起「看更早的」。增量广播包不带这两个字段，前端合并时也不读它们。
 - 页面卸载必须上报 `set_status_log_view(false)`，否则后端一直给一个不存在的面板发增量（`SessionRecordsPanel.vue` 的 `onMounted/onBeforeUnmount` 是唯一挂点）。
 
 **查看面在「会话记录」这一页，一共三层，不做成第五个二级分区**（排障动线本来就是「这条会话的灯不对 → 它的存档 → 它的信号链路」）：
 
-1. **顶部满宽设置卡**（`StatusLogSettingsCard.vue`）：那一个 switch + 常驻读数（「正在记 · 明细级 + hook」/「已关闭 · 零写盘」）+ switch 下方的风险句。
-2. **「记录详情」末尾的可展开条目**（`StatusLogFeed.vue`）：一条结论 + 最近两行摘要 + 行尾两个动作（「导出本会话」/ 展开图标钮）。数据走独立查询 `get_status_log({ key, limit: 50 })`，**不是**从浮层那份 `entries` 里筛 —— 浮层的过滤条件变了不该把详情条目带空。计数说「本会话 N 条」按实际捞到的条数，捞满一窗说「N+」；⚠️ 绝不能拿 `page.total` 冒充，那是整个环形缓冲的条数。
-3. **整窗浮层**（`StatusLogOverlay.vue`）：左 = 本会话流水（新→旧，环节下拉 / 只看被拒 / 暂停跟随），右 = 选中那条的完整信息（全字段 + `detail` + 同 `trace_id` 的其它行 + 重建的线协议一行）。外壳照 `.jse-modal` 那套类名（实色铺满、44px 标题栏、「完成」+ Esc）；⚠️ **没有复用 `ScriptEditorModal.vue`** —— 它没有 slot，模板里写死了 `ScriptEditorFrame` 与 `aria-label`。
+1. **顶部满宽设置卡**（`StatusLogSettingsCard.vue`）：那一个 switch + 常驻读数（「正在记 · 明细级 + hook」/「已关闭 · 零写盘」）+ switch 下方的风险句 + 一个「保留天数」数字输入（**横排** = `SettingsField` 的 `inline` 变体：标题与问号角标留在左、占用读数贴右、输入框钉在最右，实测 1000 窗下两列是 `854px | 84px`；失焦才落盘、越界先夹回再写，右侧常驻读数写**目录占用**：`占用 24.7 MiB · 9 个文件 · 最早 09-22`，被容量线削过时追加一句「更早的已按容量上限回收」）。
+2. **「记录详情」末尾的可展开条目**（`StatusLogFeed.vue`）：一条结论 + 最近两行摘要 + 行尾两个动作（「导出本会话」/ 展开图标钮）。数据走独立查询 `get_status_log({ key, limit: 50 })`，**不是**从浮层那份 `entries` 里筛 —— 浮层的过滤条件变了不该把详情条目带空。条数另走 `count_status_log({ key })`，文案是「本会话 N 条 · 截至 HH:MM:SS」：**精确值 + 它是截至哪一刻的数**，所以任何一档都不需要「N+」或「约」这种含糊（加载中说「计数中…」，失败说「计数暂时读不到」，都不许留着旧数当事实）。
+3. **整窗浮层**（`StatusLogOverlay.vue`）：左 = 本会话流水（新→旧，环节下拉 / 只看被拒 / 暂停跟随），左右比例 **1.8 : 1**（行是长文本单行截断，宽度给流水；右栏窄一点靠竖排读，⚠️ 因此右栏所有长标量必须 `overflow-wrap: anywhere`，护栏在 `agent-status-css.spec.ts`），**虚拟列表** = `@tanstack/vue-virtual`（本模块唯一的第三方前端依赖：headless，只给「该渲染哪几行」，样式全在我们这边）：行等高（CSS `--lg-row-h` 与 `lib/status-log.ts` 的 `LOG_ROW_HEIGHT_PX` 由护栏对撞），只渲染视口 ±overscan 行，总高由 `.lg-rows__sizer` 这一个占位元素撑、条目绝对定位 `translateY`，容器 `overflow-anchor: none`；所以「能看多少」不再由前端驻留上限封顶。⚠️ **不许改回「padding 垫高 + 自己算除法」**：Tailwind 全局 `box-sizing: border-box`，垫高一旦超过可视高，滚动容器会被自己的 padding 撑到整表高度（无头 Chrome 实测 `clientHeight` = 5910px），内部滚动当场失效、「看更早的」与整窗底栏被整页滚走；库另外顺手解决了「只量一次可视高度」—— 它用 ResizeObserver 观察滚动元素，容器一变高就重算；右 = 选中那条的完整信息（全字段 + `detail` + 同 `trace_id` 的其它行 + 重建的线协议一行，末尾标出它在盘上的字节坐标）。外壳照 `.jse-modal` 那套类名（实色铺满、44px 标题栏、「完成」+ Esc）；⚠️ **没有复用 `ScriptEditorModal.vue`** —— 它没有 slot，模板里写死了 `ScriptEditorFrame` 与 `aria-label`。
 
-**没有「按这一条信号过滤」这个控件**：一条信号的完整链路就在右栏里跟着选中行走（曾经是一颗可摘的 chip，和「就地展开」混在一起，界面上自相矛盾）。
+**没有「按这一条信号过滤」这个控件**：一条信号的完整链路就在右栏里跟着选中行走（曾经是一颗可摘的 chip，和「就地展开」混在一起，界面上自相矛盾）。右栏那条链路走**独立的 `get_status_log({ trace_id })` 查询**，不从左栏已载入的行里筛 —— 一则分页/虚拟列表下左栏只有一小段，二则勾了「只看被拒」时链路里被过滤掉的兄弟行照样该给（这一栏的意义就是看完整链路）。
 
 **关闭态的画法（已定）**：条目**留在原处**、内容换成一行「已关闭，这个会话没有留下任何裁决痕迹」。整块不显示会让人分不清「没发生」与「没记录」，而这正是排障时最需要答案的地方。
 
-**导出**（`export_status_log`）：路径来自原生「另存为」对话框（`tauri-plugin-dialog`，只授权主窗），取消即不发命令；`path` 省略时落到日志目录内的 `export/diagnose-*.jsonl` 作退路。⚠️ 既然路径来自参数，命令里那道校验就是唯一防线：必须绝对路径、后缀限 `jsonl/log/txt`、拒 UNC（`\\host\share` 一次写出可能变成凭据外发）、**拒落在日志目录内**（那里正被 tailer 增量读，也容不下第三个文件名）。导出内容含提问摘录 —— 这一刻才真正出这个窗口，所以按钮旁要写明。
+**导出**（`export_status_log`）：**按当前条件把盘上命中的行全部写出去**（`scan::scan_forward` 正序流式 + `BufWriter` 逐行），条数没有上限、也不再被内存视图封顶；扫描期间界面挂加载遮罩并 disable 按钮（重复点就是多扫一遍全目录），被扫描预算截断时反馈必须说「不完整」。命中 0 条仍产出一份带表头的文件 —— 那是"我按这个条件翻过整个目录，确实没有"的证据。表头只写开打前就知道的事（机器、配置、条件、覆盖范围）；条数要扫完才知道，所以在返回值里，不留一个骗人的占位。路径来自原生「另存为」对话框（`tauri-plugin-dialog`，只授权主窗），取消即不发命令；`path` 省略时落到日志目录内的 `export/diagnose-*.jsonl` 作退路。⚠️ 既然路径来自参数，命令里那道校验就是唯一防线：必须绝对路径、后缀限 `jsonl/log/txt`、拒 UNC（`\\host\share` 一次写出可能变成凭据外发）、**拒落在日志目录内**（那里正被 tailer 增量读，也容不下第三个文件名）。导出内容含提问摘录 —— 这一刻才真正出这个窗口，所以按钮旁要写明。
 
 ## 8. 接线状态表
 
@@ -189,15 +196,20 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 
 **自动化**
 
-- [ ] `cd src-tauri && cargo test` —— 全绿；其中 `log::{record,paths,sink,config,runtime}` 覆盖：多进程行不交错、活动文件序号规则、轮转只删昨日文件、off 档真的不写、半行留给下一轮、清空后仍能续读、导出表头、**导出路径校验**（相对 / UNC / 错后缀 / 落在日志目录内都要被拒，被拒后不留残留文件）。
+- [ ] `cd src-tauri && cargo test` —— 全绿；其中 `log::{record,paths,sink,config,runtime,scan}` 覆盖：多进程行不交错、活动文件序号规则、轮转只删昨日文件、off 档真的不写、半行留给下一轮、清空后仍能续读、导出表头、**导出路径校验**（相对 / UNC / 错后缀 / 落在日志目录内都要被拒，被拒后不留残留文件）。
+- [ ] **倒序分页的三条边界**（`scan.rs`）：块头那一刀切在行中间时既不重复也不漏（`page_boundary_neither_duplicates_nor_skips_the_anchor_row` 逐页翻到底，条数与唯一性都断）、尾部半行永不进倒序结果、锚点所在文件被回收后**退化**成翻更旧的文件而不是顶成空列表。块长必须是**入参**（测试传 64 字节逼它跨块），写成常量就测不到这三条。
+- [ ] **读侧不再被内存封顶**：`ring_capacity=500` 写 600 行 ⇒ 导出与计数都得是 600（`export_writes_every_matching_line_on_disk_beyond_one_page` / `count_matches_is_exact_and_independent_of_ring_capacity`）；实时那一路与按盘那一路必须给出**同一个** `id`（`ring_entries_carry_the_same_position_the_scanner_computes`），否则前端去重是空谈。
+- [ ] 计数缓存：同查询在节流窗口内回同一份（`scanned_bytes` 不变 ⇒ 没重扫），有新行落盘后作废并给出新的 `as_of_ms`。
 - [ ] ⚠️ **本轮硬验收**（`hook.rs` 的 `a_disabled_log_still_publishes_the_event_and_touches_nothing_else`）：日志开关关掉时，hook 仍照常把规范事件落 inbox，`prompt` / `base_url` 原样进事件，而日志目录**连建都不建**。提问采集与 `session-records.db` 是加日志之前就有的独立功能 —— 这条一旦红，就是功能回归。
 - [ ] 测试用的「正在记」配置走 `runtime::tests::recording()` 这类显式构造，不许借 `LogConfig::default()`：默认已是 `off`，借它当「开着」会让测试变成空断言（这次 7 个运行态测试就是这么炸出来的）。
 - [ ] `npx vitest run` —— 全绿；其中：
-  - `lib/status-log.spec.ts`：色调三档、`isRejected` 按理由而非按环节判、「本会话 N 条」不许拿 `page.total` 冒充、重建的线协议行不含内存 `seq`。
+  - `lib/status-log.spec.ts`：色调三档、`isRejected` 按理由而非按环节判、占用与计数文案（`logCountLabel` 四态里不许出现「+」或「约」）、重建的线协议行不含内存游标那种假身份。
+  - ~~`lib/log-window.spec.ts`~~ **已删**（2026-09-29 换成 `@tanstack/vue-virtual`）：窗口算术不再归我们写，而 happy-dom 没有排版引擎，`clientHeight` 恒为 0 —— 留那份恒等式测试等于测一个不再存在的模型。几何改由**无头 Chrome 实测**：把真组件挂在只喂 4000 条假行的临时入口里（用完即删），量四件事 —— 容器 `clientHeight` 由版面钉住（552px，不是内容的 120000px）、`scrollHeight` = 条数 × 行高、翻到底 `scrollTop` 恰等于 `scrollHeight − clientHeight` 且最后一行贴容器底、把容器改矮后渲染条数自动从 31 掉到 20（ResizeObserver 在管，不需要手工 `measure()`）。
   - `lib/status-log-reasons.spec.ts`：`?raw` 读 `record.rs` 断言 stage / reason 清单**双向**同源、短标签互不重复（下拉里两个同名就没法选）、事件名与 `STATUS_LOG_EVENT` 一致。
-  - `stores/statusLog.spec.ts`：attach/detach 成对且重复 stop 不再发命令、增量按 `seq` 去重前插、暂停跟随时不动画面只涨计数、翻页用最后一条游标、通道坏时落 `degraded` 而不是永远「正在读取」。
-  - `panels/StatusLogSettingsCard.spec.ts`：switch 成对写两个字段、**整块**提交保住未暴露字段、落盘失败回退本地值。
-  - `agent-status-css.spec.ts`：列表类 grid 钉 `align-content: start`（不钉会把行拉开）、会话卡定高 + 提问单行、满宽卡两条类权重、浮层高度链 `min-h-0`。
+  - `stores/statusLog.spec.ts`：attach/detach 成对且重复 stop 不再发命令、增量按 `id` 去重前插、**滚离顶部时只涨 `pending` 不动画面**、翻页发出去的 `before` 必须等于上一页的 `next_before`、`exhausted` 后不再发翻页请求、条数只来自 `count_status_log`（含迟到回包要按 identity 丢弃）、通道坏时落 `degraded` 而不是永远「正在读取」。
+  - `panels/StatusLogSettingsCard.spec.ts`：switch 成对写两个字段、**整块**提交保住未暴露字段、落盘失败回退本地值；保留天数越界要**先夹回再落盘**（界面不许显示一个没写进去的数）；占用读数在首拉前说「读取中…」而不是「还没写过日志」。
+  - `settings.spec.ts` 的跨语言断言：`?raw` 读 `log/config.rs` 抠 `DEFAULT/MIN/MAX_RETENTION_DAYS`，与 `DEFAULT_LOG_SETTINGS` 同值。
+  - `agent-status-css.spec.ts`：列表类 grid 钉 `align-content: start`（不钉会把行拉开；⚠️ `.lg-rows` 换成虚拟列表后已不是 grid，这条只查 `.sr-list`）、会话卡定高 + 提问单行、满宽卡两条类权重、浮层高度链 `min-h-0`；虚拟列表那几条 —— `--lg-row-h` 与 `LOG_ROW_HEIGHT_PX` 同值、`.lg-rows` 必须 `relative` + `overflow-y-auto` + `overflow-anchor: none` 且**规则体里不许有 padding**、`.lg-rows__sizer` relative / `.lg-rows__cell` absolute、组件原文里不许再出现 `paddingTop` / `paddingBottom`（回到老的 padding 垫高就是当场复发）、`.lg-pane` 带 `min-h-0` + `minmax(0, 1fr)`。
 - [ ] `cargo check --lib` 的 dead-code 警告是「还有没有黑洞」的探测器：某个 `LogReason` 变体 never constructed ⇒ 那处仍未接线（或该删）。
 - [ ] `npm run build`（`vue-tsc --noEmit`）通过。
 
@@ -218,7 +230,8 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 
 1. **日志目录跟着 `status_dir` 走**：用户用 `--status-dir` / `UFO_STATUS_DIR` 覆盖时，那些 hook 行落在被覆盖的目录，而配置永远在 AppData 根下（全局唯一）—— 于是主窗面板读不到它们。浮层常驻显示当前日志目录路径就是为了这一条。
 2. **默认关 = 出问题时没有现场**：用户得先记得打开。这是明码标价的选择（另一个方向意味着「没人碰过开关却在落提问摘录」），不是遗漏。
-3. **常开后的磁盘上限 = `max_total_bytes`（默认 96 MiB）**；`verbose`（= switch 打开）档体积与敏感度同时上升。
+3. **常开后的磁盘上限 = `max_total_bytes`**：默认 96 MiB，但**可以被配到 512 MiB**，且回收 ≥5s 一次、活动文件永不删 ⇒ 瞬时可达 `max_total_bytes + max_file_bytes`。所以导出与计数都必须流式/带预算，不许先把结果读进内存。`verbose`（= switch 打开）档体积与敏感度同时上升。
+3b. **计数与「按盘分页」是有成本的读**：一次计数 = 把该条件涉及的目录整个翻完（先子串预筛再解析）。靠「3 秒节流 + 4 条 LRU 缓存 + 只在选中会话变化 / head 前进时调」三条兜住，而不是靠把数说成约数。
 4. **手动清空会丢在途的少数几条**（见 §9 最后一条）。
 5. **导出接受路径**：命令只授权主窗，且有 `validate_export_target` 那道校验，但它确实是本项目里唯一「按调用方给的地点写文件」的口子。
 4. **不做 `sync_all`**：hook 侧为了不把退出拖慢，系统崩溃时可能丢最后几 KB。

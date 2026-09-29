@@ -1581,6 +1581,22 @@
   color: var(--ufo-status-yellow-text);
 }
 
+/*
+ * 「保留天数」那一组：标题行（左标题 + 右下拉）与下面的占用读数。
+ *
+ * ⚠️ 读数要贴着标题，别留出一大截：这一行的高由下拉触发器（42px）决定，标题是垂直居中的，
+ * 所以「行底」比「标题底边」低约 13px —— 直接 gap 会让那行小字看着属于下一栏。
+ * 负外边距把它提回标题下方约 6px（实测值，见 guide）。
+ */
+.lg-retention {
+  @apply grid gap-0;
+}
+
+.lg-retention__usage {
+  @apply -mt-1.5 m-0 text-[11px];
+  color: var(--ufo-muted);
+}
+
 /* ══ 记录详情末尾那个可展开条目 ══
  *
  * ⚠️ 整块定高：它是详情卡的最后一块，而「最近提问」是 `flex-1`（= 卡片高 − 其余各块）。
@@ -1589,7 +1605,9 @@
  * 提问块因此在 158.7–242.1 之间跳。钉成 125px（最满那种状态的高），装不下的状态在块内滚。
  */
 .lg-inline {
-  @apply grid h-[125px] shrink-0 content-start gap-1.5 overflow-y-auto rounded-[10px] border p-2.5;
+  /* `relative` 是给导出遮罩当定位祖先的（`BaseLoadingOverlay` 贴在最近的定位祖先上）：
+     没这一句，遮罩会盖到整张详情卡上去。 */
+  @apply relative grid h-[125px] shrink-0 content-start gap-1.5 overflow-y-auto rounded-[10px] border p-2.5;
   background: var(--ufo-input);
   border-color: var(--ufo-border);
   scrollbar-gutter: stable;
@@ -1764,33 +1782,86 @@
   color: var(--ufo-muted);
 }
 
-/* 浮层主体两栏：左流水 / 右完整信息（与信息卡拓展同一套主从语言）。 */
+/* 浮层主体两栏：左流水 : 右详情 = 1.8 : 1（行是长文本单行截断，宽度给流水；详情靠字段表竖排）。 */
 .lg-split {
   @apply grid min-h-0 flex-1 gap-3;
-  grid-template-columns: minmax(260px, 1fr) minmax(0, 1.35fr);
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
 }
 
 .lg-split > * {
   @apply min-h-0;
 }
 
-/* ⚠️ `content-start`（= align-content: start）必须有：容器有确定高度时 grid 默认 stretch，
-   会把富余摊给每一行，行与行之间拉出大片空白（mock 上实测过）。 */
+/*
+ * 虚拟列表（@tanstack/vue-virtual）的滚动容器：条目绝对定位，总高由 `.lg-rows__sizer` 撑。
+ *
+ * ⚠️ 两条红线，都是这一版踩过或量过的：
+ * ① **不许拿 padding 当垫高**。Tailwind 全局 `box-sizing: border-box`，垫高一旦超过可视高，
+ *    这个容器会被自己的 padding 撑到整表高度（实测 `clientHeight` = 5910px），内部滚动当场
+ *    失效 —— 「看更早的」和整窗底栏被整页滚走。垫高必须是一个独立元素。
+ * ② `overflow-anchor: none`。滚动锚定是浏览器在「上方内容变长」时反向补偿 scrollTop 的机制，
+ *    而虚拟列表恰恰在反复回收/新增上方条目 —— 让它插手，表现就是滚动打抖甚至滚不动。
+ * 行高由 `--lg-row-h` 钉死，与 `lib/status-log.ts` 的 `LOG_ROW_HEIGHT_PX`（库的估算值）同值 ——
+ * 两边各写一个数不会崩，但滚动条长度会和真实高度不符，由 `agent-status-css.spec.ts` 对撞。
+ */
 .lg-rows {
-  @apply m-0 grid list-none content-start gap-1 overflow-y-auto p-0;
+  --lg-row-h: 30px;
+  @apply relative overflow-y-auto;
+  overflow-anchor: none;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--ufo-scroll-thumb) transparent;
 }
 
-.lg-rows__empty {
-  @apply text-[12px] leading-relaxed;
+/* 占位元素：高度 = 条数 × 行高（组件绑进来）。它只决定滚动条长度，不参与条目定位。 */
+.lg-rows__sizer {
+  @apply relative w-full;
+}
+
+/* 条目外壳：库算出的偏移写在这里（`top: 0` + `translateY`），里面才是真正的一行。 */
+.lg-rows__cell {
+  @apply absolute left-0 top-0 w-full;
+}
+
+/*
+ * 左栏的包装层：滚动区（只放条目）+ 底下的脚注 / 按钮。
+ *
+ * 这两块**必须在滚动区外面**：混进去就成了「没计入高度模型的第 N+1 行」。
+ * `grid-template-rows` 让滚动区吃满、脚注按内容高，`minmax(0, 1fr)` 与 `min-h-0`
+ * 是高度链的一环（缺了就退化成整页滚）。
+ */
+.lg-pane {
+  @apply grid min-h-0 content-start gap-1;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.lg-pane__foot {
+  @apply flex shrink-0 items-center gap-2 text-[10.5px];
   color: var(--ufo-muted);
 }
 
-/* 流水行：meta 一行（时间 / 环节 / seq，全部靠左）+ 摘要一行（写全、可换行）。 */
+.lg-pane__note {
+  @apply m-0 text-[12px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+/* 顶栏那句「已载入 N 行」：与左边的精确条数是两件事，弱化成次级小字。 */
+.lg-filters__loaded {
+  @apply font-mono text-[10.5px];
+  color: var(--ufo-muted);
+}
+
+/*
+ * 流水行：**等高单行** —— 时间 / 环节 / 盘上坐标 + reason 与摘要，一行装不下就省略号。
+ *
+ * ⚠️ 这里改了早先「摘要不截断」的决定，代价要说清：被截掉的只是**行内摘要的后半句**，
+ * 完整 reason、detail 与线协议原文都在右栏（点一行即看全）。换来的是虚拟列表能按等高切，
+ * 于是「能看多少」不再由前端驻留上限封顶 —— 排障时翻的是长度，不是单行的信息量。
+ */
 .lg-row {
-  @apply w-full cursor-pointer rounded-[9px] border border-transparent p-1.5 text-left transition-colors duration-150 ease-out;
+  box-sizing: border-box;
+  height: var(--lg-row-h);
+  @apply flex w-full shrink-0 cursor-pointer items-center gap-2 overflow-hidden rounded-[9px] border border-transparent px-1.5 text-left transition-colors duration-150 ease-out;
   border-left-width: 2px;
   background: var(--ufo-input);
   color: var(--ufo-text);
@@ -1801,7 +1872,7 @@
 }
 
 .lg-row__line {
-  @apply flex items-baseline gap-2;
+  @apply flex shrink-0 items-baseline gap-2;
 }
 
 .lg-row__time {
@@ -1821,10 +1892,9 @@
   color: var(--ufo-muted);
 }
 
-/* 摘要不截断：排障要看的正是 reason 那半句。 */
+/* 摘要吃掉剩余宽度并单行截断（看全去右栏，理由见上面那段注释）。 */
 .lg-row__msg {
-  @apply mt-0.5 block min-w-0 text-[12px] leading-snug;
-  overflow-wrap: anywhere;
+  @apply min-w-0 flex-1 truncate text-[12px] leading-none;
 }
 
 .lg-row__trace {
@@ -1922,9 +1992,14 @@
   border-left: 1px dashed var(--ufo-border-strong);
 }
 
+/*
+ * ⚠️ 长标量（URL、session id）必须能断：右栏在 1.8:1 版面下只有约 345px，
+ * 一个 `base_url=https://…` 就把第三列顶出去（实测内容 189px / 列宽 178px）。
+ */
 .lg-chain__item {
   @apply grid items-baseline gap-2 py-0.5 text-[11.5px];
   grid-template-columns: 74px auto minmax(0, 1fr);
+  overflow-wrap: anywhere;
 }
 
 .lg-chain__why {

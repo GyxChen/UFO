@@ -1,10 +1,15 @@
 <script setup lang="ts">
 /**
- * 「转灯日志」设置卡：会话记录页顶部那张占满宽度的卡，只有一个 switch。
+ * 「转灯日志」设置卡：会话记录页顶部那张占满宽度的卡。
  *
- * 一个行为只留一个入口 —— 关 = 完全不记（`level: off`），开 = 明细级 + hook 侧同记
- * （`level: verbose` + `hook_enabled: true`）。Rust 侧仍保留四档与独立 hook 开关的字段结构，
- * 但界面上不再暴露：写回时整块提交，未暴露字段（保留期 / 体积上限 / 环形容量）原样保留。
+ * 一个行为只留一个入口 ——
+ * - 记不记：只有一个 switch（关 = `level: off` 完全不记，开 = 明细级 + hook 侧同记）；
+ * - 留多久：只有一个「保留天数」下拉（界面上唯一的回收旋钮，只有 7 / 14 两档）。体积上限
+ *   刻意不给入口：两个旋钮会让人分不清「留多久」与「占多少」谁说了算；但那条线仍在背后
+ *   削最旧的整天，所以占用与「削过没有」必须常驻显示（写在标题下面一行），不许藏进问号角标。
+ *
+ * ⚠️ 写回一律整块提交（`updateModuleSettings` 是模块层浅合并，只传半个 `log` 子块会把
+ * 未暴露字段抹掉）；Rust 侧仍保留四档与独立 hook 开关的字段结构，界面上不再暴露。
  *
  * ⚠️ 关掉日志**不影响**「会话记录 / 记录详情」里的提问、Endpoint 等存档 ——
  * 那是加日志之前就有的独立功能（`session_store.rs`）。文案里要写明这一点，
@@ -14,13 +19,20 @@ import { computed, ref, watch } from 'vue'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import {
   AGENT_STATUS_MODULE_ID,
+  LOG_RETENTION_DAYS_CHOICES,
   agentStatusSettings,
   logBlockWithSwitch,
   logSwitchOn,
+  nearestRetentionChoice,
 } from '../settings'
+import { logUsageLabel } from '../lib/status-log'
+import { useStatusLogStore } from '../stores/statusLog'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
+import SettingsField from '@/components/ui/SettingsField.vue'
 
 const modules = useFloatingModulesStore()
+const log = useStatusLogStore()
 
 /** 本组件当前配置块里的日志部分（外壳只透传整块 JSON，字段由本模块解释）。 */
 const settings = computed(() => agentStatusSettings(modules.config))
@@ -28,18 +40,41 @@ const settings = computed(() => agentStatusSettings(modules.config))
 /** switch 的本地态：落盘失败要能退回已知值，不能停在「界面说在记、盘上没记」。 */
 const on = ref(logSwitchOn(settings.value.log))
 
+/** 下拉的两档（`BaseSelect` 的取值是字符串，落盘前转回数字）。 */
+const retentionOptions = LOG_RETENTION_DAYS_CHOICES.map(choice => ({
+  value: String(choice),
+  label: `${choice} 天`,
+}))
+
+/** 盘上那个天数 → 下拉里真能选中的那一档（旧版数字输入框能写 1–90）。 */
+function choiceOf(block: { retention_days: number }): number {
+  return nearestRetentionChoice(block.retention_days, block.retention_days)
+}
+
+/** 保留天数的本地态：与 `on` 同一套路，配置回来以它为准，写失败退回。 */
+const days = ref(choiceOf(settings.value.log))
+
+/** 已经为「盘上那个选不出来的天数」回写过哪个数；写失败就清空，允许下次配置变化再试。 */
+let snappedTo: number | null = null
+
+// 占用读数要有「还没读到」这一档：`log.start()` 的首拉落地前，写「还没写过日志」是错报。
+const usageLabel = computed(() => (log.loaded ? logUsageLabel(log.usage) : '占用读取中…'))
+
 // 配置从后端回来的那一刻（含其它窗口改过同一份配置）以它为准。
 watch(
   () => settings.value.log,
-  log => {
-    on.value = logSwitchOn(log)
+  block => {
+    on.value = logSwitchOn(block)
+    const choice = choiceOf(block)
+    days.value = choice
+    // 界面只有两档，就得让盘上那个数也落在这两档上：否则「面板说 14 天、后端按 3 天删」，
+    // 显示与事实分离正是这个旋钮最不该出现的样子。同一个目标值只试一次，不反复自旋。
+    if (choice !== block.retention_days && snappedTo !== choice) {
+      snappedTo = choice
+      void saveRetentionDays(choice)
+    }
   },
   { immediate: true }
-)
-
-/** 右侧常驻读数：「当前是什么状态」按项目规矩直接写出来，不藏进问号角标。 */
-const stateLabel = computed(() =>
-  on.value ? '正在记 · 明细级 + hook' : '已关闭 · 零写盘'
 )
 
 /**
@@ -55,6 +90,34 @@ async function save() {
   } catch {
     on.value = logSwitchOn(settings.value.log)
   }
+}
+
+/**
+ * 把保留天数写回配置。
+ *
+ * ⚠️ `log` 必须整块提交：`updateModuleSettings` 是模块层浅合并，只传半个子块会把
+ * `retention_days` 之外的字段（档位、体积上限…）一起抹掉。
+ * ⚠️ 合并用的是**这次提交开始时**那份块：写入在途时配置可能被别的窗口改过，
+ * 拿回读值会把人家的改动一起覆盖掉。
+ */
+async function saveRetentionDays(next: number) {
+  const block = settings.value.log
+  try {
+    await modules.updateModuleSettings(AGENT_STATUS_MODULE_ID, {
+      log: { ...block, retention_days: next },
+    })
+  } catch {
+    // 写不进去就退回盘上那个数对应的那一档：界面不许停在一个没落盘的数上。
+    // 同时清掉回写标记，让下一次配置变化还能再试一次（不静默放弃归一）。
+    snappedTo = null
+    days.value = choiceOf(settings.value.log)
+  }
+}
+
+/** 下拉选中：值只可能是那两档之一，转回数字直接落盘。 */
+function onRetentionChange(value: string) {
+  days.value = choiceOf({ retention_days: Number(value) })
+  void saveRetentionDays(days.value)
 }
 </script>
 
@@ -73,12 +136,29 @@ async function save() {
           打开后把每一次转灯裁决落成一行可回查的账；关闭则完全不写盘。关掉它不影响下面的会话存档。
         </p>
       </div>
-      <span class="lg-settings__state">{{ stateLabel }}</span>
     </div>
 
-    <!-- 风险告知紧贴开关下方常驻：这是「勾选项自身的风险」，按约定不走问号角标。 -->
-    <p v-if="on" class="lg-settings__risk">
-      明细级会把<b>提问摘录</b>与审批理由写进本地日志文件，导出后即不受控；凭据与 API key 任何档位都不写入。
-    </p>
+    <!--
+      保留天数是唯一的回收旋钮：横排（`inline`）= 标题 + 问号角标留在左、下拉钉在最右；
+      「当前占多少盘」那行小字写在标题下面一行 —— 它是读数（按约定常驻，不进角标），
+      但这一行的右边给了控件，挤进标签行就会顶到下拉框跟前。
+      ⚠️ 这行在日志关闭时也保持可用：不再写新的不等于已有账不必回收。
+    -->
+    <div class="lg-retention">
+      <SettingsField
+        inline
+        label="保留天数"
+        label-id="lg-retention-label"
+        :hint="`日志按 UTC 日分文件保存；超过这个天数的整天文件会被自动回收（当天的永不删）。只能选 ${LOG_RETENTION_DAYS_CHOICES.join(' 或 ')} 天，默认 7 天；盘上若还留着更早版本手填的其它天数，会自动就近改成这两档之一并写回。另有一条体积硬上限不给界面入口：量特别大的日子它会提前削掉最旧的一天，读数里会写明。`"
+      >
+        <BaseSelect
+          :model-value="String(days)"
+          :options="retentionOptions"
+          aria-labelledby="lg-retention-label"
+          @change="onRetentionChange"
+        />
+      </SettingsField>
+      <p class="lg-retention__usage">{{ usageLabel }}</p>
+    </div>
   </section>
 </template>

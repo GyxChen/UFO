@@ -68,4 +68,27 @@ describe('SettingsField', () => {
     expect(wrapper.get('.settings-field__state').text()).toBe('已保存至凭据管理器')
     expect(hintText()).toContain('输入新值后点保存即可替换')
   })
+
+  it('moves the control to the right edge only for the inline variant', async () => {
+    const inline = mount(SettingsField, {
+      props: { label: '保留天数', labelFor: 'retention-days-box', state: '占用 24.7 MiB', inline: true },
+      slots: { default: '<input id="retention-days-box" type="number" />' },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    expect(inline.get('.settings-field').classes()).toContain('settings-field--inline')
+    // 控件仍是根节点的直接子节点（不许被塞进标签行里，那会打乱 label 的 for 目标）
+    expect(inline.get('.settings-field__head').text()).toContain('占用 24.7 MiB')
+    expect(inline.get('input').attributes('id')).toBe('retention-days-box')
+
+    const stacked = mount(SettingsField, {
+      props: { label: '保留天数', labelFor: 'stacked-days' },
+      slots: { default: '<input id="stacked-days" />' },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    // 默认竖排：其它设置页的字段版式不许被这个变体带偏
+    expect(stacked.get('.settings-field').classes()).not.toContain('settings-field--inline')
+  })
 })
