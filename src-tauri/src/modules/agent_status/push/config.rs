@@ -10,7 +10,7 @@
 //! ## 形状为什么这么小
 //! 一个服务只有一个可配字段（服务器地址），一个收件方只有「名字 + 主题」两列 ——
 //! 没有静默时段、没有节流、没有标题前缀、没有投递记录，也**没有密钥**：
-//! 主题串按用户要求明文摆在配置里（已知代价见 `reference/doc/agent-status-push-guide.md` §12）。
+//! 主题串按用户要求明文摆在配置里（已知代价见 `reference/doc/guide/agent-status-push-guide.md` §12）。
 
 use std::collections::BTreeMap;
 

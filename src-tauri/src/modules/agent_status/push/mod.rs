@@ -16,7 +16,7 @@
 //! ## ⚠️ 主题不是密钥
 //! 主题串（Bark 的设备密钥也算一个主题）**明文**存在 `module_settings['agent-status'].push` 里。
 //! 这是用户明确要的口径 —— 要在面板里看得见、能命名，所以不进系统凭据管理器。
-//! 与「提问明文落会话存档」同一条已知代价（见 `reference/doc/agent-status-push-guide.md` §12）。
+//! 与「提问明文落会话存档」同一条已知代价（见 `reference/doc/guide/agent-status-push-guide.md` §12）。
 //!
 //! ## 与流程脚本的地址策略差异
 //! `flow` 挡掉 loopback / 私网，因为那里发的是**用户自写脚本**拼出的任意地址；

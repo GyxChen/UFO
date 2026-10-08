@@ -17,7 +17,7 @@ export const AGENT_TOOLTIP_WIDTH = 300
 
 /**
  * 单会话信息卡的高度预算（物理像素）：
- * head + Endpoint + token + 4 个拓展字段 + 刷新标注 + 提问 1 行 ≈ 236px，留一点余量（见 CLAUDE.md）。
+ * head + Endpoint + token + 4 个拓展字段 + 刷新标注 + 提问 1 行 ≈ 236px，留一点余量（见 `reference/doc/guide/floating-module-guide.md` §8.3）。
  */
 export const AGENT_TOOLTIP_SESSION_HEIGHT = 260
 

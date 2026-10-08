@@ -443,7 +443,7 @@
 
 /*
  * 未登记平台的兜底徽标（信息卡里的行内小图标位）。
- * 提示窗是固定尺寸的另一块窗口、不参与格子缩放，所以字号写死即可（见 AGENTS.md「写死的设计像素」那条）。
+ * 提示窗是固定尺寸的另一块窗口、不参与格子缩放，所以字号写死即可（见 `reference/doc/guide/floating-module-guide.md` §5.5）。
  */
 .tooltip-provider-icon--fallback {
   @apply grid shrink-0 place-items-center rounded-full font-semibold leading-none;

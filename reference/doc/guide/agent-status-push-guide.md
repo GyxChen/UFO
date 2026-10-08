@@ -2,8 +2,9 @@
 
 > **适用范围**：给「Agent 状态灯」模块加一条**把灯态变化推到手机**的链路 —— ntfy、Bark，以及将来更多的投递服务。
 > **一句话版本**：一个服务只有一个可配字段（服务器地址）+ 若干行「名字 / 主题」；灯态只从内核已有的四种语义取，不自造判定；加一个 provider = Rust 一个文件 + 两处各一行登记，面板不写新组件。
-> **与其它文档的关系**：灯态语义见 `agent-status-hooks.md`；模块/外壳边界与两级 tab 见 `AGENTS.md`；本篇只讲推送这一件事的契约与红线。
-> **版面**：设置页采用 `reference/mock/push/push-a-dual-pane.html`（方案 A · 双栏主从），与「信息卡拓展」同构。
+> **与其它文档的关系**：灯态语义与「等用户操作」的判定见 `../rule/agent-status-hooks.md`；模块/外壳边界与两级 tab 见 `floating-module-guide.md`；拓展字段（推送正文里的「脚本」那一行）的取法见 `../rule/agent-status-endpoint-flow.md`；本篇只讲推送这一件事的契约与红线。
+> **与 AGENTS.md 的关系**：`AGENTS.md` 已收敛成不超过 100 行的稳定规则 + 指向本目录的链接，推送这一整套细则**只在本文**。文档树是 `reference/doc/guide/`（指南）与 `reference/doc/rule/`（规范）；本文与代码冲突时**以代码为准**（数字与行号会漂，符号名不会）。
+> **版面**：设置页采用方案 A（双栏主从），与「信息卡拓展」同构。
 
 ## 目录
 
@@ -140,7 +141,7 @@ pub trait PushProvider: Send + Sync {
 
 ## 7. 出网纪律：退避与零出网
 
-- **连续失败指数退避**（`BACKOFF_BASE_SEC × 2^n`，封顶 600s），与流程脚本同一口径；否则一个失效的 Bark 密钥会每秒打网。退避按**主题行**记账（`FailState`，键 = channel id），只影响失败的那一行，同服务下别的行照发。`configure()` 按存活行裁剪这本账。
+- **连续失败指数退避**（`BACKOFF_BASE_SEC = 60` × `2^n`，封顶 600s），与流程脚本同一口径；否则一个失效的 Bark 密钥会每秒打网。退避按**主题行**记账（`FailState`，键 = channel id），只影响失败的那一行，同服务下别的行照发。`configure()` 按存活行裁剪这本账。
   节流（`throttle_sec`）与静默时段曾压在这条链上，按「精简」要求删掉了 —— 现在的口径是「灯真的变了才发一条」，去重靠内核的 `changed` 判定（见 §3 的触发源）。
 - ⚠️ **所有 agent 全停 = 零出网**：调度只看存活会话（`tick` 里按 `StatusSnapshot.sessions` 找得到 key 才入队），空闲时不产生任何 HTTP 请求。这条不变量与 flow 模块共享，破坏它的改动不予接受。
 - 出站只走**一条**通道（`flow::HttpFetch`：统一超时、响应体上限、错误脱敏）。

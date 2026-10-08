@@ -68,7 +68,7 @@ pub struct SessionRecord {
     pub provider: Provider,
     /// 原始会话标识（不含 provider 前缀）。
     pub session_id: String,
-    /// 用户最近一次提问原文（明文长期驻留磁盘，见 CLAUDE.md ⚠️）。
+    /// 用户最近一次提问原文（明文长期驻留磁盘，见 `reference/doc/rule/agent-status-session-data.md` ⚠️）。
     pub prompt: Option<String>,
     /// 会话实际使用的 API endpoint。存 `base_url`（通常是本地代理监听地址）。
     ///

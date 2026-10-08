@@ -79,7 +79,7 @@ impl HookAdapter for ClaudeAdapter {
 
 /// 把 Claude Code 的事件名归一化成内核事件种类。
 ///
-/// 事件名表与 `reference/doc/agent-status-hooks.md` 的灯色语义一一对应：
+/// 事件名表与 `reference/doc/rule/agent-status-hooks.md` 的灯色语义一一对应：
 /// 绿常亮 = 执行中；黄 = 等人操作；绿闪落黄 = Stop；绿闪移除 = SessionEnd；红 = StopFailure。
 fn classify(event_name: &str, notification_type: Option<&str>) -> AgentEventKind {
     let normalized = normalize_event_name(event_name);

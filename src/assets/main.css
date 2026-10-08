@@ -592,7 +592,7 @@ html.is-tooltip-window #app {
 /*
  * 槽位 = 模块的「容器查询」基准。宿主按 fr 把窗口切给同级模块，未贴边的方形整窗只有 1 格、
  * 还要被切一刀，模块必须能按槽位的真实像素降级排版。声明为 size 容器后，
- * 模块可用 @container floating-slot (...) 与 cqh / cqw 单位自适应（规范见 reference/doc/floating-module-guide.md）。
+ * 模块可用 @container floating-slot (...) 与 cqh / cqw 单位自适应（规范见 reference/doc/guide/floating-module-guide.md）。
  */
 .floating-module-slot {
   @apply relative min-h-0 min-w-0 overflow-hidden;

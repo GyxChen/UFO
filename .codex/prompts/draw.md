@@ -19,7 +19,7 @@
 - `src-tauri/src/modules/agent_status/status/model.rs`
 - `src-tauri/src/modules/agent_status/status/compat/claude.rs`
 - `src-tauri/src/modules/agent_status/status/compat/codex.rs`
-- `reference/doc/agent-status-hooks.md`
+- `reference/doc/rule/agent-status-hooks.md`
 
 用 `rg` 定位并阅读这些关键点：
 

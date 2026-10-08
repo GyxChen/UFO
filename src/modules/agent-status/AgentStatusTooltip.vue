@@ -238,7 +238,7 @@ async function dismissSession() {
       </button>
       <!--
         「正在等你操作」的原因（Codex 的审批理由）：塞进 head 行而不是单开一行 ——
-        tooltip 的一屏预算已经排满（见 AGENTS.md），多一行会把下方内容挤出可视区。
+        tooltip 的一屏预算已经排满（见 `reference/doc/guide/floating-module-guide.md` §8.3），多一行会把下方内容挤出可视区。
         窄了就省略号，完整原文走 title。
       -->
       <span v-if="session.waiting_reason" class="tooltip-reason" :title="session.waiting_reason">{{

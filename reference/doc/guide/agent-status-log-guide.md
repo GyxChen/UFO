@@ -2,8 +2,9 @@
 
 > **适用范围**：`src-tauri/src/modules/agent_status/status/log/` 与 `src/modules/agent-status/{lib,stores,panels}/` 里的日志查看面。
 > **一句话版本**：把「一条信号从平台进来，到最终改变灯色（或者没改变）」的每一步裁决落成一行 JSONL，让「灯为什么不动 / 为什么乱跳」从**只能复现**变成**可以回查**。
-> **与其它文档的关系**：灯色语义见 `reference/doc/agent-status-hooks.md`；平台接入与「两条事件源不得互顶」见 `reference/doc/agent-status-platform-onboarding-guide.md`；模块与外壳的边界见 `reference/doc/floating-module-guide.md`。本篇只管**观测**，不管转灯判定本身。
-> **版面**：查看面并入既有「会话记录」二级分区，不新开 tab —— 顶部一张满宽的「转灯日志」设置卡（只有一个 switch），日志本身是**「记录详情」末尾的一个可展开条目**（折叠态一条结论 + 两行摘要），点开展开成整窗两栏浮层（左流水 / 右选中记录的完整字段）。细节与图见 §7，mock 见 `reference/mock/status-log/`。
+> **与其它文档的关系**：灯色语义见 `../rule/agent-status-hooks.md`；平台接入与「两条事件源不得互顶」见 `agent-status-platform-onboarding-guide.md`；模块与外壳的边界见 `floating-module-guide.md`；本篇那条「关日志不得影响会话存档」的红线，被影响的存档链路见 `../rule/agent-status-session-data.md`。本篇只管**观测**，不管转灯判定本身。
+> **与 AGENTS.md 的关系**：`AGENTS.md` 已收敛成不超过 100 行的稳定规则 + 指向本目录的链接，日志这一套细则**只在本文**。文档树是 `reference/doc/guide/`（指南）与 `reference/doc/rule/`（规范）；本文与代码冲突时**以代码为准**（数字与行号会漂，符号名不会）。
+> **版面**：查看面并入既有「会话记录」二级分区，不新开 tab —— 顶部一张满宽的「转灯日志」设置卡（只有一个 switch），日志本身是**「记录详情」末尾的一个可展开条目**（折叠态一条结论 + 两行摘要），点开展开成整窗两栏浮层（左流水 / 右选中记录的完整字段）。细节与图见 §7。
 
 ## 目录
 
@@ -71,7 +72,7 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 
 ## 4. 词汇表：stage 与 reason
 
-唯一来源是 Rust 的两个枚举（`log/record.rs`）：`LogStage`（走到哪一段）与 `LogReason`（为什么是这个结果）。
+唯一来源是 Rust 的两个枚举（`log/record.rs`）：`LogStage`（走到哪一段）与 `LogReason`（为什么是这个结果）。当前是 22 个 stage + 68 个 reason —— **数字只是量级，清单以枚举为准**（§8 那张接线账才是验收依据）。
 
 **理由必须是具名枚举，不许自由文本** —— 否则 UI 没法聚合、没法解释，也就没法变成验收清单。
 
@@ -97,7 +98,7 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 2. **任何档位都不写**：`secrets.get` 的值、`auth.json` / `settings_config` 内容、endpoint 的 query 段。
 3. 文件名只带 basename 不带完整路径（父目录含用户名，而日志是要给人整屏翻、甚至导出发出去的）。
 
-`verbose` 是这里唯一会把用户输入写进磁盘的档位。所以风险那句必须**常驻在 switch 正下方**（`.lg-settings__risk`），不藏进问号角标 —— 按项目约定，勾选项自身的风险要落在勾选处。导出同理：文件一出这个窗口就不受控，所以两个导出口子都在按钮旁写明「含提问原文」。
+`verbose` 是这里唯一会把用户输入写进磁盘的档位。所以「明细级会落提问与等待原因的截断摘录、凭据任何档位都不写」+「关掉不影响下面的会话存档」这两句必须**贴着那颗 switch 写**（现落在 `StatusLogSettingsCard.vue` 里 switch 那一条 `SettingsField` 的 `hint` 上，由问号角标 `ui/SettingsHint.vue` 展开）—— 曾经常驻在 switch 正下方的 `.lg-settings__risk` 已随「解释性 tips 统一收进角标」的项目约定删掉，别再拆回常驻文本行；但**不许把风险做成默认值、也不许把它从开关处挪走**这一条不变。导出同理：文件一出这个窗口就不受控，所以导出这一刻要提示「含提问摘录」（`StatusLogOverlay.vue` 的注释写明了这个意图，落点目前是设置卡的 hint + 原生另存为对话框的标题）—— 加改动时别让它只剩注释。
 
 ## 6. 配置块 `module_settings['agent-status'].log`
 
@@ -107,7 +108,7 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 |---|---|---|
 | `level` | `"off"` | off / minimal / normal / verbose |
 | `hook_enabled` | `false` | bool |
-| `retention_days` | 7 | 1–90 |
+| `retention_days` | 7 | 1–14（界面上只给 7 / 14 两档） |
 | `max_file_bytes` | 8 MiB | 64 KiB–64 MiB |
 | `max_total_bytes` | 96 MiB | 1 MiB–512 MiB |
 | `live_tail_bytes` | 256 KiB | 64 KiB–4 MiB |
@@ -118,9 +119,9 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 
 ⚠️ **落盘必须整块提交。** 外壳的 `updateModuleSettings` 是**模块层浅合并**：`{ log: { level } }` 会把 `retention_days` 等未暴露字段直接抹掉。前端用 `logBlockWithSwitch(current, on)` 返回完整一块。
 
-⚠️ 前端有一份同口径的默认值与范围（`settings.ts` 的 `DEFAULT_LOG_SETTINGS`），两边必须一致，否则「面板显示 7 天、实际留 90 天」。跨语言那条断言在 `settings.spec.ts`（`?raw` 读本目录的 `log/config.rs` 抠常量）。
+⚠️ 前端有一份同口径的默认值与范围（`settings.ts` 的 `DEFAULT_LOG_SETTINGS` 与 `MIN/MAX_LOG_RETENTION_DAYS`），两边必须一致，否则「界面说 14 天、后端按别的天数删」。跨语言那条断言在 `settings.spec.ts`（`?raw` 读本目录的 `log/config.rs` 抠常量）。
 
-⚠️ **`retention_days` 是界面上唯一的回收旋钮**（设置页那个数字输入框）。`max_file_bytes` / `max_total_bytes` 继续存在但**不给 UI 入口**：两个旋钮会让人分不清「留多久」与「占多少」谁说了算，而容量那条线只在量特别大时才先撞。它既然仍会在背后削掉最旧的整天，界面就必须把**目录实际占用**与「削过没有」常驻写出来（`LogDiskUsage`，随 `StatusLogPage.usage` 到三处）—— 否则"保留 90 天"是个会被静默打破的承诺。
+⚠️ **`retention_days` 是界面上唯一的回收旋钮**，而且**收成了一只下拉、只有 7 / 14 两档**（`LOG_RETENTION_DAYS_CHOICES`）：默认 7 天，Rust 侧夹取区间 1–14，两档之外的天数只在配置里存在、界面上选不出来。盘上若还留着更早那版**数字输入框**能写下的 1–90 里任意一个数，界面会**就近取档并写回一次**（`nearestRetentionChoice` + 同一个目标值只试一次，不反复自旋）—— 理由是「显示与事实不许分离」：只把读数改成 14 而后端仍按 3 天删，是这个旋钮最不该出现的样子。体积上限（`max_file_bytes` / `max_total_bytes`）继续存在但**不给 UI 入口**：两个旋钮会让人分不清「留多久」与「占多少」谁说了算，而容量那条线只在量特别大时才先撞。它既然仍会在背后削掉最旧的整天，界面就必须把**目录实际占用**常驻写出来（`LogDiskUsage`，随 `StatusLogPage.usage` 到三处）、并在本次运行内真削过时追加一句 —— 否则"保留 N 天"是个会被静默打破的承诺。
 
 **两个「回落」是分开定义的，别混成一个常量**（`log/config.rs` 的 `DEFAULT_LEVEL` 与 `FALLBACK_LEVEL`）：
 
@@ -151,7 +152,7 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 
 **查看面在「会话记录」这一页，一共三层，不做成第五个二级分区**（排障动线本来就是「这条会话的灯不对 → 它的存档 → 它的信号链路」）：
 
-1. **顶部满宽设置卡**（`StatusLogSettingsCard.vue`）：那一个 switch + 常驻读数（「正在记 · 明细级 + hook」/「已关闭 · 零写盘」）+ switch 下方的风险句 + 一个「保留天数」数字输入（**横排** = `SettingsField` 的 `inline` 变体：标题与问号角标留在左、占用读数贴右、输入框钉在最右，实测 1000 窗下两列是 `854px | 84px`；失焦才落盘、越界先夹回再写，右侧常驻读数写**目录占用**：`占用 24.7 MiB · 9 个文件 · 最早 09-22`，被容量线削过时追加一句「更早的已按容量上限回收」）。
+1. **顶部满宽设置卡**（`StatusLogSettingsCard.vue`）：**只有两条标准设置行** —— ① 「转灯日志」switch（风险句与「关掉不影响会话存档」在那一条的 `hint` 里；**不给 `state` 读数**：在不在记，开关自己说得出，「正在记 / 已关闭 · 零写盘」这行字归下面第二层的条目头）；② 「保留天数」**下拉**（`BaseSelect`，只有 7 / 14 两档）：标题与问号角标在左、下拉钉右，**目录占用**走 `SettingsField` 的 `state`、常驻在标题**下面那一行**（`logUsageLabel`：`占用 24.7 MiB · 9 个文件 · 最早 09-22`，被容量线削过时追加「更早的已按容量上限回收」；`log.start()` 首拉之前说「占用读取中…」而不是「还没写过日志」）。选中即落盘（不像早先的数字输入框要等失焦），越界值先就近取档再写回；`log` 子块整块提交。
 2. **「记录详情」末尾的可展开条目**（`StatusLogFeed.vue`）：一条结论 + 最近两行摘要 + 行尾两个动作（「导出本会话」/ 展开图标钮）。数据走独立查询 `get_status_log({ key, limit: 50 })`，**不是**从浮层那份 `entries` 里筛 —— 浮层的过滤条件变了不该把详情条目带空。条数另走 `count_status_log({ key })`，文案是「本会话 N 条 · 截至 HH:MM:SS」：**精确值 + 它是截至哪一刻的数**，所以任何一档都不需要「N+」或「约」这种含糊（加载中说「计数中…」，失败说「计数暂时读不到」，都不许留着旧数当事实）。
 3. **整窗浮层**（`StatusLogOverlay.vue`）：左 = 本会话流水（新→旧，环节下拉 / 只看被拒 / 暂停跟随），左右比例 **1.8 : 1**（行是长文本单行截断，宽度给流水；右栏窄一点靠竖排读，⚠️ 因此右栏所有长标量必须 `overflow-wrap: anywhere`，护栏在 `agent-status-css.spec.ts`），**虚拟列表** = `@tanstack/vue-virtual`（本模块唯一的第三方前端依赖：headless，只给「该渲染哪几行」，样式全在我们这边）：行等高（CSS `--lg-row-h` 与 `lib/status-log.ts` 的 `LOG_ROW_HEIGHT_PX` 由护栏对撞），只渲染视口 ±overscan 行，总高由 `.lg-rows__sizer` 这一个占位元素撑、条目绝对定位 `translateY`，容器 `overflow-anchor: none`；所以「能看多少」不再由前端驻留上限封顶。⚠️ **不许改回「padding 垫高 + 自己算除法」**：Tailwind 全局 `box-sizing: border-box`，垫高一旦超过可视高，滚动容器会被自己的 padding 撑到整表高度（无头 Chrome 实测 `clientHeight` = 5910px），内部滚动当场失效、「看更早的」与整窗底栏被整页滚走；库另外顺手解决了「只量一次可视高度」—— 它用 ResizeObserver 观察滚动元素，容器一变高就重算；右 = 选中那条的完整信息（全字段 + `detail` + 同 `trace_id` 的其它行 + 重建的线协议一行，末尾标出它在盘上的字节坐标）。外壳照 `.jse-modal` 那套类名（实色铺满、44px 标题栏、「完成」+ Esc）；⚠️ **没有复用 `ScriptEditorModal.vue`** —— 它没有 slot，模板里写死了 `ScriptEditorFrame` 与 `aria-label`。
 
@@ -159,7 +160,7 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 
 **关闭态的画法（已定）**：条目**留在原处**、内容换成一行「已关闭，这个会话没有留下任何裁决痕迹」。整块不显示会让人分不清「没发生」与「没记录」，而这正是排障时最需要答案的地方。
 
-**导出**（`export_status_log`）：**按当前条件把盘上命中的行全部写出去**（`scan::scan_forward` 正序流式 + `BufWriter` 逐行），条数没有上限、也不再被内存视图封顶；扫描期间界面挂加载遮罩并 disable 按钮（重复点就是多扫一遍全目录），被扫描预算截断时反馈必须说「不完整」。命中 0 条仍产出一份带表头的文件 —— 那是"我按这个条件翻过整个目录，确实没有"的证据。表头只写开打前就知道的事（机器、配置、条件、覆盖范围）；条数要扫完才知道，所以在返回值里，不留一个骗人的占位。路径来自原生「另存为」对话框（`tauri-plugin-dialog`，只授权主窗），取消即不发命令；`path` 省略时落到日志目录内的 `export/diagnose-*.jsonl` 作退路。⚠️ 既然路径来自参数，命令里那道校验就是唯一防线：必须绝对路径、后缀限 `jsonl/log/txt`、拒 UNC（`\\host\share` 一次写出可能变成凭据外发）、**拒落在日志目录内**（那里正被 tailer 增量读，也容不下第三个文件名）。导出内容含提问摘录 —— 这一刻才真正出这个窗口，所以按钮旁要写明。
+**导出**（`export_status_log`）：**按当前条件把盘上命中的行全部写出去**（`scan::scan_forward` 正序流式 + `BufWriter` 逐行），条数没有上限、也不再被内存视图封顶；扫描期间界面挂加载遮罩并 disable 按钮（重复点就是多扫一遍全目录），被扫描预算截断时反馈必须说「不完整」。命中 0 条仍产出一份带表头的文件 —— 那是"我按这个条件翻过整个目录，确实没有"的证据。表头只写开打前就知道的事（机器、配置、条件、覆盖范围）；条数要扫完才知道，所以在返回值里，不留一个骗人的占位。路径来自原生「另存为」对话框（`tauri-plugin-dialog`，`dialog:allow-save` **只授权主窗**），取消即不发命令；`path` 省略时落到日志目录内的 `export/diagnose-*.jsonl` 作退路。⚠️ 既然路径来自参数，`log/runtime.rs::validate_export_target` 就是**唯一防线**：必须绝对路径、后缀限 `jsonl/log/txt`、拒 UNC（`\\host\share` 一次写出可能变成凭据外发）、**拒落在日志目录内**（那里正被 tailer 增量读，也容不下第三个文件名）。导出内容含提问摘录 —— 这一刻才真正出这个窗口，所以按钮旁要写明。
 
 ## 8. 接线状态表
 
@@ -190,6 +191,7 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
 | 逐行记 rollout 的预筛跳过 | ❌ `cares()` 一轮就能刷几千条，把有用的行淹掉。聚合计数进 `rollout_scan` |
 | 在日志的 `release` 路径上 `unwrap` / `expect` / 索引 / `slice` | ❌ release 是 `panic = "abort"`，一次 panic 带走整个 App |
 | 为日志升 `SCHEMA_VERSION` 或给 `AgentEvent` 加必填字段 | ❌ 旧 hook 写的事件会整批落 quarantine |
+| **关掉日志时顺带动了事件的发布与字段采集**（不发 inbox、不填 `prompt` / `base_url`、或让日志目录的建立牵连别的落盘） | ❌ 硬红线：「会话记录 / 记录详情」里的提问、Endpoint、Token 是**加日志之前就有的独立功能**（`session_store.rs`），关日志不得影响它们半分。由 `hook.rs` 的 `a_disabled_log_still_publishes_the_event_and_touches_nothing_else` 锁：off 时事件照常落 inbox、字段原样，而日志目录**连建都不建**（`hook-debug.log` 也归这个开关管）。这条一红就是功能回归，不是日志少记了几行 |
 | 把「清除日志」做成「保证一条不漏」 | ❌ 抬序号后仍在按旧序号写的 hook 会把在途几条写进即将被删的文件。这是手动清空的既定代价，文案要写明 |
 
 ## 10. 验收清单
@@ -207,7 +209,7 @@ UI 上「只看这一条信号」就是按 `trace_id` 过滤，摊开它从 hook
   - ~~`lib/log-window.spec.ts`~~ **已删**（2026-09-29 换成 `@tanstack/vue-virtual`）：窗口算术不再归我们写，而 happy-dom 没有排版引擎，`clientHeight` 恒为 0 —— 留那份恒等式测试等于测一个不再存在的模型。几何改由**无头 Chrome 实测**：把真组件挂在只喂 4000 条假行的临时入口里（用完即删），量四件事 —— 容器 `clientHeight` 由版面钉住（552px，不是内容的 120000px）、`scrollHeight` = 条数 × 行高、翻到底 `scrollTop` 恰等于 `scrollHeight − clientHeight` 且最后一行贴容器底、把容器改矮后渲染条数自动从 31 掉到 20（ResizeObserver 在管，不需要手工 `measure()`）。
   - `lib/status-log-reasons.spec.ts`：`?raw` 读 `record.rs` 断言 stage / reason 清单**双向**同源、短标签互不重复（下拉里两个同名就没法选）、事件名与 `STATUS_LOG_EVENT` 一致。
   - `stores/statusLog.spec.ts`：attach/detach 成对且重复 stop 不再发命令、增量按 `id` 去重前插、**滚离顶部时只涨 `pending` 不动画面**、翻页发出去的 `before` 必须等于上一页的 `next_before`、`exhausted` 后不再发翻页请求、条数只来自 `count_status_log`（含迟到回包要按 identity 丢弃）、通道坏时落 `degraded` 而不是永远「正在读取」。
-  - `panels/StatusLogSettingsCard.spec.ts`：switch 成对写两个字段、**整块**提交保住未暴露字段、落盘失败回退本地值；保留天数越界要**先夹回再落盘**（界面不许显示一个没写进去的数）；占用读数在首拉前说「读取中…」而不是「还没写过日志」。
+  - `panels/StatusLogSettingsCard.spec.ts`：switch 成对写两个字段、**整块**提交保住未暴露字段、落盘失败回退本地值；盘上那个**选不出来的天数**（旧数字输入框写的 1–90）要**就近取档并写回一次**，同一个目标值不反复自旋，写回失败要还能再试；占用读数在 store 首拉回答前说「占用读取中…」而不是「还没写过日志」。
   - `settings.spec.ts` 的跨语言断言：`?raw` 读 `log/config.rs` 抠 `DEFAULT/MIN/MAX_RETENTION_DAYS`，与 `DEFAULT_LOG_SETTINGS` 同值。
   - `agent-status-css.spec.ts`：列表类 grid 钉 `align-content: start`（不钉会把行拉开；⚠️ `.lg-rows` 换成虚拟列表后已不是 grid，这条只查 `.sr-list`）、会话卡定高 + 提问单行、满宽卡两条类权重、浮层高度链 `min-h-0`；虚拟列表那几条 —— `--lg-row-h` 与 `LOG_ROW_HEIGHT_PX` 同值、`.lg-rows` 必须 `relative` + `overflow-y-auto` + `overflow-anchor: none` 且**规则体里不许有 padding**、`.lg-rows__sizer` relative / `.lg-rows__cell` absolute、组件原文里不许再出现 `paddingTop` / `paddingBottom`（回到老的 padding 垫高就是当场复发）、`.lg-pane` 带 `min-h-0` + `minmax(0, 1fr)`。
 - [ ] `cargo check --lib` 的 dead-code 警告是「还有没有黑洞」的探测器：某个 `LogReason` 变体 never constructed ⇒ 那处仍未接线（或该删）。

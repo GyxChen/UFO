@@ -296,7 +296,7 @@ fn excerpt_or_len(text: &str) -> Value {
 /// **只为日志** peek 原始事件名。
 ///
 /// ⚠️ 这与各适配器那份归一表**无关、也不许共用**：那张表决定灯色，平台之间刻意各写一份
-/// （共用会让改一个平台静默带偏另一个的灯，见 `reference/doc/agent-status-platform-onboarding-guide.md`）。
+/// （共用会让改一个平台静默带偏另一个的灯，见 `reference/doc/guide/agent-status-platform-onboarding-guide.md`）。
 /// 这里取不到只是日志少一个字段，不参与任何裁决。
 fn peek_event_name(payload: &Value) -> Option<String> {
     compat::string_field(payload, &["hook_event_name", "event", "event_name", "event_type", "type"])
@@ -510,7 +510,7 @@ mod tests {
     /// ⚠️ **本轮硬验收**：关掉转灯日志**不许动到采集链路**。
     ///
     /// 提问原文 / `base_url` / 事件本身照常落 inbox —— 「会话记录」与「记录详情」里那些字段是
-    /// 加日志之前就有的独立功能（见 AGENTS.md「会话展示字段」）。日志开关只管新那本 transition
+    /// 加日志之前就有的独立功能（见 `reference/doc/rule/agent-status-session-data.md` §3）。日志开关只管新那本 transition
     /// log，一旦它能连带关掉存档，用户看到的就是一次静默的功能回归。
     /// 同时「关 = 零落盘」也要真：连日志目录都不许建出来。
     #[test]

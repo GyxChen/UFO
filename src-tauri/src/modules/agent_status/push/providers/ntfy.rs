@@ -6,7 +6,7 @@
 //! 所以允许私网（策略与理由见 `push/mod.rs` 的模块文档）。
 //!
 //! ⚠️ **主题是公开的**：知道主题串的人都能订阅到内容。因此提问原文这类内容默认不进正文，
-//! 要用户在「提醒内容」里显式勾选（见 `reference/doc/agent-status-push-guide.md` §3）。
+//! 要用户在「提醒内容」里显式勾选（见 `reference/doc/guide/agent-status-push-guide.md` §3）。
 //! ⚠️ 需要访问令牌的自建服务器**不再支持**：本版本按用户要求不存任何密钥，也不带鉴权请求头。
 
 use super::{encode_segment, normalize_server, PushProvider, SendRequest, ServerSpec};

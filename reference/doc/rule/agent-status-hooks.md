@@ -1,7 +1,8 @@
 # UFO Agent 状态 Hook 接入指南
 
-> **本篇是「已接入平台」的实录**：Claude Code 与 Qoder 的 hook 配置及 payload 字段、Codex 的 rollout 读法，以及 UFO 内部怎么解析它们。
-> **要接入一个新平台，从 `agent-status-platform-onboarding.md` 开始** —— 那里有跨平台通用的 payload 契约、最小事件集、以及 UFO 侧的完整改动清单。本篇的字段表只描述 Claude 一家，别名表各平台自己写，不要照抄成通用约定。
+> **本篇是「已接入平台」的实录**：Claude Code 与 Qoder 的 hook 配置及 payload 字段、Codex 的 rollout 读法、指示灯语义与子代理红线，以及 UFO 内部怎么解析它们。
+> **要接入一个新平台，从 `../guide/agent-status-platform-onboarding-guide.md` 开始** —— 那里有跨平台通用的 payload 契约、最小事件集、兼容层的文件边界，以及 UFO 侧的完整改动清单。本篇的字段表只描述已接入的这几家，别名表各平台自己写，不要照抄成通用约定。
+> **与 AGENTS.md 的关系**：`AGENTS.md` 已收敛成不超过 100 行的稳定规则 + 指向本目录的链接，平台与灯态的细则**只在本文**。文档树是 `reference/doc/guide/`（指南）与 `reference/doc/rule/`（规范，本篇所在）；观测侧的账见 `../guide/agent-status-log-guide.md`，把灯推到手机见 `../guide/agent-status-push-guide.md`。**冲突一律以代码为准**（行号与数字会漂，符号名不会）。
 
 UFO 从两条链路获取 agent 的生命周期事件：
 
@@ -105,11 +106,15 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 
 ⚠️ **子代理（subagent）的事件与主会话共用同一个 `session_id`**（实测确认），只有 `agent_id` / `agent_type` 能把两者分开。子代理侧的事件包括 `SubagentStart`、`SubagentStop`、`PreToolUse`、`PostToolUse`、`PostToolBatch` 等 —— 全部带 `agent_id`；主线程事件一律没有。
 
-因此内核为每个会话维护一份**活跃子代理集合**：`SubagentStart` 加入、`SubagentStop` 移除，工具类子代理事件同时刷新 `last_seen_at_ms`。灯色语义如下（内核内部状态机，对外仍投影为五阶段）：
+因此内核为每个会话维护一份**活跃子代理集合**（`kernel.rs` 的 `subagents`：`SubagentStart` 加入、`SubagentStop` 移除，工具类子代理事件同时刷新 `last_seen_at_ms`）。全部裁决都走在 `kernel.rs::apply_event_with_seed` → `reduce_state` 这一条路上，**改它时下面七条要一起保住**（下面是内核内部状态机的规则，对外仍投影为五阶段）：
 
-- **主线程已 `Stop`（等 prompt）后子代理开始** → 回到绿常亮（后台仍在干活）；最后一个活跃子代理结束时立即落黄，**不再绿闪**。
-- **主线程正在等用户操作**（`PermissionRequest` / `Elicitation` → 黄灯）时，子代理事件**不得**把黄灯顶回绿 —— 人在等你、灯就该是黄的。
-- 会话已 `Completed` / 出错时，子代理事件只刷新存活时间，不动移除计时与错误码。
+1. **主线程已 `Stop`（等 prompt）后子代理开始** → 灯拉回「后台运行」（`BackgroundRunning`，对外仍是绿常亮）；最后一个活跃子代理结束时立即落黄，**不再绿闪**。
+2. ⚠️ **主线程正在等用户操作**（`PermissionRequest` / `Elicitation` → 黄灯）时，子代理事件**不得**把黄灯顶回绿 —— 人在等你，灯就该是黄的。曾经的表现就是「Claude 已经在问我了，灯却一直是绿色」。
+3. **会话已结束（`Completed`）或已出错（`Failed`）时，子代理事件只维护后台记账**（把该 `agent_id` 加入 / 移出活跃集合、刷新 `last_seen_at_ms`），**灯色与计时原样保留** —— `is_flashing` / `remove_at_ms` / `error_code` / `waiting_reason` 一个都不动。
+4. **带 `agent_id` 的 `Failed`（子代理自己的工具失败）不代表父会话出错**：既不得把父灯染红，**也不得清空其它仍在跑的子代理**（`PostToolUseFailure` 带 `error` 且带 `agent_id` 是常见输入组合，不是罕见路径）。
+5. **主线程出错时活跃子代理集合不清空**：后台事实要留到恢复之后，否则最后一个子代理收尾时灯无处可退、会误落黄。
+6. **UFO 中途启动、只先收到子代理活动时，灯的起点是「后台运行」而不是「主线程在跑」**（`Unknown` / `WaitingForPrompt` + `SubagentStarted` → `BackgroundRunning`，而不是 `Running`）—— 起点若是 `Running`，最后一个子代理结束后就没有可退的地方，灯会一直绿。同一轮里也**不触发**「同 provider 的新 `Running` 清掉旧 `Waiting`」，以免后台子代理误清掉别的会话的黄灯。
+7. **子代理的 `sequence` 有自己独立的水位**：`sequence_watermarks` 按「会话 → 执行者」两层记账（主线程占一个固定的 `MAIN_ACTOR` 键），子代理序号**不与主线程的互相比较**，也**不写进对外快照的 `last_sequence`**（对外只暴露主线程那条）。
 
 第二条是实测抓到的真实时序（子代理工具事件曾把黄灯污染成绿灯）：
 
@@ -122,7 +127,7 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 
 ⚠️ `AskUserQuestion`（选择框提问）**不走 `PreToolUse`**，走的是 `PermissionRequest` + `Notification(permission_prompt)`。因此不需要按工具名特判，靠既有的 Waiting 语义即可。
 
-会话尚不存在时（UFO 中途启动）子代理事件仍会正常建档为 `Running`，保证指示灯能出现；但**不会**触发「新运行清除旧 Waiting」的规则，以免后台子代理误清掉其它会话的黄灯。
+上面第 6 条是这条链路上最容易写错的一处：**把「只见到子代理」当成「主线程在跑」**，灯就没有回落的地方（外部表现为会话永不落黄）。建档时对外仍显示绿灯，所以「灯出现了」不等于「起点是对的」。
 
 ### base_url 的来源
 
@@ -174,7 +179,10 @@ hook 通过 stdin 接收 JSON，UFO 从以下字段中提取信息：
 ```
 
 - 上限 4000 字符，超出截断并加 `…`（按字符计数，不截断 UTF-8）。
-- **先过通用标签引擎再裁剪**：注入内容按规则表处理，`drop` = 删标签连同内文（本平台的 `system-reminder` / `ide_opened_file` 等），`extract` = 只留标签内正文（别家平台的形态，见下方 Qoder 节）。规则表**一平台一份**：本平台读自己的 `.env` 键 `UFO_TAG_RULES_CLAUDE`（默认清一色 `drop`），没配就用 `claude.rs` 里的 `DEFAULT_TAG_RULES`；Qoder 那侧是 `UFO_TAG_RULES_QODER`，互不影响。
+- **先过通用标签引擎再裁剪**：注入内容按规则表处理，`drop` = 删标签连同内文（本平台的 `system-reminder` / `ide_opened_file` 等），`extract` = 只留标签内正文（别家平台的形态，见下方 Qoder 节）。规则表**一平台一份**：本平台读自己的键 `UFO_TAG_RULES_CLAUDE`（默认清一色 `drop`），没配就用 `claude.rs` 里的 `DEFAULT_TAG_RULES`；Qoder 那侧是 `UFO_TAG_RULES_QODER`，两个文件互不引用。
+  - 语法是逗号分隔的 `name` / `name:drop` / `name:extract`（只写 `name` 等同 `drop`，会剥掉误写的尖括号；**动作名写错的项整项丢弃**，不影响其它项）。值为空或整表都非法 → 回落该文件自己的 `DEFAULT_TAG_RULES`。
+  - ⚠️ 两个键由 `src-tauri/build.rs` **构建期**注入（`option_env!` → `cargo:rustc-env`）：hook 进程的 cwd 是被监测 agent 的项目目录，运行时读不到仓库的 `.env`，所以**改完 `.env` 必须重新构建**才生效。
+  - 扫描与边界（成对 / 自闭合 / 未闭合 / 多字节安全 / 同名前缀不误命中）是不认识平台的公共机制，在 `compat/mod.rs`（`apply_tag_rules` + `build_tag_rules`）；**「删哪些标签、用哪种动作」才是各平台的策略**。新平台该选哪个方向见 `../guide/agent-status-platform-onboarding-guide.md`。
 - **只认 `UserPromptSubmit`**：同轮内后续事件（`PreToolUse` 等）本就不带 `prompt`，由内核继承该值；下一次 `UserPromptSubmit` 才覆盖。即提示窗始终显示**最近一次用户手输**的提问。
 - ⚠️ `UserPromptExpansion` 紧随 `UserPromptSubmit` 触发、**同样携带 `prompt`**，但那是斜杠命令展开后的模板文本，不是用户输入。UFO 不放行它 —— 否则展开内容会立刻把用户真正的提问覆盖掉。
 
@@ -236,7 +244,7 @@ Claude Code 2.1.270 共 16 个（从 CLI 二进制常量提取），UFO 只把�
 | `Completed` | 按配置的 `retention_ms`（默认 30 秒）绿闪后**移除** |
 | `Waiting` + Stop 绿闪 | 按 `retention_ms` 绿闪后**落成黄常亮**（不移除） |
 | `Waiting` | **保留到同一 provider 的下次运行开始时清理**（30 分钟 failsafe 超时） |
-| `Running` | 进程死亡 → 立即移除；无新事件超时由主窗口「执行中超时」配置（默认 **60 秒**，范围 60–3600） |
+| `Running` | 进程死亡 → 立即移除；无新事件超时由主窗口「无响应超时」配置（旧名「执行中超时」，配置字段仍是 `running_timeout_ms`；默认 **60 秒**，范围 60–3600） |
 | `Error` / `Unknown` | 进程死亡 → 立即移除；60 秒无新事件 → 超时移除 |
 
 关键行为：当同一 provider 的新 `Running` 事件到来时，自动清除该 provider 的所有旧 `Waiting` 会话。
@@ -287,7 +295,7 @@ rollout 里**没有**审批的任何记录（记录类型、`item_completed` 的
 
 - 映射：**WaitingForUser**（黄灯不闪 —— 等人授权与「用户中断」同一语义，都不是错误）。
 - `tool_input.description` 进 `waiting_reason`，显示在 tooltip 的 head 行（窄了省略号，全文在 title）；没有 description 时退回 `tool_input.command`。
-- ⚠️ 适配器 `CodexPermissionAdapter` **刻意只认这一个事件**，其余一律 `Ok(None)` 静默忽略：多认一个就多一处与 rollout 抢同一盏灯的地方。
+- ⚠️ 适配器 `CodexPermissionAdapter` **刻意只认这一个事件**，其余一律 `Ok(None)` 静默忽略：多认一个就多一处与 rollout 抢同一盏灯的地方。**别「顺手」把它补回来** —— 两条源同时驱动同一会话会让灯态互顶。这条由两条命名测试锁着：`status/compat/mod.rs` 的 `codex_adapter_only_accepts_permission_request`（适配器只收这一个）与 `status/hook.rs` 的 `codex_hook_writes_only_permission_request`（写进 `~/.codex/hooks.json` 的也只有这一个）。
 - ⚠️ hook 仍可能整段静默失效（实测过一次），所以它只是锦上添花：挂了就退化成绿灯，rollout 链路不受影响。
 
 ### rollout 在哪、长什么样
@@ -309,9 +317,25 @@ rollout 里**没有**审批的任何记录（记录类型、`item_completed` 的
 
 1. **发现**：扫最近两天的日期目录（目录名字典序即时间序，不需要本地日期库）；会话 id 取文件名末尾的 uuid（实测 == `session_meta.id`）。
 2. **播种**：注册时读一遍已有内容，只为拿 `cwd`（→ endpoint）与 token 累计，**不产出事件** —— 否则 UFO 一启动就会把当天所有历史会话复读成一串灯色动画。
-3. **增量**：之后只读新增字节。**文件在长 = 有活动**（绿）；只有上表的生命周期记录才改灯态；同一灯态只产出一次事件。长任务期间（Codex 一条记录都不写）每 30 秒补一条保活，避免被「执行中超时」清掉。
-4. **结束**：文件被移走（归档）且连续两轮读不到 → 会话结束（绿闪后移除）。
-5. **性能**：97% 的字节是命令输出/消息正文（单条可达 100 KB），先做一次子串预筛，只对命中小标记的行做完整 JSON 解析；增量游标保证与文件总大小无关。
+3. **增量**：之后只读新增字节。**文件在长 = 有活动**（绿）；只有上表的生命周期记录才改灯态；同一灯态只产出一次事件。长任务期间（Codex 一条记录都不写）每 30 秒补一条保活，否则会被「无响应超时」（旧名「执行中超时」，`RUNNING_KEEPALIVE`）清掉。⚠️ 去抖基线要跟着**实际灯态**走，见下面「批准后必须立刻回绿」那节。
+4. **结束**：文件被移走（归档，`archived_sessions/`）且连续两轮读不到（`MISSING_POLLS_BEFORE_END`）→ 会话结束（绿闪后移除）。
+5. **性能**：97% 的字节是命令输出/消息正文（单条可达 100 KB），`compat::codex::cares()` 先做一次子串预筛，只对命中小标记的行做完整 JSON 解析；增量游标保证与文件总大小无关。
+
+### 批准后必须立刻回绿：去抖基线要回灌（`note_light`）
+
+⚠️ **去抖基线必须跟着实际灯态走**，而 hook 把灯抬成黄的那一刻巡检器并不知情。所以 monitor 对**来源是 hook** 的 Codex 事件调用 `codex_rollout.rs::note_light()` 把新灯态回灌成基线 —— `apply_status_event` 的 `source: EventSource`（`Hook` / `Rollout`）参数就是为这件事存在的。
+
+不回灌的后果很具体：审批期间 rollout 一条记录都不写（实测），批准后命令一跑、文件重新在长，巡检器算出的「绿」与它心里那份旧基线**相同** → 被当成重复事件整个吃掉，灯卡在黄直到 30 秒保活才回来。转灯日志里这一对是 `BaselineReflow`（`baseline_reflow`）顶住了 `same_as_last_round_baseline`。
+
+### 每轮的处理顺序：rollout 先、inbox 后
+
+⚠️ **别调回去**。hook 事件代表**更晚发生**的事实（弹审批框之前 rollout 已经写过 `function_call` 记录），所以它必须放后手，才能在同一轮里压过由「文件在长」推出的绿；反过来（inbox 先、rollout 后）会让刚抬起来的黄灯被同一批旧字节顶回绿。通用口径见 `../guide/agent-status-platform-onboarding-guide.md` §9 的接线纪律。
+
+### endpoint 与 token 怎么取
+
+- **Endpoint**：`$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`）→ `<cwd>/.codex/config.toml` 覆盖；取顶层 `model_provider` 指向的 `[model_providers.<name>].base_url`；环境变量 `OPENAI_BASE_URL` / `OPENAI_API_BASE` 兜底。**只读这一个 key**，`~/.codex/auth.json` 一律不碰。解析用 `basic-toml`（只读；刻意不引官方 `toml`，免得把 `toml_edit` 一起拖进来）。同一套规则被「代理解析器」复用（`status::base_url_from_config_text`），保证 tooltip 显示的 endpoint 与反查出的上游**同源**——采集链路与解析器口径的整体约定见 `agent-status-session-data.md`。
+- ⚠️ **token 口径与 Anthropic 相反**：`event_msg`/`token_count` 里的 `info.total_token_usage` 是**会话级累计值**（不是增量）—— 同一文件内逐字段取 max，同一会话的多份 rollout 文件各自相加。它的 `input_tokens` 是 prompt 总量、**已经包含** `cached_input_tokens` 与 `cache_write_input_tokens`（实测 `total_tokens == input + output`），映射到 UFO 的模型时**必须把这两项减出来**，否则前端 `tokenTotal()` 会把缓存算两遍（实测缓存占比可达 1/3）。`output_tokens` 已含 `reasoning_output_tokens`，不重复加。
+- ⚠️ **Codex 的用量不在 `status/tokens.rs`**：那个模块只管 Claude 的 transcript（按 `message.id` 去重累加）。
 
 ### 取不到的东西
 

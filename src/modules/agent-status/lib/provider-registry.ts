@@ -9,7 +9,7 @@ import qoderIcon from '@/assets/icon/qoder.svg'
  * 用三元表达式散在 4 个视图里，且 `isStatusSnapshot` 按字面量白名单校验 provider ——
  * 新平台的每一帧推送都会被整帧丢弃，灯冻结在首帧（首帧走 invoke，不经这道校验）。
  * 收敛成注册表 + 未登记即降级显示，接入面从「改 6 处」降到「加 1 行」。
- * 规范全文见 `reference/doc/agent-status-platform-onboarding.md`。
+ * 规范全文见 `reference/doc/guide/agent-status-platform-onboarding-guide.md`。
  */
 export interface ProviderMeta {
   /** 可见名称与读屏文案（如 `Claude`）。 */

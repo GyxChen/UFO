@@ -3,7 +3,7 @@
  *
  * 这里是前端一侧「认识推送」的唯一位置：面板与 store 都从本文件取类型与判据，
  * 后端对应的解释器是 `src-tauri/src/modules/agent_status/push/config.rs`，两边口径必须一致
- * （`push.spec.ts` 锁住这一点）。规范全文见 `reference/doc/agent-status-push-guide.md`。
+ * （`push.spec.ts` 锁住这一点）。规范全文见 `reference/doc/guide/agent-status-push-guide.md`。
  *
  * 配置存放在外壳的 `module_settings['agent-status'].push` 里：外壳只按 id 整块透传，
  * 不认识里面任何字段，所以加一个推送设置项不需要动外壳。

@@ -133,7 +133,7 @@ impl HookAdapter for QoderAdapter {
 /// 把 Qoder 的事件名（已归一化成 snake_case）翻译成内核事件种类。
 ///
 /// 表里的名字来自 Qoder 实际会触发的 hook 事件（`~/.qoder/settings.json` 可配的那 12 个，
-/// 其中大部分已在真实会话里实测到）。灯色语义与 `reference/doc/agent-status-hooks.md` 一致：
+/// 其中大部分已在真实会话里实测到）。灯色语义与 `reference/doc/rule/agent-status-hooks.md` 一致：
 /// 绿常亮 = 执行中；黄 = 等人操作；绿闪落黄 = Stop；绿闪移除 = SessionEnd；红 = StopFailure。
 fn classify(normalized_event: &str, notification_type: Option<&str>) -> AgentEventKind {
     match normalized_event {

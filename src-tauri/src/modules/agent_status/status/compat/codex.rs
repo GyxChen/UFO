@@ -193,7 +193,7 @@ pub(crate) fn is_function_call_output_for(line: &[u8], call_id: &str) -> bool {
 
 /// 把一行 rollout 记录归一化成 [`CodexRecord`]；认不出返回 None。
 ///
-/// 灯态映射（与 CLAUDE.md 的指示灯约定一致）：
+/// 灯态映射（与 `reference/doc/rule/agent-status-hooks.md` 的指示灯约定一致）：
 /// - `session_meta` / `task_started` / `user_message` → 🟢 Running
 /// - `request_user_input` → 🟡 WaitingForUser（等用户回答，不应显示绿灯）
 /// - 配对的 `function_call_output` → 🟢 Running（用户回答后继续执行）

@@ -27,7 +27,7 @@
 //!    `settings_config`）任何档都不写。
 //! 3. **理由必须是具名枚举**。自由文本没法聚合、没法解释，也就没法变成验收清单。
 //!
-//! 完整黑洞清单与验收见 `reference/doc/agent-status-log-guide.md`。
+//! 完整黑洞清单与验收见 `reference/doc/guide/agent-status-log-guide.md`。
 
 mod commands;
 mod config;

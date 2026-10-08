@@ -1,6 +1,6 @@
 //! 平台兼容层：把各平台 hook 的「原始负载」归一化成内核事件。
 //!
-//! 分层约定（见 CLAUDE.md「平台兼容层 / 内核层」）：
+//! 分层约定（见 `reference/doc/guide/agent-status-platform-onboarding-guide.md` §7–§9）：
 //!
 //! ```text
 //! claude hook payload ─┐
@@ -19,7 +19,7 @@
 //! `claude::provider_base_url`、`proxy::AgentApp::from_provider` 三处**穷尽 match 会编译报错**，
 //! 逐个点名要登记的地方（这是特性不是缺陷 —— 漏登记编译不过）。前端展示名/图标走
 //! `src/modules/agent-status/lib/provider-registry.ts` 加一行。
-//! 完整改动清单与验收见 `reference/doc/agent-status-platform-onboarding.md`。
+//! 完整改动清单与验收见 `reference/doc/guide/agent-status-platform-onboarding-guide.md`。
 
 pub(crate) mod claude;
 pub(crate) mod codex;
