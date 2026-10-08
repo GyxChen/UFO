@@ -28,6 +28,8 @@ export const agentStatusModule: FloatingModuleDefinition = {
   id: 'agent-status',
   label: 'Agent 状态灯',
   description: '每个 CLI 会话一盏灯：绿=执行中 / 黄=等待操作 / 红=出错；放不下的折成 +N 环，悬停看折叠的那几盏。',
+  // 预览身份色：状态灯的语义就是绿。
+  tint: 'var(--ufo-status-green)',
   version: 1,
   defaultEnabled: true,
   supportedLayouts: ['square', 'corner', 'horizontal', 'vertical'],

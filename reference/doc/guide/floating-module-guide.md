@@ -96,7 +96,7 @@ src/
 │  │  ├─ FloatingModuleHost.vue   #   宿主：挂载启用组件，汇总格子需求 → 窗口尺寸，按需求分槽
 │  │  ├─ FloatingModuleSlot.vue   #   槽位：注入 floatingModuleKey，根节点标 data-module-id
 │  │  ├─ FloatingModulesPanel.vue #   「悬浮窗设置」页：组件列表（开关 / 齿轮 / 排序）+ 格子大小 + 版本卡
-│  │  ├─ FloatingShapePreview.vue #   三形态预览：按真实比例等比缩放，色块按需求比例分槽
+│  │  ├─ FloatingShapePreview.vue #   三形态预览：当前形态放大 + 颜色↔组件图例 + 其余两态缩略
 │  │  └─ tooltip/                 #   TooltipRow.vue / TooltipSection.vue（信息卡通用行与分组）
 │  ├─ ui/                         # 通用控件（BaseButton / BaseSelect / BaseTabs / ScriptEditor…）
 │  ├─ MainWindow.vue              # 主窗外壳：一级 + 二级 tabbar
@@ -198,6 +198,7 @@ export const FLOATING_MODULE_DEFINITIONS: FloatingModuleDefinition[] = [agentSta
 | `id` | ✅ | 组件唯一 id，同时是配置里的键 | 只允许字母 / 数字 / 短横线；一旦发布**不要再改**（改 = 丢掉用户配置与存档）。后端**没有 id 白名单**，只校验长度（≤64）与字符集（不含 `/` `\`），因此新组件不需要后端登记 |
 | `label` | ✅ | 组件列表里的名字 | 4–8 个汉字最佳，别写成句子 |
 | `description` | ✅ | 组件列表里的一句话说明 | 说清「它显示什么」，不要写实现细节 |
+| `tint` | ❌ | 三形态预览里的身份色（任意 CSS 颜色，建议给 token 而不是字面色值） | 外壳**不解释**取值，只原样画进色块与图例点；省略时预览回落强调色。⚠️ 只服务预览，不参与组件自己在悬浮窗里的配色 |
 | `version` | ✅ | 组件自己的版本号 | 供将来做组件级配置迁移；与配置的 `schema_version` 不是一回事 |
 | `defaultEnabled` | ✅ | 配置里没有该组件时的兜底启用状态 | 新组件建议 `false`（避免用户升级后被突然出现的东西吓到）；状态灯这类核心组件为 `true` |
 | `supportedLayouts` | ✅ | 支持哪些形态 | 至少要支持 `square`；不含当前形态时宿主**不挂载它、它也不参与格子汇总**（等于自动让位，因此别指望它在别的形态下存活） |
@@ -363,6 +364,8 @@ const partitioned = computed(() => partitionIndicatorSessions(store.sessions, pr
 宿主需要在**不挂载组件**的前提下算出任意形态下窗口该多大 —— 主窗口的组件列表徽标与三形态预览就是这么来的。所以需求是「定义的一部分」，不是「组件的运行时状态」。
 
 一次算全的入口是纯函数 `runtimeSnapshot(current, config, definitions, layoutMaxFor)`（`src/lib/floating-modules.ts`），返回 `{ layout, byLayout }`：`byLayout` 逐形态给出「moduleId → 需求格数」与该形态的窗口总格数。悬浮窗把它广播出去（`ufo-floating-runtime`，补发请求见 13.2），主窗的列表徽标与 `FloatingShapePreview.vue` 读的都是同一份 —— 因此**预览与真窗口永远不会算出两个尺寸**。
+
+预览的画法是**方案 C**：只把**当前形态**按真实比例放大画进画布，旁边配一份「颜色 ↔ 组件 ↔ 需求格数」图例，其余两态降成缩略索引（各带自己的像素读数）。预览只列**三组**：四角 / 横条 / 竖条 —— 未贴边的方形折进「四角」那一组（它整窗就一格，就是那一组最短的形态），但当前那一组按**实际形态**画：未贴边时标题写「四角 · 未贴边」，读数仍是 1×1 · 一格像素，不会拿贴角的比例冒充现状。⚠️ 早期版本把三态各自等比缩进同样大的框，于是 1 格与 16 格看着一样大（比例不可比）、三块同色也读不出谁是谁；改画布尺寸时**不要**再引入「每组一个上限」的算法。色块的分槽权重与宿主同源（横条按列宽、其余按行高），⚠️ **块的大小只由格数决定，名字不参与**：`.shape-preview__block` 必须留 `flex-basis: 0`（flex 默认 `auto` 会把标签的固有宽度算进起点，长名字的块就比它实际占的格数更宽，「按真实比例画」当场作废）。名字太窄放不下时不渲染（宽 <22px 或高度连一行 11px 都装不下），放得下就**在块内折行**，行数按块高度算好塞进 `--label-lines`；不许改回 `nowrap` + 省略号。完整信息另外走 `title`。
 
 ```ts
 // src/modules/<id>/demand.ts

@@ -815,7 +815,9 @@ html.is-tooltip-window #app {
 .module-catalog {
   @apply grid w-full gap-3;
   grid-template-columns: minmax(300px, 1fr) minmax(0, 1.05fr);
-  align-items: start;
+  /* 两列等高：右列预览卡吃满左列（列表 + 格子大小 + 版本）堆出来的高度，
+   * 多出来的空间由画布吸收 —— 画布里的窗口图示是绝对定位的，不会反过来把卡片顶高。 */
+  align-items: stretch;
 }
 
 @media (max-width: 760px) {
@@ -824,9 +826,14 @@ html.is-tooltip-window #app {
   }
 }
 
-/* 左列 = 组件列表 + 格子大小卡，两张卡纵向堆叠；右列只有预览卡。 */
+/* 左列 = 组件列表 + 格子大小卡 + 版本卡，三张卡纵向堆叠；右列只有预览卡。 */
 .module-catalog__column {
   @apply flex w-full min-w-0 flex-col gap-3;
+}
+
+/* 右列只有预览卡一张，让它占满列高（内部高度链见 .shape-preview）。 */
+.module-catalog__preview {
+  @apply min-h-0 flex-1;
 }
 
 /* 各列里的卡片都撑满自己的网格列：卡片默认带 max-w-md（14px 根字号下只有 392px），
@@ -944,9 +951,14 @@ html.is-tooltip-window #app {
   color: var(--ufo-text);
 }
 
-/* 三形态预览：真实比例等比缩放进卡片，每个色块按需求比例分配。 */
+/*
+ * 三形态预览（方案 C）：当前形态放大 + 颜色↔组件图例 + 其余两态缩略。
+ * 未贴边的方形不占缩略位，折在「四角」那一组里按实际形态画（一格）。
+ * 高度链：卡片（.module-catalog__preview，flex-1）→ .shape-preview（h-full）
+ * → .shape-preview__hero（flex-1）→ 画布（flex-1）。缺一环预览就不会跟左列等高。
+ */
 .shape-preview {
-  @apply flex w-full flex-col gap-3;
+  @apply flex h-full min-h-0 w-full flex-col gap-3;
 }
 
 .shape-preview__empty {
@@ -954,66 +966,160 @@ html.is-tooltip-window #app {
   color: var(--ufo-muted);
 }
 
-.shape-preview__group {
-  @apply flex flex-col gap-1.5 border-t pt-2;
-  border-color: var(--ufo-border);
+/* 上半区：左画布 + 右图例，横向并排；多余高度全给画布。 */
+.shape-preview__hero {
+  @apply flex min-h-0 flex-1 items-stretch gap-3;
 }
 
-.shape-preview__group:first-child {
-  @apply border-t-0 pt-0;
-}
-
-.shape-preview__head {
-  @apply flex items-baseline gap-2;
-}
-
-.shape-preview__title {
-  @apply m-0 text-[12px] font-semibold;
-}
-
-.shape-preview__badge {
-  @apply rounded-full px-1.5 py-0.5 text-[10px];
-  background: var(--ufo-accent-soft);
-  color: var(--ufo-accent-text);
-}
-
-.shape-preview__formula {
-  @apply ml-auto text-[10px];
-  color: var(--ufo-muted);
-}
-
-.shape-preview__stage {
-  @apply flex items-center justify-center rounded-lg p-2.5;
+/*
+ * 画布（舞台）：窗口图示用绝对定位摆在里面 —— 因为它的大小由 JS 按画布量出来，
+ * 若参与布局就会「画布变大→图示变大→卡片更高→画布又变大」自激。绝对定位把它从
+ * 固有高度里摘出去，反馈链当场断掉。
+ */
+.shape-preview__canvas {
+  @apply relative grid min-h-[150px] flex-1 place-items-center rounded-[10px] p-3;
   background: var(--ufo-input);
-  min-height: 96px;
+  border: 1px solid var(--ufo-border);
 }
 
-/* 画出来的窗口：贴边后的真实比例（含 1px 边框），内部按需求比例分槽。 */
+.shape-preview__canvas .shape-preview__window {
+  @apply absolute inset-0 m-auto;
+}
+
+/*
+ * 画出来的窗口：贴边后的真实比例（含 1px 外壳描边），内部按需求比例分槽。
+ * 格子辅助线按窗口自己的行列切（--grid-cols / --grid-rows），所以缩放到多大都对得齐。
+ */
 .shape-preview__window {
   @apply flex gap-px overflow-hidden rounded-[6px];
-  background: var(--ufo-border-strong);
-  border: 1px solid var(--ufo-border-strong);
+  background: var(--ufo-bg-main);
+  border: 1px solid var(--ufo-shell-border);
+  background-image:
+    linear-gradient(to right, var(--ufo-border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--ufo-border) 1px, transparent 1px);
+  background-size:
+    calc(100% / var(--grid-cols, 1)) 100%,
+    100% calc(100% / var(--grid-rows, 1));
 }
 
+/* 分槽方向与宿主一致：横条左右并排，方形 / 四角 / 竖条上下堆叠。 */
+.shape-preview__window--square,
 .shape-preview__window--corner,
 .shape-preview__window--vertical {
   flex-direction: column;
 }
 
+/* 缩略图太小，画格子线只会糊成一团。 */
+.shape-preview__window--thumb {
+  @apply rounded-[4px];
+  background-image: none;
+}
+
+/*
+ * 色块：身份色取自模块定义的 `tint`（外壳不解释取值），底色压淡、描边加重一档。
+ * ⚠️ `flex-basis: 0` + 两条 min-0 是「名字不改变色块比例」的防线：flex 默认 `basis: auto`
+ * 会把标签文字的固有宽度算进起点，长名字的块就看着比它实际占的格数更宽（纵向分槽时是高度）。
+ * 归零之后块的大小只由内联的 `flex-grow`（= 需求格数）决定，标签只能在块内折行、溢出被切掉。
+ */
 .shape-preview__block {
-  @apply flex min-w-0 items-center justify-center overflow-hidden;
+  @apply flex min-h-0 min-w-0 items-center justify-center overflow-hidden;
+  flex-basis: 0;
+  background: var(--block-tint, var(--ufo-accent));
+  background: color-mix(in srgb, var(--block-tint, var(--ufo-accent)) 26%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--block-tint, var(--ufo-accent)) 48%, transparent);
+}
+
+/*
+ * 色块小到放不下名字时根本不渲染（`showLabel` / `--label-lines` 的账在 FloatingShapePreview，
+ * 一行按 11px 算，与这里的 9px × 1.15 同源）。放得下就**折行**，行数是块高度的预算，
+ * 折到装不下才省略号收 —— 不写 nowrap：那样文字会去争色块的宽度，比例就假了。
+ */
+.shape-preview__block-label {
+  @apply w-full px-0.5 text-center text-[9px] font-semibold leading-[1.15];
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--label-lines, 1);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--ufo-text);
+}
+
+/* 图例：回答「哪块是谁、各要几格」，所以颜色点与格数都必须常驻。 */
+.shape-preview__legend {
+  @apply flex min-w-0 shrink-0 flex-col justify-center gap-2;
+  flex-basis: 45%;
+}
+
+.shape-preview__head {
+  @apply flex items-center gap-2;
+}
+
+.shape-preview__title {
+  @apply m-0 text-[12px] font-semibold;
+  color: var(--ufo-heading);
+}
+
+.shape-preview__badge {
+  @apply rounded-full px-1.5 py-0.5 text-[10px] font-semibold;
   background: var(--ufo-accent-soft);
   color: var(--ufo-accent-text);
 }
 
-/* 色块小到放不下名字时不渲染（见 FloatingShapePreview 的 showLabel），这里只兜住省略号。 */
-.shape-preview__block-label {
-  @apply block max-w-full overflow-hidden text-[9px] whitespace-nowrap;
-  text-overflow: ellipsis;
+.shape-preview__rows {
+  @apply m-0 flex list-none flex-col gap-1 p-0;
 }
 
-.shape-preview__size {
-  @apply m-0 text-[10px] tabular-nums;
+.shape-preview__row {
+  @apply flex items-center gap-2 text-[12px];
+}
+
+.shape-preview__dot {
+  @apply h-2.5 w-2.5 shrink-0 rounded-[3px];
+  background: var(--block-tint, var(--ufo-accent));
+}
+
+.shape-preview__row-name {
+  @apply min-w-0 flex-1 truncate;
+}
+
+.shape-preview__cells {
+  @apply shrink-0 text-[11px] tabular-nums;
+  font-family: var(--font-mono);
+  color: var(--ufo-muted);
+}
+
+.shape-preview__readout {
+  @apply m-0 text-[11px] tabular-nums;
+  font-family: var(--font-mono);
+  color: var(--ufo-text);
+}
+
+.shape-preview__cell-note {
+  @apply m-0 text-[10px];
+  font-family: var(--font-mono);
+  color: var(--ufo-muted);
+}
+
+/* 缩略排：其余两态（未贴边的方形不占位），贴卡片底部（mt-auto），与主图之间一条强分隔。 */
+.shape-preview__thumbs {
+  @apply mt-auto flex list-none items-stretch gap-2 border-t p-0 pt-3;
+  border-color: var(--ufo-border);
+}
+
+.shape-preview__thumb {
+  @apply flex flex-1 flex-col items-center gap-1.5 rounded-[8px] border p-2;
+  background: var(--ufo-surface-2);
+  border-color: var(--ufo-border);
+}
+
+.shape-preview__thumb-name {
+  @apply text-[10px];
+  color: var(--ufo-muted);
+}
+
+.shape-preview__thumb-size {
+  @apply text-[10px] tabular-nums;
+  font-family: var(--font-mono);
   color: var(--ufo-muted);
 }
 

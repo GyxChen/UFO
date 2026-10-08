@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * 主窗「悬浮窗设置」页（方案 C）：左边是组件列表（启用开关 / 需求 / 顺序 / 齿轮）+ 格子大小卡，
- * 右边顶上是版本卡、下面是悬浮窗在三种形态下的实时预览。
+ * 主窗「悬浮窗设置」页（方案 C）：左列是组件列表（启用开关 / 需求 / 顺序 / 齿轮）+ 格子大小卡 + 版本卡，
+ * 右列整块给悬浮窗在三种形态下的实时预览。
  *
  * 列表里的每一行都来自注册表（新增组件自动出现）；顺序写进配置的 `order`，
  * 与悬浮窗里的先后顺序是同一个字段。齿轮与「点悬浮窗上的组件」都打开同一个设置页。
@@ -229,7 +229,7 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
 
       <!--
         格子大小自成一卡，紧贴组件列表下方：它是**整个悬浮窗**的尺寸基准（同级组件共享一格边长），
-        不属于任何一个组件，也不只是预览卡的附属项。右卡只留预览。
+        不属于任何一个组件，也不只是预览卡的附属项。预览独占右列。
       -->
       <section class="ufo-card module-catalog__cell-card" aria-labelledby="module-cell-size-title">
         <div class="ufo-card__header">
@@ -265,12 +265,12 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
           </BaseButton>
         </div>
       </section>
+
+      <!-- 版本一行读完，收在左列最下面；右列整块都给预览，它要跟着格子大小实时长缩。 -->
+      <AboutPanel />
     </div>
 
     <div class="module-catalog__column">
-      <!-- 版本卡放右列最上面：预览要跟着格子大小实时长缩，占下面的大块；版本一行读完，占顶上。 -->
-      <AboutPanel />
-
       <section class="ufo-card module-catalog__preview" aria-labelledby="module-preview-title">
         <div class="ufo-card__header">
           <h2 id="module-preview-title" class="ufo-card__title">悬浮窗预览</h2>

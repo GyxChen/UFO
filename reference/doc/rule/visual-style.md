@@ -209,7 +209,7 @@
 | `.main-window--stack` | `flex-1` + `items-stretch` + `overflow-y: auto`，横向铺满、**整页滚** | 「悬浮窗设置」页、无 `fill` 的组件分区 |
 | `.main-window--wide` | `flex-1` + `items-stretch` + `overflow: hidden`，横向铺满、**外层不滚** | 带 `fill: true` 的组件分区 |
 
-- **「悬浮窗设置」页（方案 C）**：容器 `.main-window--stack`，一页到底。左列「组件列表 + 格子大小卡 + 版本卡」三张卡纵向堆叠，右列只有三形态预览，两列由 `.module-catalog` 排成 grid 并 `align-items: start`（⚠️ 两列互不拉伸）。窄窗口（`max-width: 760px`）塌成单列。
+- **「悬浮窗设置」页（方案 C）**：容器 `.main-window--stack`，一页到底。左列「组件列表 + 格子大小卡 + 版本卡」三张卡纵向堆叠，右列只有三形态预览。两列**等高**（`.module-catalog` 用 `align-items: stretch`）：预览卡 `.module-catalog__preview` 带 `flex-1 + min-h-0` 吃满列高，多出来的空间全给画布。⚠️ 画布里的窗口图示是**绝对定位**的（`.shape-preview__canvas .shape-preview__window`）—— 它的大小由 JS 量画布算出，若参与布局就会「画布变大 → 图示变大 → 卡片更高 → 画布又变大」自激，摘出固有高度这条链当场断掉。窄窗口（`max-width: 760px`）塌成单列。
 - ⚠️ 卡片默认带 `max-w-md` 限宽，**横向并排时必须放开**，否则右侧留一大片空白。放开的方式有坑（模块 CSS 排在 `main.css` 之前，单类覆盖会被压回去），见 `../guide/agent-status-push-guide.md` 的「两个类权重」条。
 - `.main-window--wide` 内部各列自己滚、占满剩余高度，靠的是 §10 那条高度链。
 - 判据一句话：**「内容要多高算多高、滚外层」= stack；「面板占满高度、内层各自滚」= wide**，选错就同时踩 §10 的坑。

@@ -25,6 +25,8 @@ export const todoModule: FloatingModuleDefinition = {
   id: 'todo',
   label: '滴答待办',
   description: '滴答清单：三组数字显示高 / 中 / 低三档的未完成数，悬停查看未完成任务并可直接完成。',
+  // 预览身份色：黄档与灯的「等待」同色，但预览只用来分辨组件，不参与灯语义。
+  tint: 'var(--ufo-status-yellow)',
   version: 1,
   // 新组件默认关闭：用户升级后不会凭空多出一块弹窗，要自己在「悬浮窗设置」里开。
   defaultEnabled: false,

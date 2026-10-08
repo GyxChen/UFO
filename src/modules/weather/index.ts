@@ -19,6 +19,8 @@ export const weatherModule: FloatingModuleDefinition = {
   id: 'weather',
   label: '实时天气',
   description: '和风天气：实时温度与天气状况，悬停查看气压、风力及 24h 趋势。',
+  // 预览身份色：与状态灯（绿）、待办（黄）拉开，三块色块在预览里能分辨。
+  tint: 'var(--ufo-status-blue)',
   version: 1,
   defaultEnabled: false,
   supportedLayouts: ['square', 'corner', 'horizontal', 'vertical'],

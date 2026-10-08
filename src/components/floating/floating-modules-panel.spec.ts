@@ -34,7 +34,7 @@ function backendConfig(cellPx?: number): FloatingModuleConfig {
   }
 }
 
-/** 悬浮窗广播来的运行时快照：4 格，方形与四角都是 2×2。 */
+/** 悬浮窗广播来的运行时快照：单模块 4 格需求（未贴边的窗只画一格）。 */
 const runtime: FloatingRuntimeSnapshot = {
   layout: 'square',
   byLayout: {
@@ -99,8 +99,11 @@ describe('FloatingModulesPanel · 格子大小', () => {
     await input.trigger('input')
     await flushPromises()
 
-    // 预览立刻按新尺寸重算（4 格 → 四角边长 2×2 格）。
-    expect(wrapper.get('.shape-preview__size').text()).toContain('未贴边 64×64')
+    // 预览立刻按新尺寸重算：未贴边折在「四角」那一组里，整窗就一格 → 64×64，
+    // 缩略排里的横条按 4 格并排算出 256×64。
+    expect(wrapper.get('.shape-preview__readout').text()).toContain('64×64px')
+    const stripThumb = wrapper.findAll('.shape-preview__thumb').find(thumb => thumb.text().startsWith('横条'))
+    expect(stripThumb?.text()).toContain('256×64')
     expect(wrapper.get('.module-catalog__cell-value').text()).toBe('64px')
     // 拖动过程中不落盘：真窗口与配置文件都不该被打扰。
     expect(saved).toBeNull()
@@ -130,11 +133,11 @@ describe('FloatingModulesPanel · 格子大小', () => {
     const wrapper = mountWith(backendConfig(FLOATING_BASE_CELL_PX))
     const cards = wrapper.get('.module-catalog__column').findAll('.ufo-card')
 
-    // 左列两张卡：组件列表在上、格子大小在下（尺寸基准不属于任何一个组件）。
-    expect(cards.map(card => card.classes().find(name => name.startsWith('module-catalog__')))).toEqual([
-      'module-catalog__list',
-      'module-catalog__cell-card',
-    ])
+    // 左列三张卡：组件列表 → 格子大小 → 版本。
+    // 尺寸基准不属于任何一个组件；版本一行读完，压在最下面，右列整块留给预览。
+    expect(
+      cards.map(card => card.classes().find(name => name.startsWith('module-catalog__')) ?? card.attributes('aria-labelledby'))
+    ).toEqual(['module-catalog__list', 'module-catalog__cell-card', 'about-version-title'])
     // 滑块搬出预览卡：预览只负责显示形态，不再夹带尺寸调节。
     expect(wrapper.get('.module-catalog__preview').find('.base-slider__input').exists()).toBe(false)
   })
