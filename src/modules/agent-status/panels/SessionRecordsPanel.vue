@@ -12,10 +12,11 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { formatTokenCount, formatTokenMillions, tokenTotal } from '../lib/agent-status'
-import { providerFallbackMark, providerMeta } from '../lib/provider-registry'
+import { providerFallbackMark, providerIcon, providerMeta } from '../lib/provider-registry'
 import { formatRecordTime, recordEndpoint, recordLocalNote, type SessionRecord } from '../lib/session-records'
 import { useAgentStatusStore } from '../stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import { useThemeStore } from '@/stores/theme'
 import { useSessionRecordsStore } from '../stores/sessionRecords'
 import { useStatusLogStore } from '../stores/statusLog'
 import { agentStatusSettings } from '../settings'
@@ -28,6 +29,8 @@ const records = useSessionRecordsStore()
 const agentStatus = useAgentStatusStore()
 const modules = useFloatingModulesStore()
 const log = useStatusLogStore()
+// 外壳的主题 store：平台图标按档取对应的那份 svg。
+const theme = useThemeStore()
 
 /** 当前选中的存档 key；null 表示还没有记录可选。 */
 const selectedKey = ref<string | null>(null)
@@ -88,11 +91,16 @@ onBeforeUnmount(() => {
 })
 
 /**
- * 列表行 + 各自的平台元信息，一次算好。
+ * 列表行 + 各自的平台元信息 + 按当前主题解析出的图标，一次算好。
  *
  * 未登记平台要在「图标」与「首字符徽标」两种节点间分流，模板里现查两次注册表拿不到类型收窄。
  */
-const recordRows = computed(() => records.records.map(record => ({ record, meta: providerMeta(record.provider) })))
+const recordRows = computed(() =>
+  records.records.map(record => {
+    const meta = providerMeta(record.provider)
+    return { record, meta, icon: providerIcon(meta, theme.isDark) }
+  })
+)
 
 /** 按本组件配置里的单位格式化 token 总量；无统计值返回空串，由调用方显 `—` 占位。 */
 function tokenDisplay(tokens: SessionRecord['tokens']): string {
@@ -176,7 +184,7 @@ function onClearAll() {
         还没有会话记录。会话活动后会自动存档，重启或 --resume 后也能恢复。
       </p>
       <ul v-else class="sr-list">
-        <li v-for="{ record, meta } in recordRows" :key="record.key" class="sr-list__item">
+        <li v-for="{ record, meta, icon } in recordRows" :key="record.key" class="sr-list__item">
           <button
             type="button"
             class="sr-list__row"
@@ -185,14 +193,8 @@ function onClearAll() {
             @click="selectedKey = record.key"
           >
             <span class="sr-list__line">
-              <!-- 平台图标与是否反相来自 provider 注册表；未登记平台退化成首字符徽标。 -->
-              <img
-                v-if="meta.icon"
-                :src="meta.icon"
-                :alt="meta.label"
-                class="sr-list__icon"
-                :class="{ 'ufo-mono-icon': meta.mono }"
-              />
+              <!-- 平台图标按主题取对应的那份 svg；未登记平台退化成首字符徽标。 -->
+              <img v-if="icon" :src="icon" :alt="meta.label" class="sr-list__icon" />
               <span v-else class="sr-list__icon sr-list__icon--fallback" aria-hidden="true">{{
                 providerFallbackMark(record.provider)
               }}</span>

@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import FloatingModuleHost from '@/components/floating/FloatingModuleHost.vue'
 import type { FloatingModuleConfig } from '@/lib/floating-modules'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import { useThemeStore } from '@/stores/theme'
+import AgentStatusModule from './AgentStatusModule.vue'
 import { useAgentStatusStore } from './stores/agentStatus'
+import codexIcon from '@/assets/icon/codex.svg'
+import codexIconLight from '@/assets/icon/codex-light.svg'
 
 /**
  * 模块 × 宿主的契约测试：**不注入假模块**，走真实注册表，
@@ -23,14 +27,14 @@ const config: FloatingModuleConfig = {
   module_settings: { 'agent-status': { completed_retention_ms: 30_000, running_timeout_ms: 60_000 } },
 }
 
-/** 造 5 个假会话，返回最近一次上报的窗口格子数。 */
-function seedSessions(count: number) {
+/** 造 N 个假会话（provider 默认 claude；测图标分档时用 codex —— 它两档资源不同）。 */
+function seedSessions(count: number, provider = 'claude') {
   useAgentStatusStore().applySnapshot({
     revision: 1,
     source_health: 'healthy',
     sessions: Array.from({ length: count }, (_, index) => ({
-      key: `claude:session-${index}`,
-      provider: 'claude',
+      key: `${provider}:session-${index}`,
+      provider,
       session_id: `session-${index}`,
       phase: 'running',
       source: 'hook',
@@ -76,5 +80,24 @@ describe('agent-status 与宿主的契约', () => {
     const cells = wrapper.emitted('cells') as [number][] | undefined
     expect(cells?.at(-1)?.[0]).toBe(5)
     expect(wrapper.find('.floating-module-host').attributes('style')).toContain('grid-template-columns: 5fr')
+  })
+
+  it('平台图标按主题换资源，不靠 CSS 反相', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    seedSessions(1, 'codex')
+    const theme = useThemeStore(pinia)
+
+    const wrapper = mount(AgentStatusModule, { props: { layoutMode: 'corner' }, global: { plugins: [pinia] } })
+    const icon = () => wrapper.get('.agent-status-module__icon')
+    // 深色档取白色那份；浅色档取深色墨那份 —— 两档各有各的资源。
+    expect(icon().attributes('src')).toBe(codexIcon)
+
+    theme.$patch({ theme: 'light' })
+    await wrapper.vm.$nextTick()
+    expect(icon().attributes('src')).toBe(codexIconLight)
+    // ⚠️ 反相滤镜只留给纯白单色的控件图标：平台 mark 上再挂 `.ufo-mono-icon` 就是把老方案请回来，
+    // 白 + 品牌绿的 Qoder 会被翻成品红。
+    expect(icon().classes()).not.toContain('ufo-mono-icon')
   })
 })

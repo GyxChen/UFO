@@ -97,9 +97,11 @@
 | `--ufo-danger-soft` | `rgba(248, 113, 113, 0.18)` | 危险浅底（关闭按钮 hover 等） |
 | `--ufo-ring` | `rgba(52, 211, 153, 0.55)` | 焦点环（`outline` / ring 展开层） |
 | `--ufo-selection` | `rgba(52, 211, 153, 0.3)` | 文本选中底 |
-| `--ufo-mono-icon-filter` | `none`（浅色档 `invert(1)`） | 纯白单色 SVG 图标的反相；`.ufo-mono-icon` 消费它 |
+| `--ufo-mono-icon-filter` | `none`（浅色档 `invert(1)`） | **仅外壳 / 公共控件**的纯白单色图标反相（close / gear / sun / moon / 主窗 tab）；`.ufo-mono-icon` 消费它 |
 
-⚠️ 非单色图标（如 Claude 的橙色）**不得**套 `.ufo-mono-icon`：反相会把立体阴影翻成负片、彩色翻成青蓝。
+⚠️ 反相只对「纯白单色」成立：非单色图标（如 Claude 的橙、Qoder 的白 + 品牌绿）**不得**套 `.ufo-mono-icon` —— 会把彩色翻成青蓝 / 品红。
+平台图标这类多档彩色资源一律按档各存一份 svg（见 `src/modules/agent-status/lib/provider-registry.ts` 的 `icon` / `iconLight`），不走滤镜。
+- 浅色档的墨色与 token 同值，改 token 时记得一起改文件：`codex-light.svg` / `qoder-light.svg` 的主体 `#18181b` = `--ufo-heading`，Qoder 的绿压深为 `#047857` = `--ufo-accent-text`（`#2ADB5C` 在白底上太飘）；`claude-light` 不需要 —— 品牌橙两档通用。
 
 ### 3.4 状态灯色（与指示灯语义一致）
 

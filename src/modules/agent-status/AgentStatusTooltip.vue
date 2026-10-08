@@ -18,9 +18,10 @@ import TooltipRow from '@/components/floating/tooltip/TooltipRow.vue'
 import TooltipSection from '@/components/floating/tooltip/TooltipSection.vue'
 import { useAgentStatusStore } from './stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import { useThemeStore } from '@/stores/theme'
 import { useFlowResultsStore } from './stores/flowResults'
 import { agentStatusSettings } from './settings'
-import { providerFallbackMark, providerMeta } from './lib/provider-registry'
+import { providerFallbackMark, providerIcon, providerMeta } from './lib/provider-registry'
 
 /**
  * Agent 状态灯的悬停信息卡，两种内容共用一个组件（按悬停目标分派）：
@@ -44,6 +45,8 @@ const props = defineProps<{
 const store = useAgentStatusStore()
 const modules = useFloatingModulesStore()
 const flowResults = useFlowResultsStore()
+// 外壳的主题 store：平台图标按档取对应的那份 svg。
+const theme = useThemeStore()
 
 /** 当前悬停的会话；目标已从快照消失（retention 移除）时为 null。 */
 const session = computed<SessionSnapshot | null>(
@@ -68,16 +71,22 @@ const hiddenSessions = computed(() => overflowList.value ?? [])
 const hiddenSegments = computed(() => overflowSegments(hiddenSessions.value))
 
 /**
- * 折叠清单的行：会话 + 各自的平台元信息，一次算好。
+ * 折叠清单的行：会话 + 各自的平台元信息 + 按当前主题解析出的图标，一次算好。
  *
  * 模板里未登记平台要在「图标」与「首字符徽标」两种节点间分流，取两次注册表既啰嗦也拿不到收窄。
  */
 const overflowRows = computed(() =>
-  hiddenSessions.value.map(item => ({ item, meta: providerMeta(item.provider) }))
+  hiddenSessions.value.map(item => {
+    const meta = providerMeta(item.provider)
+    return { item, meta, icon: providerIcon(meta, theme.isDark) }
+  })
 )
 
-/** 头部会话的平台元信息（名称 / 图标 / 是否反相）。未登记平台降级显示，而不是冒充 Claude。 */
-const provider = computed(() => providerMeta(session.value?.provider ?? ''))
+/** 头部会话的平台元信息（名称 / 按主题选定的图标）。未登记平台降级显示，而不是冒充 Claude。 */
+const provider = computed(() => {
+  const meta = providerMeta(session.value?.provider ?? '')
+  return { label: meta.label, icon: providerIcon(meta, theme.isDark) }
+})
 const statusColor = computed(() => (session.value ? colorForSession(session.value) : 'green'))
 
 /** Endpoint 展示值：命中代理解析的上游时优先显示上游，否则回落 base_url。 */
@@ -180,15 +189,8 @@ async function dismissSession() {
     <div class="tooltip-overflow-list">
       <div v-for="row in overflowRows" :key="row.item.key" class="tooltip-row tooltip-overflow-row">
         <span class="tooltip-dot" :class="`tooltip-dot--${colorForSession(row.item)}`" aria-hidden="true" />
-        <!-- 平台图标与是否反相来自 provider 注册表；未登记平台退化成首字符徽标。 -->
-        <img
-          v-if="row.meta.icon"
-          :src="row.meta.icon"
-          :alt="row.meta.label"
-          class="tooltip-provider-icon"
-          :class="{ 'ufo-mono-icon': row.meta.mono }"
-          aria-hidden="true"
-        />
+        <!-- 平台图标按主题取对应的那份 svg；未登记平台退化成首字符徽标。 -->
+        <img v-if="row.icon" :src="row.icon" :alt="row.meta.label" class="tooltip-provider-icon" aria-hidden="true" />
         <span v-else class="tooltip-provider-icon tooltip-provider-icon--fallback" aria-hidden="true">{{
           providerFallbackMark(row.item.provider)
         }}</span>
@@ -219,7 +221,6 @@ async function dismissSession() {
         :src="provider.icon"
         :alt="provider.label"
         class="tooltip-provider-icon"
-        :class="{ 'ufo-mono-icon': provider.mono }"
         aria-hidden="true"
       />
       <span v-else class="tooltip-provider-icon tooltip-provider-icon--fallback" aria-hidden="true">{{

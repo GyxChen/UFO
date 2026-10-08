@@ -94,7 +94,7 @@ describe('主题 token 护栏', () => {
   })
 
   it('drives the monochrome-icon filter from the light theme', () => {
-    // 白色图标（close / gear / codex / moon / sun）不反相的话在白底上直接隐形。
+    // 白色控件图标（close / gear / moon / sun）不反相的话在白底上直接隐形；平台图标按档各存一份 svg，不走这里。
     expect(dark).toContain('--ufo-mono-icon-filter')
     expect(css).toMatch(/\.ufo-mono-icon\s*\{\s*filter:\s*var\(--ufo-mono-icon-filter\)/)
   })

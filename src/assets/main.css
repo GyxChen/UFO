@@ -115,9 +115,10 @@
   --ufo-status-red-text: #f87171;
   --ufo-status-blue-text: #60a5fa;
 
-  /* —— 单色图标 ——
+  /* —— 单色控件图标 ——
      这几个 SVG 里写死 `fill="#ffffff"`（`<img>` 拿不到 currentColor），
-     浅色底上会隐形，靠这一档反相变深色。⚠️ 非单色图标（如 Claude 的橙色）不得套用。 */
+     浅色底上会隐形，靠这一档反相变深色。⚠️ 只用于 close / gear / moon / sun 这类纯白单色控件图标；
+     非单色图标（平台 mark）一律按主题各存一份 svg，反相会把彩色翻成青蓝 / 品红。 */
   --ufo-mono-icon-filter: none;
 
   --ufo-radius: 12px;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, watch } from 'vue'
 import { colorForSession, colorLabel, type SessionSnapshot } from './lib/agent-status'
-import { providerFallbackMark, providerMeta } from './lib/provider-registry'
+import { providerFallbackMark, providerIcon, providerMeta } from './lib/provider-registry'
 import { lightClassesOf, transitionsBetween, type LightClass } from './lib/agent-sound'
 import { playLightSound, preloadLightSounds } from './lib/sound-player'
 import {
@@ -14,6 +14,7 @@ import { cellsGrid, type FloatingLayout } from '@/lib/floating-layout'
 import { floatingModuleKey } from '@/lib/floating-module-context'
 import { useAgentStatusStore } from './stores/agentStatus'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+import { useThemeStore } from '@/stores/theme'
 import { agentStatusDemand } from './demand'
 import { agentStatusSettings } from './settings'
 import robotIcon from '@/assets/icon/robot.svg'
@@ -22,6 +23,8 @@ const props = defineProps<{ layoutMode: FloatingLayout }>()
 const store = useAgentStatusStore()
 // 宿主注入的模块上下文：没有时（单独渲染组件）退化成「独占窗口」，不影响显示。
 const moduleApi = inject(floatingModuleKey, null)
+// 外壳的主题 store：平台图标按档取对应的那份 svg。
+const theme = useThemeStore()
 
 /** 本模块在当前形态下要的格子数：与定义里声明的需求同源（见 `demand.ts`）。 */
 const demand = computed(() => agentStatusDemand(props.layoutMode))
@@ -69,13 +72,17 @@ const overflowLabel = computed(() => {
 const isEmpty = computed(() => partitioned.value.visible.length === 0 && partitioned.value.overflow === 0)
 
 /**
- * 可见灯 + 各自的平台元信息，一次算好。
+ * 可见灯 + 各自的平台元信息 + 按当前主题解析出的图标，一次算好。
  *
- * 模板里不再按 provider 现查注册表：未登记平台没有图标（`meta.icon` 为 null），
+ * 模板里不再按 provider 现查注册表：未登记平台没有图标（解析结果为 null），
  * 要换成首字符徽标，两种节点得在同一个 `v-if` 下分流，取两次 `providerMeta()` 既啰嗦也拿不到收窄。
+ * 图标按主题取对应的那份 svg（浅色档用深色墨版本），不再靠 CSS 反相。
  */
 const indicators = computed(() =>
-  partitioned.value.visible.map(session => ({ session, meta: providerMeta(session.provider) }))
+  partitioned.value.visible.map(session => {
+    const meta = providerMeta(session.provider)
+    return { session, meta, icon: providerIcon(meta, theme.isDark) }
+  })
 )
 
 /** 指示灯的读屏文案：provider + 会话 id 前 8 位 + 阶段。 */
@@ -144,14 +151,8 @@ onMounted(preloadLightSounds)
     >
       <span class="agent-status-module__dot" aria-hidden="true" />
       <span class="agent-status-module__identity" aria-hidden="true">
-        <!-- 平台图标与是否反相都来自 provider 注册表；未登记平台没有图标，退化成首字符徽标（灯照常亮）。 -->
-        <img
-          v-if="item.meta.icon"
-          :src="item.meta.icon"
-          :alt="item.meta.label"
-          class="agent-status-module__icon"
-          :class="{ 'ufo-mono-icon': item.meta.mono }"
-        />
+        <!-- 平台图标按主题取对应的那份 svg（注册表 + providerIcon）；未登记平台没有图标，退化成首字符徽标（灯照常亮）。 -->
+        <img v-if="item.icon" :src="item.icon" :alt="item.meta.label" class="agent-status-module__icon" />
         <span v-else class="agent-status-module__icon agent-status-module__icon--fallback">{{
           providerFallbackMark(item.session.provider)
         }}</span>

@@ -1,6 +1,8 @@
 import claudeIcon from '@/assets/icon/claude.svg'
 import codexIcon from '@/assets/icon/codex.svg'
+import codexIconLight from '@/assets/icon/codex-light.svg'
 import qoderIcon from '@/assets/icon/qoder.svg'
+import qoderIconLight from '@/assets/icon/qoder-light.svg'
 
 /**
  * ── provider 展示元信息注册表 ──
@@ -14,19 +16,23 @@ import qoderIcon from '@/assets/icon/qoder.svg'
 export interface ProviderMeta {
   /** 可见名称与读屏文案（如 `Claude`）。 */
   label: string
-  /** 平台图标；未登记平台为 null，调用方渲染首字符徽标。 */
+  /** 深色主题图标；未登记平台为 null，调用方渲染首字符徽标。 */
   icon: string | null
-  /** 图标是否需要反相（纯白单色图标在浅色主题下要反相）。 */
-  mono: boolean
+  /**
+   * 浅色主题图标：另存一份**深色墨**版本的 svg，而不是对白色原件套 `invert(1)`。
+   *
+   * 反相只对「纯白单色」成立：Qoder 的 mark 是白 + 品牌绿两段，反相后绿会被翻成品红；
+   * 彩色图标（Claude 的橙）更是根本不能反相。两档各给一个文件，颜色由资源自己说了算。
+   */
+  iconLight: string | null
 }
 
 /** 已登记平台的展示元信息；key 与 Rust 侧 `Provider::as_str()` 一致。 */
 const PROVIDER_REGISTRY: Record<string, ProviderMeta> = {
-  claude: { label: 'Claude', icon: claudeIcon, mono: false },
-  // Codex 的图标是纯白单色，浅色主题下要反相；Claude 的橙反相会变青蓝，不套。
-  codex: { label: 'Codex', icon: codexIcon, mono: true },
-  // Qoder 的 mark 同样是纯白单色（`src/assets/icon/qoder.svg`），要反相。
-  qoder: { label: 'Qoder', icon: qoderIcon, mono: true },
+  // Claude 的 mark 本身是品牌橙，两档都读得清，浅色档复用同一份资源。
+  claude: { label: 'Claude', icon: claudeIcon, iconLight: claudeIcon },
+  codex: { label: 'Codex', icon: codexIcon, iconLight: codexIconLight },
+  qoder: { label: 'Qoder', icon: qoderIcon, iconLight: qoderIconLight },
 }
 
 /**
@@ -36,7 +42,18 @@ const PROVIDER_REGISTRY: Record<string, ProviderMeta> = {
  * 猜错会把新平台的会话冒充成 Claude / Codex，比不显示更糟。
  */
 export function providerMeta(provider: string): ProviderMeta {
-  return PROVIDER_REGISTRY[provider] ?? { label: provider, icon: null, mono: false }
+  return PROVIDER_REGISTRY[provider] ?? { label: provider, icon: null, iconLight: null }
+}
+
+/**
+ * 按主题解析图标资源（调用方的 computed 依赖主题，切档时会自动重算）。
+ *
+ * 缺资源按「回落深色档」处理而不是留空：主题切换是外壳行为，
+ * 不该让某盏灯因为少一份浅色资源就没有图标。
+ */
+export function providerIcon(meta: ProviderMeta, isDark: boolean): string | null {
+  if (isDark) return meta.icon
+  return meta.iconLight ?? meta.icon
 }
 
 /** 已登记的平台 id 清单（护栏测试据此断言注册表与 `Provider` 联合类型同源）。 */

@@ -196,7 +196,7 @@ $exe = "E:\workspace\AIProjects\ufo\src-tauri\target\debug\tauri-app.exe"
 | 5 | `status/compat/claude.rs` 的 `provider_base_url` | 该平台的配置文件读取（哪个文件、哪个 key） | **编译失败** |
 | 6 | `proxy/mod.rs` 的 `AgentApp::from_provider` | 加一路映射 | **编译失败** |
 | 7\* | `proxy/ccswitch.rs` 的 `app_key` 与 `upstream_from_settings` | **仅当**该平台也被本地代理接管：两处各加一路，且必须复用同一份解析规则（`base_url_from_config_text`） | tooltip 停在 `127.0.0.1:<port>`，看不到真实上游 |
-| 8 | `src/modules/agent-status/lib/provider-registry.ts` | 前端展示名 / 图标 / 是否反相，加一行 | 图标缺失、退化成首字符徽标 —— **灯仍然正常亮**（§10） |
+| 8 | `src/modules/agent-status/lib/provider-registry.ts` | 前端展示名 + 深 / 浅两档图标，加一行 | 图标缺失、退化成首字符徽标 —— **灯仍然正常亮**（§10） |
 
 内核（`kernel.rs`）**零改动**：它只认 kind，不认平台词汇。
 
@@ -266,18 +266,20 @@ payload 实录、门槛落空后的两层回落与「哪一轮被裁剪了多少
 
 ```ts
 const PROVIDER_REGISTRY: Record<string, ProviderMeta> = {
-  claude: { label: 'Claude', icon: claudeIcon, mono: false },
-  codex:  { label: 'Codex',  icon: codexIcon,  mono: true },
+  claude: { label: 'Claude', icon: claudeIcon, iconLight: claudeIcon },
+  codex:  { label: 'Codex',  icon: codexIcon,  iconLight: codexIconLight },
 }
 ```
 
 | 字段 | 必填 | 说明 | 约束与坑 |
 |---|---|---|---|
 | `label` | ✅ | 可见名称与读屏文案 | 未登记时回落成**原始 provider 串** —— 刻意不猜，冒充 Claude 比不显示更糟 |
-| `icon` | 可 `null` | 平台 svg | `null` 时渲染 `providerFallbackMark()` 的首字符徽标（按码点取，代理对不会被切坏） |
-| `mono` | ✅ | 是否需要在浅色主题下反相 | 纯白单色图标才要 |
+| `icon` | 可 `null` | 深色档 svg | `null` 时渲染 `providerFallbackMark()` 的首字符徽标（按码点取，代理对不会被切坏） |
+| `iconLight` | 可 `null` | 浅色档 svg（深色墨版本） | ⚠️ **不再用 `invert(1)` 反相**：反相只对纯白单色成立，Qoder 的白 + 品牌绿会被翻成品红。彩色 mark 两档通用时直接复用同一份资源即可 |
 
-🧪 护栏：`provider-registry.spec.ts` 会**读 Rust 源码**解析出 `enum Provider` 的变体清单，断言注册表与之逐个对应。Rust 加了 variant 而忘了前端登记 → CI 红。
+渲染侧一律走 `providerIcon(meta, theme.isDark)` 取资源（灯位、提示窗、会话记录三处同源），不要按 provider 名现查、也不要再给 `<img>` 加 `.ufo-mono-icon`。
+
+🧪 护栏：`provider-registry.spec.ts` 会**读 Rust 源码**解析出 `enum Provider` 的变体清单，断言注册表与之逐个对应，并断言每个已登记平台**两档图标都不为空**。Rust 加了 variant 而忘了前端登记 → CI 红。
 
 ⚠️ **快照校验器不按 provider 收窄**（这是本轮整改的本体）：`isStatusSnapshot` 只验「非空、≤ 64 字符」，未知平台**照样进快照**，展示交给注册表降级。早先这里是 `claude | codex` 白名单 —— 它会让新平台的**每一帧**被整帧丢弃，而首帧走 `invoke`（不经此校验），于是症状变成「灯冻结在首帧、永不更新」，比全盲难查得多。同一取舍也用在 `isSessionRecordList`（否则一条陌生存档会让整张记录面板空掉）。
 
