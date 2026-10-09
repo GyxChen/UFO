@@ -552,6 +552,18 @@ html.is-tooltip-window #app {
   cursor: grabbing;
 }
 
+/*
+ * 手势护栏：拖动是外壳自己实现的（pointerdown → 位移 4px → startDragging()，见 FloatingWindow.vue），
+ * 但 `<img>` 与可选中文本在 Chromium 里默认可被原生拖走 —— 原生拖拽一启动就给外壳派发 pointercancel，
+ * pointerStart 被清空，表现就是「按住图标拖不动窗口」（空态机器人鬼影铺满整窗，最容易撞到）。
+ * ⚠️ `-webkit-user-drag` 不继承，必须逐后代关掉，只写在外层那条规则上没用。
+ */
+.floating-launcher,
+.floating-launcher * {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
 .floating-launcher__mark {
   @apply relative z-10 flex shrink-0 items-center justify-center rounded-2xl border text-2xl font-bold text-white shadow-lg;
   border-color: color-mix(in srgb, var(--ufo-accent) 40%, transparent);
