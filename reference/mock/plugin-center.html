@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<title>UFO · 插件功能 mock</title>
+<style>
+  /* ══ token：逐条抄自 src/assets/main.css（:root 与 :root[data-theme=light]）══
+     间距单位 --spacing = 4px（Tailwind v4 默认），所以 h-10 = 40px、p-3.5 = 14px、gap-3 = 12px。 */
+  :root {
+    --spacing: 4px;
+    --ufo-bg: rgba(61, 61, 61, 0.95);
+    --ufo-bg-main: #3d3d3d;
+    --ufo-surface: #2a2a2a;
+    --ufo-surface-2: #323232;
+    --ufo-input: #1f1f1f;
+    --ufo-text: #f3f4f6;
+    --ufo-heading: #e5e5e5;
+    --ufo-muted: #a3a3a3;
+    --ufo-border: rgba(255, 255, 255, 0.08);
+    --ufo-border-strong: rgba(255, 255, 255, 0.2);
+    --ufo-shell-border: rgba(255, 255, 255, 0.14);
+    --ufo-floating-shadow: rgba(142, 142, 142, 0.19) 0 6px 15px 0;
+    --ufo-overlay-sunken: rgba(0, 0, 0, 0.18);
+    --ufo-overlay-sunken-weak: rgba(0, 0, 0, 0.1);
+    --ufo-overlay-sunken-strong: rgba(0, 0, 0, 0.14);
+    --ufo-overlay-raised: rgba(255, 255, 255, 0.06);
+    --ufo-accent: #34d399;
+    --ufo-accent-text: #34d399;
+    --ufo-accent-soft: rgba(52, 211, 153, 0.16);
+    --ufo-accent-on: #052e1d;
+    --ufo-danger: #f87171;
+    --ufo-danger-soft: rgba(248, 113, 113, 0.18);
+    --ufo-ring: rgba(52, 211, 153, 0.55);
+    --ufo-status-green: #34d399;
+    --ufo-status-yellow: #fbbf24;
+    --ufo-status-red: #f87171;
+    --ufo-status-blue: #60a5fa;
+    --ufo-status-green-text: #34d399;
+    --ufo-status-yellow-text: #fbbf24;
+    --ufo-status-red-text: #f87171;
+    --ufo-status-blue-text: #60a5fa;
+    --ufo-switch-track: #404040;
+    --ufo-control-thumb: #f4f4f5;
+    --ufo-mono-icon-filter: none;
+    --ufo-scrollbar-w: auto;
+    --ufo-scroll-thumb: rgba(255, 255, 255, 0.28);
+    --radius-ufo: 12px;
+    --font-sans: 'Plus Jakarta Sans', -apple-system, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'Cascadia Code', Consolas, Menlo, monospace;
+    /* 语法高亮（插件契约那一块用） */
+    --jse-comment: #8a8f98;
+    --jse-keyword: #c792ea;
+    --jse-string: #7ee0a5;
+    --jse-number: #f7b955;
+    --jse-builtin: #34d399;
+    --jse-punct: #b6b6b6;
+  }
+  :root[data-theme='light'] {
+    --ufo-bg: rgba(245, 245, 245, 0.9);
+    --ufo-bg-main: #f4f4f5;
+    --ufo-surface: #ffffff;
+    --ufo-surface-2: #f0f0f1;
+    --ufo-input: #ffffff;
+    --ufo-text: #1c1c1e;
+    --ufo-heading: #18181b;
+    --ufo-muted: #6b7280;
+    --ufo-border: rgba(0, 0, 0, 0.1);
+    --ufo-border-strong: rgba(0, 0, 0, 0.18);
+    --ufo-shell-border: rgba(0, 0, 0, 0.12);
+    --ufo-floating-shadow: rgba(15, 23, 42, 0.16) 0 6px 15px 0;
+    --ufo-overlay-sunken: rgba(0, 0, 0, 0.035);
+    --ufo-overlay-sunken-weak: rgba(0, 0, 0, 0.025);
+    --ufo-overlay-sunken-strong: rgba(0, 0, 0, 0.03);
+    --ufo-overlay-raised: rgba(0, 0, 0, 0.05);
+    --ufo-accent: #34d399;
+    --ufo-accent-text: #047857;
+    --ufo-accent-soft: rgba(5, 150, 105, 0.14);
+    --ufo-danger: #dc2626;
+    --ufo-danger-soft: rgba(222, 38, 38, 0.14);
+    --ufo-status-yellow-text: #a16207;
+    --ufo-status-red-text: #dc2626;
+    --ufo-status-blue-text: #2563eb;
+    --ufo-switch-track: #d4d4d8;
+    --ufo-control-thumb: #ffffff;
+    --ufo-mono-icon-filter: invert(1);
+    --ufo-scroll-thumb: rgba(0, 0, 0, 0.24);
+    --jse-comment: #8a8f98;
+    --jse-keyword: #8250df;
+    --jse-string: #0f7b3f;
+    --jse-number: #b45309;
+    --jse-builtin: #047857;
+    --jse-punct: #6b7280;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 24px 64px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    color: var(--ufo-text);
+    background: radial-gradient(circle at top left, #4a4a4a 0%, #1c1c1c 55%), #141414;
+  }
+  :root[data-theme='light'] body { background: radial-gradient(circle at top left, #fff 0%, #e9e9eb 55%), #dcdcde; }
+
+  /* ══ 板面骨架 ══ */
+  .board { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+  .board__head { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .board__title { font-size: 20px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.2px; }
+  .board__lead { margin: 0; color: var(--ufo-muted); font-size: 12.5px; max-width: 70ch; line-height: 1.65; }
+  .board__tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  section.spec { display: flex; flex-direction: column; gap: 10px; }
+  .spec__cap { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .spec__num {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    color: var(--ufo-accent-on); background: var(--ufo-accent);
+    border-radius: 6px; padding: 2px 6px;
+  }
+  .spec__name { font-size: 15px; font-weight: 650; color: var(--ufo-heading); }
+  .spec__note { margin: 0; color: var(--ufo-muted); font-size: 12px; line-height: 1.7; max-width: 104ch; }
+  .spec__note b { color: var(--ufo-text); font-weight: 600; }
+  .spec__note code { font-family: var(--font-mono); font-size: 11.5px; background: var(--ufo-overlay-sunken); padding: 1px 4px; border-radius: 4px; }
+
+  /* ══ 复用 App 的控件外观 ══ */
+  .win {
+    background: var(--ufo-bg-main);
+    border: 1px solid var(--ufo-shell-border);
+    border-radius: 16px;
+    overflow: hidden;
+    color: var(--ufo-text);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  }
+  .bar, .panel-bar {
+    height: 40px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 0 8px; border-bottom: 1px solid var(--ufo-border);
+    background: var(--ufo-overlay-sunken); cursor: grab; position: relative;
+  }
+  .brand { display: flex; align-items: center; gap: 6px; margin-left: 4px; pointer-events: none; }
+  .brand__logo { width: 20px; height: 20px; border-radius: 50%; background: linear-gradient(180deg, #fff, #bfbfbf); filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)); position: relative; }
+  .brand__logo::after { content: ''; position: absolute; inset: 5px 2px; border-radius: 50%; background: rgba(0,0,0,.18); }
+  .brand__name { font-size: 12px; color: var(--ufo-muted); }
+  .bar__title { margin: 0; font-size: 13px; font-weight: 600; color: var(--ufo-text); flex: 0 0 auto; }
+  .bar__hint { margin: 0; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ufo-muted); }
+  .iconbtn {
+    width: 36px; height: 36px; flex: 0 0 auto; border: 0; border-radius: 8px; background: transparent;
+    display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ufo-text);
+  }
+  .iconbtn:hover { background: var(--ufo-danger-soft); }
+  .iconbtn svg { width: 16px; height: 16px; opacity: 0.7; filter: var(--ufo-mono-icon-filter); }
+  .iconbtn:hover svg { opacity: 1; }
+
+  .tabs { display: flex; align-items: stretch; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--ufo-border); background: var(--ufo-overlay-sunken-weak); flex: 0 0 auto; }
+  .tab { padding: 10px 12px; font-size: 13px; color: var(--ufo-muted); border-bottom: 2px solid transparent; }
+  .tab--on { color: var(--ufo-text); font-weight: 600; border-bottom-color: var(--ufo-accent); }
+  .tab--end { margin-left: auto; display: flex; align-items: center; }
+  .chips { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--ufo-border); background: var(--ufo-overlay-sunken-strong); flex: 0 0 auto; }
+  .chip { padding: 4px 10px; font-size: 12px; border-radius: 999px; color: var(--ufo-muted); }
+  .chip--on { background: var(--ufo-accent-soft); color: var(--ufo-accent-text); font-weight: 600; }
+
+  .page { padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow: auto; scrollbar-width: var(--ufo-scrollbar-w); scrollbar-color: var(--ufo-scroll-thumb) transparent; }
+  .card { background: var(--ufo-surface); border: 1px solid var(--ufo-border); border-radius: var(--radius-ufo); padding: 14px; display: grid; gap: 12px; min-width: 0; }
+  .card__header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+  .card__title { margin: 0; font-size: 13px; font-weight: 600; color: var(--ufo-heading); }
+  .card__hint { font-size: 11px; color: var(--ufo-muted); }
+  .grid2 { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 1.05fr); gap: 12px; align-items: stretch; }
+  .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .ghost { border: 1px dashed var(--ufo-border-strong); border-radius: 10px; color: var(--ufo-muted); font-size: 11.5px; display: flex; align-items: center; justify-content: center; min-height: 96px; text-align: center; line-height: 1.6; padding: 8px; }
+
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; font-size: 12.5px; border: 1px solid var(--ufo-border-strong); background: var(--ufo-surface-2); color: var(--ufo-text); cursor: pointer; }
+  .btn--primary { background: var(--ufo-accent); border-color: transparent; color: var(--ufo-accent-on); font-weight: 600; }
+  .btn--danger { color: var(--ufo-status-red-text); border-color: var(--ufo-danger-soft); background: transparent; }
+  .btn--armed { background: var(--ufo-danger-soft); color: var(--ufo-status-red-text); font-weight: 600; border-color: transparent; }
+  .btn--sm { padding: 4px 9px; font-size: 12px; }
+
+  .switch { width: 34px; height: 20px; border-radius: 999px; background: var(--ufo-switch-track); position: relative; flex: 0 0 auto; }
+  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--ufo-control-thumb); }
+  .switch--on { background: var(--ufo-accent); }
+  .switch--on::after { left: 16px; }
+
+  .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--ufo-surface-2); border: 1px solid transparent; min-width: 0; }
+  .row--sel { border-color: var(--ufo-accent); background: var(--ufo-accent-soft); }
+  .row__order { font-family: var(--font-mono); font-size: 11px; color: var(--ufo-muted); width: 14px; text-align: center; flex: 0 0 auto; }
+  .row__copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; }
+  .row__label { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row__hint { font-size: 11px; color: var(--ufo-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row__demand { font-size: 11px; color: var(--ufo-muted); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  .handle { color: var(--ufo-muted); letter-spacing: -2px; font-size: 12px; cursor: grab; flex: 0 0 auto; }
+
+  .badge { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--ufo-border-strong); color: var(--ufo-muted); flex: 0 0 auto; }
+  .badge--debug { color: var(--ufo-status-yellow-text); border-color: var(--ufo-status-yellow); background: rgba(251, 191, 36, 0.12); }
+  .badge--ok { color: var(--ufo-status-green-text); border-color: var(--ufo-status-green); background: var(--ufo-accent-soft); }
+  .badge--err { color: var(--ufo-status-red-text); border-color: var(--ufo-status-red); background: var(--ufo-danger-soft); }
+  .badge--blue { color: var(--ufo-status-blue-text); border-color: var(--ufo-status-blue); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .dot--green { background: var(--ufo-status-green); }
+  .dot--yellow { background: var(--ufo-status-yellow); }
+  .dot--red { background: var(--ufo-status-red); }
+  .dot--muted { background: var(--ufo-muted); }
+
+  /* 行内日志（调试开启后出现在该插件底下，最多 3 行） */
+  .plog { list-style: none; margin: 0; padding: 0 0 2px 22px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .plog__line { display: flex; align-items: baseline; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--ufo-muted); min-width: 0; }
+  .plog__t { flex: 0 0 auto; opacity: 0.8; }
+  .plog__lv { flex: 0 0 auto; font-weight: 700; }
+  .plog__lv--info { color: var(--ufo-status-blue-text); }
+  .plog__lv--warn { color: var(--ufo-status-yellow-text); }
+  .plog__lv--error { color: var(--ufo-status-red-text); }
+  .plog__msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ufo-text); opacity: 0.9; }
+  .plog__more { margin-left: auto; flex: 0 0 auto; font-size: 10.5px; color: var(--ufo-accent-text); background: none; border: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+  .plog__more svg { width: 11px; height: 11px; filter: var(--ufo-mono-icon-filter); }
+
+  /* 详情区（右栏） */
+  .kv { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: 12px; }
+  .kv dt { color: var(--ufo-muted); font-weight: 500; }
+  .kv dd { margin: 0; font-family: var(--font-mono); font-size: 11.5px; overflow-wrap: anywhere; }
+  .perm { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .perm li { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 3px 8px; border-radius: 8px; background: var(--ufo-surface-2); border: 1px solid var(--ufo-border); color: var(--ufo-muted); }
+  .perm li svg { width: 13px; height: 13px; flex: 0 0 auto; color: var(--ufo-accent-text); }
+  .perm li[data-risk] svg { color: var(--ufo-status-yellow-text); }
+  /* 问号角标（现网 = ui/SettingsHint.vue）：解释性 tips 一律收进这里，不做常驻文本 */
+  .hint {
+    width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--ufo-border-strong);
+    color: var(--ufo-muted); font-size: 10.5px; line-height: 1; flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center; cursor: help;
+  }
+  .pop {
+    position: relative; margin-top: 8px; padding: 8px 10px; border-radius: 10px;
+    background: var(--ufo-surface-2); border: 1px solid var(--ufo-border-strong);
+    box-shadow: var(--ufo-floating-shadow); font-size: 11.5px; color: var(--ufo-muted); line-height: 1.75;
+  }
+  .pop::before {
+    content: ''; position: absolute; top: -5px; left: 14px; width: 8px; height: 8px;
+    background: var(--ufo-surface-2); border-left: 1px solid var(--ufo-border-strong); border-top: 1px solid var(--ufo-border-strong);
+    transform: rotate(45deg);
+  }
+  .pop b { color: var(--ufo-text); font-weight: 600; }
+  .pop__cap { font-size: 10.5px; color: var(--ufo-muted); opacity: .8; margin: 0 0 2px; }
+  /* 行内状态点：列表里只留「在调试 / 加载失败」这两件事，不放权限徽标 */
+  .row__state { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+  .sub { margin: 2px 0 0; font-size: 11px; color: var(--ufo-muted); }
+  .status-line { margin: 0; font-size: 11.5px; color: var(--ufo-muted); }
+  .status-line--ok { color: var(--ufo-status-green-text); }
+
+  /* ══ 悬浮窗与提示窗 ══ */
+  .float {
+    background: var(--ufo-bg); backdrop-filter: blur(6px); border: 1px solid var(--ufo-shell-border);
+    border-radius: 16px; box-shadow: var(--ufo-floating-shadow); padding: 1.75px; display: flex; gap: 1px;
+  }
+  .cell { display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+  .light { width: 78%; height: 78%; border-radius: 50%; background: var(--ufo-status-green); box-shadow: 0 0 12px rgba(52, 211, 153, 0.5); }
+  .plugin-cell { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 3px; }
+  .plugin-cell__k { font-size: 9px; color: var(--ufo-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+  .plugin-cell__v { font-family: var(--font-mono); font-weight: 700; color: var(--ufo-status-green-text); line-height: 1; }
+  .plugin-cell__v--warn { color: var(--ufo-status-yellow-text); }
+  .plugin-cell__bar { width: 70%; height: 3px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; }
+  .plugin-cell__bar i { display: block; height: 100%; background: var(--ufo-accent); }
+  .shapes { display: flex; align-items: flex-end; gap: 22px; flex-wrap: wrap; padding: 16px; background: var(--ufo-surface); border: 1px solid var(--ufo-border); border-radius: var(--radius-ufo); }
+  .shape { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .shape__cap { font-size: 11px; color: var(--ufo-muted); }
+  .shape__px { font-family: var(--font-mono); font-size: 10.5px; color: var(--ufo-muted); opacity: 0.8; }
+
+  .tip {
+    width: 300px; background: var(--ufo-bg); backdrop-filter: blur(6px);
+    border: 1px solid var(--ufo-shell-border); border-radius: var(--radius-ufo);
+    box-shadow: var(--ufo-floating-shadow); padding: 10px; display: flex; flex-direction: column; gap: 6px; color: var(--ufo-text);
+  }
+  .tip__row { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
+  .tip__row--head { gap: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--ufo-border-strong); font-weight: 600; }
+  .tip__label { flex: 0 0 auto; font-size: 11px; color: var(--ufo-muted); }
+  .tip__value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; }
+  .tip__plug { border-top: 1px dashed var(--ufo-border-strong); margin-top: 4px; padding-top: 6px; display: flex; flex-direction: column; gap: 5px; }
+  .tip__plug-head { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ufo-muted); }
+  .tip__meter { height: 6px; border-radius: 3px; background: rgba(255,255,255,.14); overflow: hidden; }
+  .tip__meter i { display: block; height: 100%; width: 62%; background: linear-gradient(90deg, var(--ufo-status-green), var(--ufo-status-yellow)); }
+
+  /* ══ 日志独立窗（沿用 .panel-* 版式）══ */
+  .panel-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; position: relative; padding: 12px; gap: 10px; }
+  .lg-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 0 0 auto; }
+  .lg-filters label { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ufo-muted); }
+  .sel { font: inherit; font-size: 12px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--ufo-border-strong); background: var(--ufo-input); color: var(--ufo-text); }
+  .lg-count { margin-left: auto; font-size: 11px; color: var(--ufo-muted); font-variant-numeric: tabular-nums; }
+  .lg-split { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); gap: 10px; flex: 1 1 auto; min-height: 0; }
+  .lg-pane { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; }
+  .lg-rows { position: relative; overflow: auto; flex: 1 1 auto; min-height: 0; border: 1px solid var(--ufo-border); border-radius: 10px; background: var(--ufo-surface); scrollbar-color: var(--ufo-scroll-thumb) transparent; }
+  .lg-row { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-bottom: 1px solid var(--ufo-border); font-size: 12px; min-width: 0; }
+  .lg-row--cur { background: var(--ufo-accent-soft); }
+  .lg-row__time { font-family: var(--font-mono); font-size: 11px; color: var(--ufo-muted); flex: 0 0 auto; }
+  .lg-row__lv { font-size: 10.5px; padding: 1px 5px; border-radius: 5px; border: 1px solid var(--ufo-border-strong); flex: 0 0 auto; }
+  .lg-row__msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lg-row__plug { margin-left: auto; flex: 0 0 auto; font-size: 10.5px; color: var(--ufo-muted); font-family: var(--font-mono); }
+  .lg-recard { border: 1px solid var(--ufo-border); border-radius: 10px; background: var(--ufo-surface); padding: 10px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; scrollbar-color: var(--ufo-scroll-thumb) transparent; }
+  .lg-foot { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  .lg-dir { margin: 0 0 0 auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--ufo-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  pre.raw { margin: 0; font-family: var(--font-mono); font-size: 11px; line-height: 1.55; background: var(--ufo-input); border: 1px solid var(--ufo-border); border-radius: 8px; padding: 8px; overflow: auto; max-height: 150px; }
+  .c-com { color: var(--jse-comment); font-style: italic; }
+  .c-kw { color: var(--jse-keyword); }
+  .c-st { color: var(--jse-string); }
+  .c-nu { color: var(--jse-number); }
+  .c-bi { color: var(--jse-builtin); }
+  .c-pu { color: var(--jse-punct); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 12px; background: var(--ufo-surface); border: 1px solid var(--ufo-border); border-radius: var(--radius-ufo); font-size: 11.5px; color: var(--ufo-muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .toggle { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--ufo-border-strong); background: var(--ufo-surface); color: var(--ufo-text); cursor: pointer; }
+  .scale { transform-origin: top left; }
+</style>
+</head>
+<body>
+<div class="board">
+
+  <div class="board__head">
+    <div>
+      <h1 class="board__title">插件功能 · UI mock</h1>
+      <p class="board__lead">
+        目标：让第三方插件在<b>不改外壳代码</b>的前提下插进三个位置（悬浮窗格子 / 悬停信息卡 —— <b>自己的独立卡与插进 agent 卡的一块，两种都支持</b> / 主窗一级 tabbar 设置页），
+        并在齿轮页下方给一块<b>插件管理</b>（安装、调试开关、右栏调试卡内的最近日志、独立日志窗）。
+        配色、圆角、间距、控件全部取 <code>src/assets/main.css</code> 的现有 token，未新增灰色系。
+      </p>
+    </div>
+    <div class="board__tools">
+      <button class="toggle" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'">切换深浅色</button>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot dot--green"></i> 翠绿 = 主行动 / 已启用 / info 之外的正常态</span>
+    <span><i class="dot dot--yellow"></i> 黄 = 调试中 / 热重载 / warn</span>
+    <span><i class="dot dot--red"></i> 红 = 危险动作（卸载）/ error</span>
+    <span><i class="dot dot--muted"></i> 灰 = 未启用 / 元信息</span>
+    <span>字号档：13 标题 · 12 正文 · 11 说明 · 10.5 徽标（与现网一致）</span>
+  </div>
+
+  <!-- ═══════════ ① 主窗：齿轮页 + 插件管理 ═══════════ -->
+  <section class="spec">
+    <div class="spec__cap">
+      <span class="spec__num">01</span>
+      <span class="spec__name">主窗 · 齿轮页（悬浮窗设置）下方新增「插件管理」，跨左右两栏</span>
+    </div>
+    <p class="spec__note">
+      现有齿轮页是 <code>.module-catalog</code> 两列（左：组件列表 + 格子大小 + 版本；右：形态预览）。
+      插件管理<b>另起一张满宽卡</b>压在两列下面（⚠️ 突破 <code>.ufo-card</code> 的 <code>max-w-md</code> 要两条类权重，同 <code>.sr-page &gt; .lg-settings</code> 那条坑），
+      内部再分两列：<b>左 = 装了哪些、开没开</b>，<b>右 = 选中这个插件的介绍与调试</b>。列表行沿用 <code>.module-row</code> 的槽位（序号 / 名称+说明 / 需求格数 / 开关 / 手柄），
+      与内置组件同级 —— 因为它们在悬浮窗里确实同级。⚠️ <b>权限徽标、最近日志、解释性说明一律只出现在右栏</b>：
+      列表要能在 300px 窄列里扫读，塞徽标就会把名称挤成省略号；徽标各自带 icon（格子 / 卡片 / 齿轮 / 地球 / 存储），出网那一枚走黄色档表示「这是要用户点头的能力」。
+    </p>
+
+    <div class="win" style="width: 1000px; min-height: 750px; display: flex; flex-direction: column;">
+      <div class="bar">
+        <span class="brand"><span class="brand__logo"></span><span class="brand__name">UFO</span></span>
+        <span style="flex:1"></span>
+        <button class="iconbtn" aria-label="隐藏主窗口"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+      </div>
+      <div class="tabs">
+        <span class="tab">Agent 状态灯</span>
+        <span class="tab">实时天气</span>
+        <span class="tab">滴答待办</span>
+        <span class="tab tab--end tab--on" style="border-bottom-width:2px">⚙ 悬浮窗设置</span>
+        <span class="tab tab--end">☼</span>
+      </div>
+      <div class="page">
+        <div class="grid2">
+          <div class="col">
+            <div class="card">
+              <div class="card__header"><h3 class="card__title">悬浮窗组件</h3><span class="card__hint">3 / 3 已启用</span></div>
+              <ul class="rows">
+                <li class="row"><span class="row__order">1</span><span class="row__copy"><span class="row__label">Agent 状态灯</span><span class="row__hint">绿=运行 黄=等用户 红=出错</span></span><span class="row__demand">9 格</span><span class="switch switch--on"></span><span class="handle">⋮⋮</span></li>
+                <li class="row"><span class="row__order">2</span><span class="row__copy"><span class="row__label">实时天气</span><span class="row__hint">温度 + 城市，贴边时降级成一行</span></span><span class="row__demand">2 格</span><span class="switch switch--on"></span><span class="handle">⋮⋮</span></li>
+                <li class="row"><span class="row__order">3</span><span class="row__copy"><span class="row__label">滴答待办</span><span class="row__hint">今日任务计数与最近一条</span></span><span class="row__demand">2 格</span><span class="switch switch--on"></span><span class="handle">⋮⋮</span></li>
+              </ul>
+              <p class="status-line">已启用 3 个组件 · 需求 13 格 · 窗口尺寸随贴边形态变化</p>
+            </div>
+            <div class="card">
+              <div class="card__header"><h3 class="card__title">格子大小</h3><span class="card__hint">45px（默认）</span></div>
+              <div class="ghost">与现网一致，本次不动</div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="card" style="height: 100%">
+              <div class="card__header"><h3 class="card__title">形态预览</h3><span class="card__hint">当前形态按真实比例放大</span></div>
+              <div class="ghost" style="flex:1; min-height: 220px">与现网一致，本次不动<br />（插件格子会作为同级模块出现在这里，见 02）</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ★ 插件管理：满宽，跨左右两栏 -->
+        <div class="card" style="grid-template-columns: 1fr">
+          <div class="card__header">
+            <div class="ufo-heading-row" style="display:flex;align-items:center;gap:8px;min-width:0">
+              <h3 class="card__title">插件管理</h3>
+              <span class="badge badge--debug">1 个在调试</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="card__hint">3 个已安装 · 沙盒内运行，无 fs / child_process</span>
+              <button class="btn btn--primary btn--sm">安装插件…</button>
+            </div>
+          </div>
+
+          <div class="grid2">
+            <!-- 左：已安装列表 + 安装入口 -->
+            <div class="col">
+              <!-- 列表行只说「装了什么、开没开、有没有在调试」：权限徽标与日志都收进右栏（见 04） -->
+              <ul class="rows">
+                <li class="row row--sel">
+                  <span class="row__order">1</span>
+                  <span class="row__copy">
+                    <span class="row__label">余额看板 <span class="badge">v1.2.0</span></span>
+                    <span class="row__hint">把账户余额与配额画进悬浮窗一格，低于阈值转黄</span>
+                  </span>
+                  <span class="row__demand">2 格</span>
+                  <span class="switch switch--on"></span><span class="handle">⋮⋮</span>
+                </li>
+                <li class="row">
+                  <span class="row__order">2</span>
+                  <i class="row__state" style="background:var(--ufo-status-yellow)" title="该插件正在调试：日志在右栏"></i>
+                  <span class="row__copy">
+                    <span class="row__label">构建计时 <span class="badge">v0.4.1</span></span>
+                    <span class="row__hint">读 CI 状态，只在信息卡里插一行</span>
+                  </span>
+                  <span class="row__demand">—</span>
+                  <span class="switch switch--on"></span><span class="handle">⋮⋮</span>
+                </li>
+                <li class="row" style="opacity:.6">
+                  <span class="row__order">–</span>
+                  <i class="row__state" style="background:var(--ufo-status-red)" title="加载失败"></i>
+                  <span class="row__copy">
+                    <span class="row__label">旧版时钟 <span class="badge">v0.1.0</span></span>
+                    <span class="row__hint">校验失败：manifest 缺少 <code>entry</code>，未挂载</span>
+                  </span>
+                  <span class="row__demand">—</span>
+                  <span class="switch"></span><span class="handle">⋮⋮</span>
+                </li>
+              </ul>
+
+              <div class="ghost" style="display:block;text-align:center;line-height:2">
+                拖放 <code>.ufo-plugin</code> 到这里，或点「安装插件…」选系统文件
+                <div style="font-size:11px;opacity:.85">装完落在 <code>%APPDATA%/com.ufo.app/plugins/&lt;id&gt;/</code>，卸载走两步确认</div>
+              </div>
+            </div>
+
+            <!-- 右：选中插件详情 + 调试 -->
+            <div class="col">
+              <!-- 详情卡：只留「这是什么组件」+ 权限徽标（徽标带各自 icon），入口/来源/出网/密钥这些实现细节不摊开 -->
+              <div class="card" style="background: var(--ufo-surface-2)">
+                <div class="card__header"><h3 class="card__title">余额看板</h3><span class="card__hint">id <code>balance-board</code> · v1.2.0</span></div>
+                <p class="status-line" style="font-size:12px;color:var(--ufo-text);line-height:1.7">
+                  把账户余额与配额画进悬浮窗一格：余额低于 ¥5 时数值转黄，配额画成一条进度条。
+                  <b>悬停它自己的格子会弹出这个插件自己的信息卡</b>（余额 / 配额 / 到期告警）；
+                  同时它也往 agent 的卡尾追加「余额 / 配额」两行。阈值与轮询间隔在它自己的设置页里改。
+                </p>
+                <div>
+                  <p class="sub">权限（安装时从 manifest 读出，只读展示）</p>
+                  <ul class="perm">
+                    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg>悬浮窗格子</li>
+                    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 4h16a1 1 0 011 1v11a1 1 0 01-1 1H9l-5 4v-4H4a1 1 0 01-1-1V5a1 1 0 011-1zm3 4v2h10V8H7zm0 4v2h7v-2H7z"/></svg>独立信息卡（tooltip）</li>
+                    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm2 2v2h12V7H6zm0 4v2h9v-2H6z"/></svg>信息卡插入块</li>
+                    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 2h2v3h-2V2zm0 17h2v3h-2v-3zM2 11h3v2H2v-2zm17 0h3v2h-3v-2zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>主窗设置页</li>
+                    <li data-risk><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 100 20 10 10 0 000-20zm7.9 7h-3.4a15 15 0 00-1.3-3.5A8 8 0 0119.9 9zM12 4.3c.7 1 1.3 2.4 1.7 3.7h-3.4c.4-1.3 1-2.7 1.7-3.7zM4.1 13a8 8 0 010-2h3.6a19 19 0 000 2H4.1zm.7 2h3.4c.2 1.3.7 2.6 1.3 3.6A8 8 0 014.8 15zm3.4-6H4.8a8 8 0 014.7-3.6A15 15 0 008.2 9zM12 19.7c-.7-1-1.3-2.3-1.7-3.7h3.4c-.4 1.4-1 2.7-1.7 3.7zm2.1-5.7H9.9a17 17 0 010-4.1h4.2a17 17 0 010 4.1zm.2 5.6c.6-1.1 1-2.3 1.3-3.6h3.4a8 8 0 01-4.7 3.6zM16.3 13a19 19 0 000-2h3.6a8 8 0 010 2h-3.6z"/></svg>ufo.http 出网</li>
+                    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 8.6C5.9 9.7 8.6 10.2 12 10.2s6.1-.5 8-1.6V12c0 1.7-3.6 3-8 3s-8-1.3-8-3V8.6zm0 5.4c1.9 1.1 4.6 1.6 8 1.6s6.1-.5 8-1.6V19c0 1.7-3.6 3-8 3s-8-1.3-8-3v-5z"/></svg>ufo.storage 按 id 隔离</li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- 调试卡：日志（最多 3 行）住在这里，解释性 tips 收进问号角标的悬浮框 -->
+              <div class="card">
+                <div class="card__header">
+                  <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                    <h3 class="card__title">调试</h3>
+                    <span class="hint" title="悬停看说明">?</span>
+                  </div>
+                  <span class="switch switch--on"></span>
+                </div>
+                <p class="status-line status-line--ok">热重载已开：监听 <code>main.js</code> 与 <code>plugin.json</code>，上次重载 13:25:24（耗时 42ms）</p>
+
+                <div>
+                  <p class="sub" style="display:flex;align-items:center;gap:8px">
+                    最近日志（最多 3 行）
+                    <button class="plog__more" style="margin-left:auto">拓展 <svg viewBox="0 0 24 24"><path fill="currentColor" d="M10 21V19H6.41l4.5-4.5-1.41-1.41L5 17.59V14H3v7h7zM14.5 10.91 19 6.41V10h2V3h-7v2h3.59l-4.5 4.5 1.41 1.41z"/></svg></button>
+                  </p>
+                  <ul class="plog" style="padding-left:0">
+                    <li class="plog__line"><span class="plog__t">13:25:29</span><span class="plog__lv plog__lv--info">info</span><span class="plog__msg">轮询完成，余额 ¥12.30（cache hit = false，用时 214ms）</span></li>
+                    <li class="plog__line"><span class="plog__t">13:25:24</span><span class="plog__lv plog__lv--warn">warn</span><span class="plog__msg">http.get 用了 1.8s，接近 timeout 3s</span></li>
+                    <li class="plog__line"><span class="plog__t">13:24:58</span><span class="plog__lv plog__lv--error">error</span><span class="plog__msg">secrets.get('TOKEN') 未配置，本次返回空字段</span></li>
+                  </ul>
+                </div>
+
+                <!-- 下面这块在现网只在 hover 问号角标时出现（ui/SettingsHint.vue），mock 里摊开给你看内容 -->
+                <div class="pop">
+                  <p class="pop__cap">↑ 问号角标 hover 时才出现，不做常驻文本</p>
+                  关掉调试就<b>不监听文件、也不留日志行</b>（与转灯日志同一口径：没人看时零写盘）。
+                  日志只有一路来源：插件自己调 <code>ufo.log(level, msg, fields?)</code>；每插件一个环形缓冲（上限 200 条），
+                  这里只显示最新 3 行，要翻历史点「拓展」开独立窗口。
+                </div>
+
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button class="btn btn--sm">重新加载</button>
+                  <button class="btn btn--danger btn--sm" style="margin-left:auto">卸载</button>
+                  <button class="btn btn--armed btn--sm">确认卸载？</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ 02 悬浮窗格子 ═══════════ -->
+  <section class="spec">
+    <div class="spec__cap">
+      <span class="spec__num">02</span><span class="spec__name">插件在悬浮窗里插格子（与内置模块同级、共享同一块窗）</span>
+    </div>
+    <p class="spec__note">
+      插件不新增窗口，只往宿主里申请格子：<b>槽内尺寸用 cq 单位、设计像素乘 <code>--floating-cell-scale</code></b>，
+      所以横条 / 竖条 / 四角下都跟着长。放不下时按「先丢次要信息、再缩尺寸」降级（这里演示：竖条只留数值，横条压成一行）。
+      <b>悬停这块格子弹的是该插件自己的信息卡（见 03 的 3a）</b>，与它往 agent 卡里插的那块（3b）是两条独立声明。
+      插件格子里的<b>任何独立点击都要 <code>@click.stop</code></b>，否则会和「点悬浮窗开主窗」抢事件。
+    </p>
+    <div class="shapes">
+      <div class="shape">
+        <div class="float" style="width:135px;height:45px">
+          <div class="cell" style="width:45px"><span class="light"></span></div>
+          <div class="cell" style="width:90px"><div class="plugin-cell"><span class="plugin-cell__k">余额</span><span class="plugin-cell__v">¥12.30</span><span class="plugin-cell__bar"><i style="width:62%"></i></span></div></div>
+        </div>
+        <span class="shape__cap">横条（上下贴边）</span><span class="shape__px">3 格 · 45×135</span>
+      </div>
+      <div class="shape">
+        <div class="float" style="width:45px;height:135px;flex-direction:column">
+          <div class="cell" style="height:45px"><span class="light"></span></div>
+          <div class="cell" style="height:90px"><div class="plugin-cell"><span class="plugin-cell__v" style="font-size:10px">¥12.30</span><span class="plugin-cell__bar"><i style="width:62%"></i></span></div></div>
+        </div>
+        <span class="shape__cap">竖条（左右贴边）</span><span class="shape__px">降级：藏掉「余额」二字</span>
+      </div>
+      <div class="shape">
+        <div class="float" style="width:45px;height:45px">
+          <div class="cell"><div class="plugin-cell"><span class="plugin-cell__v plugin-cell__v--warn">¥1.20</span></div></div>
+        </div>
+        <span class="shape__cap">方形 · 未贴边</span><span class="shape__px">1 格 · 45×45</span>
+      </div>
+      <div class="shape">
+        <div class="float" style="width:90px;height:135px;flex-wrap:wrap">
+          <div class="cell" style="width:90px;height:45px"><span class="light" style="width:32px;height:32px"></span></div>
+          <div class="cell" style="width:45px;height:45px"><div class="plugin-cell"><span class="plugin-cell__v">¥12.30</span></div></div>
+          <div class="cell" style="width:45px;height:45px"><div class="plugin-cell"><span class="plugin-cell__k">待办</span><span class="plugin-cell__v">3</span></div></div>
+        </div>
+        <span class="shape__cap">四角 · 竖向堆叠</span><span class="shape__px">窗宽由最宽模块决定</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ 03 tooltip：独立卡 + 插入块两种 ═══════════ -->
+  <section class="spec">
+    <div class="spec__cap">
+      <span class="spec__num">03</span><span class="spec__name">插件的 tooltip 有两种：<b>自己的独立信息卡</b> 与 <b>插进别人的卡里一块</b></span>
+    </div>
+    <p class="spec__note">
+      弹哪一张由<b>悬停目标属于谁</b>决定（外壳只走注册表：<code>resolveTooltipDefinition</code> 拿目标所在模块的 <code>tooltip</code> 声明），插件两条都能要，互不冲突：
+      <b>3a</b> 悬停<b>插件自己的格子</b> → 弹这个插件<b>自己的卡</b>，尺寸由插件按 <code>size</code> 声明（可以是按悬停目标算的函数），外壳夹进工作区；
+      <b>3b</b> 悬停<b>agent 的灯</b> → 在 agent 卡尾部<b>追加一块</b>，虚线分隔 + 极小来源标注，<b>最多 3 行</b>（<code>MAX_FIELDS</code> 与窗高同源）。
+      ⚠️ 两条都受同一条约束：<b>没内容就不许弹</b>（<code>hasContent</code> 为假时外壳直接不弹，避免一块空卡糊在屏幕上）；
+      独立卡里屏幕上不再叠一层标题栏，来源只写进行首那枚小徽标。
+    </p>
+
+    <p class="sub" style="margin:2px 0 0"><b style="color:var(--ufo-text)">3a</b> 悬停插件自己的格子 → 插件的独立信息卡（宽 340、高按内容声明）</p>
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;padding-top:8px">
+      <div class="tip" style="width:340px">
+        <div class="tip__row tip__row--head">
+          <span class="badge">插件 · 余额看板</span><span>账户额度</span>
+          <span style="margin-left:auto;font-size:10.5px;color:var(--ufo-muted)">13:25:29</span>
+        </div>
+        <div class="tip__row"><span class="tip__label">余额</span><span class="tip__value" style="color:var(--ufo-status-green-text);font-size:14px;font-weight:700">¥12.30</span><span class="tip__value" style="margin-left:auto">-¥3.10 / 24h</span></div>
+        <div class="tip__row"><span class="tip__label">配额</span><span class="tip__value">62%</span><span class="tip__value" style="margin-left:auto">2.48M / 4M</span></div>
+        <div class="tip__meter"><i></i></div>
+        <div class="tip__row"><span class="tip__label">阈值</span><span class="tip__value">低于 ¥5 转黄（设置页可改）</span></div>
+        <div class="tip__row"><span class="tip__label">上次轮询</span><span class="tip__value">214ms · cache miss</span></div>
+        <div class="tip__row"><span class="tip__label">告警</span><span class="tip__value" style="color:var(--ufo-status-yellow-text)">TOKEN 只剩 6 天到期</span></div>
+      </div>
+      <div class="tip" style="width:340px">
+        <div class="tip__row tip__row--head">
+          <span class="badge">插件 · 构建计时</span><span>CI</span>
+          <span style="margin-left:auto;font-size:10.5px;color:var(--ufo-muted)">running</span>
+        </div>
+        <div class="tip__row"><span class="tip__label">当前</span><span class="tip__value" style="color:var(--ufo-status-yellow-text)">#4127 · 04:12</span></div>
+        <div class="tip__row"><span class="tip__label">阶段</span><span class="tip__value">build → test（3/5）</span></div>
+        <div class="tip__row" style="opacity:.55"><span class="tip__label">历史</span><span class="tip__value">无（首次挂载后只留最近一次）</span></div>
+      </div>
+    </div>
+
+    <p class="sub" style="margin:18px 0 0"><b style="color:var(--ufo-text)">3b</b> 悬停 agent 的灯 → agent 卡尾部追加插件块（内置行在前，虚线分隔，最多 3 行）</p>
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;padding-top:8px">
+      <div class="tip">
+        <div class="tip__row tip__row--head"><i class="dot dot--green"></i><span>Qoder · 运行中</span><span style="margin-left:auto;font-size:10.5px;color:var(--ufo-muted)">12s</span></div>
+        <div class="tip__row"><span class="tip__label">Endpoint</span><span class="tip__value">https://qoder.cloud</span></div>
+        <div class="tip__row"><span class="tip__label">Token</span><span class="tip__value">1.24M / 4M</span></div>
+        <div class="tip__plug">
+          <div class="tip__plug-head"><span class="badge">插件 · 余额看板</span><span>低于 ¥5 转黄</span></div>
+          <div class="tip__row"><span class="tip__label">余额</span><span class="tip__value" style="color:var(--ufo-status-green-text)">¥12.30</span><span class="tip__value" style="margin-left:auto">配额 62%</span></div>
+          <div class="tip__meter"><i></i></div>
+        </div>
+      </div>
+      <div class="tip" style="width:300px">
+        <div class="tip__row tip__row--head"><i class="dot dot--yellow"></i><span>Claude · 等用户操作</span></div>
+        <div class="tip__row"><span class="tip__label">提问</span><span class="tip__value">现在脚本拓展的全屏…</span></div>
+        <div class="tip__plug">
+          <div class="tip__plug-head"><span class="badge">插件 · 构建计时</span></div>
+          <div class="tip__row"><span class="tip__label">CI</span><span class="tip__value" style="color:var(--ufo-status-yellow-text)">running · 04:12</span></div>
+          <div class="tip__row"><span class="tip__label">上次</span><span class="tip__value" style="opacity:.6">—（无历史）</span></div>
+        </div>
+      </div>
+      <div class="tip" style="width:300px">
+        <div class="tip__row tip__row--head"><i class="dot dot--green"></i><span>Codex · 运行中</span></div>
+        <div class="tip__row"><span class="tip__label">Endpoint</span><span class="tip__value">https://api.openai.com</span></div>
+        <div class="tip__row" style="opacity:.5"><span class="tip__label">插件 · 余额看板</span><span class="tip__value" style="font-size:11px">本次没数据 → 整块不出现</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ 04 调试卡两种状态 ═══════════ -->
+  <section class="spec">
+    <div class="spec__cap">
+      <span class="spec__num">04</span><span class="spec__name">右栏「调试」卡的两种状态：日志最多 3 行 + 拓展入口 + 问号悬浮框</span>
+    </div>
+    <p class="spec__note">
+      日志行是<b>常驻读数</b>不是 hover 才出现（AGENTS.md 那条界面约定）：时间戳 + 级别色 + 单行截断，完整原文与历史都在独立日志窗里。
+      解释性的话（关调试会怎样、日志从哪来、上限多少）<b>收进问号角标的悬浮框</b>，不占常驻版面。
+      「拓展」那枚图标与脚本编辑器 / 转灯日志走<b>同一条路径</b>：开一扇独立窗（<code>lib/panel-window.ts</code> 的 open 协议），不再叠浮层。
+    </p>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start;max-width:1000px">
+      <div class="card">
+        <div class="card__header">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <h3 class="card__title">调试</h3>
+            <span class="hint" title="悬停看说明">?</span>
+          </div>
+          <span class="switch"></span>
+        </div>
+        <p class="status-line">关着：不监听文件、不建沙盒日志缓冲，插件按上次加载的版本跑</p>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn--sm">重新加载</button>
+          <button class="btn btn--danger btn--sm" style="margin-left:auto">卸载</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card__header">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <h3 class="card__title">调试</h3>
+            <span class="hint" title="悬停看说明">?</span>
+          </div>
+          <span class="switch switch--on"></span>
+        </div>
+        <p class="status-line status-line--ok">热重载已开：监听 <code>main.js</code> 与 <code>plugin.json</code>，上次重载 13:25:24（耗时 42ms）</p>
+        <div>
+          <p class="sub" style="display:flex;align-items:center;gap:8px">
+            最近日志（最多 3 行）
+            <button class="plog__more" style="margin-left:auto">拓展 <svg viewBox="0 0 24 24"><path fill="currentColor" d="M10 21V19H6.41l4.5-4.5-1.41-1.41L5 17.59V14H3v7h7zM14.5 10.91 19 6.41V10h2V3h-7v2h3.59l-4.5 4.5 1.41 1.41z"/></svg></button>
+          </p>
+          <ul class="plog" style="padding-left:0">
+            <li class="plog__line"><span class="plog__t">13:25:29</span><span class="plog__lv plog__lv--info">info</span><span class="plog__msg">轮询完成，余额 ¥12.30（cache hit = false）</span></li>
+            <li class="plog__line"><span class="plog__t">13:25:24</span><span class="plog__lv plog__lv--warn">warn</span><span class="plog__msg">http.get 用了 1.8s，接近 timeout 3s</span></li>
+            <li class="plog__line"><span class="plog__t">13:24:58</span><span class="plog__lv plog__lv--error">error</span><span class="plog__msg">secrets.get('TOKEN') 未配置，本次返回空字段</span></li>
+          </ul>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn--sm">重新加载</button>
+          <button class="btn btn--danger btn--sm" style="margin-left:auto">卸载</button>
+        </div>
+      </div>
+    </div>
+    <div class="pop" style="max-width:640px">
+      <p class="pop__cap">问号角标 hover 时出现的悬浮框（现网 = <code>ui/SettingsHint.vue</code>，同一套问号角标 + 悬停说明）</p>
+      关掉调试就<b>不监听文件、也不留日志行</b>（与转灯日志同一口径：没人看时零写盘）。
+      日志只有一路来源：插件自己调 <code>ufo.log(level, msg, fields?)</code>；每插件一个环形缓冲（上限 200 条），
+      这里只显示最新 3 行，要翻历史点「拓展」开独立窗口。
+    </div>
+  </section>
+
+  <!-- ═══════════ 05 插件日志独立窗 ═══════════ -->
+  <section class="spec">
+    <div class="spec__cap">
+      <span class="spec__num">05</span><span class="spec__name">点「拓展」→ 插件日志独立窗（复用刚做的 PanelWindow 版式）</span>
+    </div>
+    <p class="spec__note">
+      与 <code>status-log</code> 同一套：窗口在 <code>tauri.conf.json</code> 里声明成 <code>visible:false</code>、按需显示、关闭=隐藏，
+      标题栏左端 UFO 图标 + 名字 + 本窗标题、右端 × ；正文两栏 <b>1.8 : 1</b>，左列虚拟列表、右列选中那条的全部字段。
+      订阅按<b>调用方窗口 label 记账</b>（同 <code>set_status_log_view</code> 那条修法），主窗那一页收起不会把这扇窗的实时跟随关掉。
+    </p>
+    <div class="win" style="width: 1160px; max-width: 100%; height: 620px; display: flex; flex-direction: column;">
+      <div class="panel-bar">
+        <span class="brand"><span class="brand__logo"></span><span class="brand__name">UFO</span></span>
+        <h1 class="bar__title">插件日志 · 余额看板</h1>
+        <p class="bar__hint">左列这个插件的调用流水（新→旧），点一行在右列看它的全部字段</p>
+        <button class="iconbtn" aria-label="完成并返回"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+      </div>
+      <div class="panel-body">
+        <div class="lg-filters">
+          <label>级别 <select class="sel"><option>全部</option><option>error</option><option>warn</option><option>info</option></select></label>
+          <label><input type="checkbox" />只看错误 / 警告</label>
+          <label><input type="checkbox" />暂停跟随</label>
+          <button class="btn btn--sm">攒了 6 条，跟回最新</button>
+          <span class="lg-count">共 214 条 · 截至 13:25:30</span>
+        </div>
+        <div class="lg-split">
+          <div class="lg-pane">
+            <div class="lg-rows">
+              <div class="lg-row lg-row--cur"><span class="lg-row__time">13:25:29</span><span class="lg-row__lv" style="color:var(--ufo-status-blue-text)">info</span><span class="lg-row__msg">轮询完成，余额 ¥12.30（cache hit = false）</span><span class="lg-row__plug">@24552@7888</span></div>
+              <div class="lg-row"><span class="lg-row__time">13:25:24</span><span class="lg-row__lv" style="color:var(--ufo-status-yellow-text)">warn</span><span class="lg-row__msg">http.get 用了 1.8s，接近 timeout 3s</span><span class="lg-row__plug">@24552@7511</span></div>
+              <div class="lg-row"><span class="lg-row__time">13:24:58</span><span class="lg-row__lv" style="color:var(--ufo-status-red-text)">error</span><span class="lg-row__msg">secrets.get('TOKEN') 未配置，本次返回空字段</span><span class="lg-row__plug">@24552@6810</span></div>
+              <div class="lg-row"><span class="lg-row__time">13:24:57</span><span class="lg-row__lv" style="color:var(--ufo-status-blue-text)">info</span><span class="lg-row__msg">热重载：main.js 变更 → 重建沙盒，耗时 42ms</span><span class="lg-row__plug">@24552@6204</span></div>
+              <div class="lg-row"><span class="lg-row__time">13:24:12</span><span class="lg-row__lv" style="color:var(--ufo-status-blue-text)">info</span><span class="lg-row__msg">格子渲染 2 格（横条形态，按行宽取百分比）</span><span class="lg-row__plug">@24552@5410</span></div>
+              <div class="lg-row"><span class="lg-row__time">13:23:40</span><span class="lg-row__lv" style="color:var(--ufo-status-red-text)">error</span><span class="lg-row__msg">ufo.http 被拦：目标解析到私网 10.0.0.8</span><span class="lg-row__plug">@24552@4882</span></div>
+              <div class="lg-row"><span class="lg-row__time">13:23:04</span><span class="lg-row__lv" style="color:var(--ufo-status-blue-text)">info</span><span class="lg-row__msg">storage.get('last') → { balance: 12.30 }</span><span class="lg-row__plug">@24552@4102</span></div>
+            </div>
+            <div class="lg-foot">
+              <button class="btn btn--sm">看更早的</button>
+              <span class="lg-count">已载入 200 行</span>
+            </div>
+          </div>
+          <section class="lg-recard" aria-label="选中记录的完整信息">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="lg-row__lv" style="color:var(--ufo-status-blue-text)">info</span>
+              <b>轮询完成</b><span class="lg-row__time" style="margin-left:auto">13:25:29.410</span>
+            </div>
+            <dl class="kv">
+              <dt>插件</dt><dd>balance-board v1.2.0</dd>
+              <dt>调用</dt><dd>ufo.log('info', …)</dd>
+              <dt>触发</dt><dd>格子刷新（interval 60s）</dd>
+              <dt>会话</dt><dd>qoder:ef086298-3b60-…</dd>
+              <dt>trace</dt><dd>pb-24552-7888</dd>
+              <dt>盘上坐标</dt><dd>@24552@7888</dd>
+            </dl>
+            <p class="sub">fields（结构化参数，白名单标量）</p>
+            <pre class="raw"><span class="c-pu">{</span> <span class="c-st">"balance"</span><span class="c-pu">:</span> <span class="c-nu">12.30</span><span class="c-pu">,</span> <span class="c-st">"quota_pct"</span><span class="c-pu">:</span> <span class="c-nu">62</span><span class="c-pu">,</span> <span class="c-st">"cache_hit"</span><span class="c-pu">:</span> <span class="c-kw">false</span><span class="c-pu">,</span> <span class="c-st">"ms"</span><span class="c-pu">:</span> <span class="c-nu">214</span> <span class="c-pu">}</span></pre>
+            <p class="sub">同一次调用的上下游（正序）</p>
+            <div class="lg-row" style="border:1px solid var(--ufo-border);border-radius:8px;height:auto;padding:6px 8px">
+              <span class="lg-row__time">13:25:29.196</span><span class="lg-row__msg">ufo.http.get → 200 · 1.8s</span>
+            </div>
+          </section>
+        </div>
+        <div class="lg-foot">
+          <button class="btn btn--sm">导出当前条件</button>
+          <button class="btn btn--danger btn--sm">清空该插件日志</button>
+          <p class="status-line" role="status">已导出 214 条（盘上命中全量）</p>
+          <p class="lg-dir">%APPDATA%/com.ufo.app/plugins/balance-board/logs</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ 06 契约 ═══════════ -->
+  <section class="spec">
+    <div class="spec__cap">
+      <span class="spec__num">06</span><span class="spec__name">配套口径（不是 UI，但决定上面几块能不能落地）</span>
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start">
+      <pre class="raw"><span class="c-com">// plugins/balance-board/plugin.json —— 外壳只认这一份声明</span>
+<span class="c-pu">{</span>
+  <span class="c-st">"id"</span><span class="c-pu">:</span> <span class="c-st">"balance-board"</span><span class="c-pu">,</span>
+  <span class="c-st">"entry"</span><span class="c-pu">:</span> <span class="c-st">"main.js"</span><span class="c-pu">,</span>
+  <span class="c-st">"surfaces"</span><span class="c-pu">: {</span>
+    <span class="c-st">"cell"</span><span class="c-pu">:</span> <span class="c-nu">2</span><span class="c-pu">,</span>
+    <span class="c-com">// 两种 tooltip 是两条独立声明，可以只给一条、也可以两条都给</span>
+    <span class="c-st">"tooltip"</span><span class="c-pu">: {</span> <span class="c-st">"own"</span><span class="c-pu">:</span> <span class="c-kw">true</span><span class="c-pu">,</span> <span class="c-st">"size"</span><span class="c-pu">:</span> <span class="c-pu">[</span><span class="c-nu">340</span><span class="c-pu">,</span> <span class="c-nu">260</span><span class="c-pu">]</span> <span class="c-pu">},</span>
+    <span class="c-st">"extension"</span><span class="c-pu">: {</span> <span class="c-st">"into"</span><span class="c-pu">:</span> <span class="c-st">"agent-status"</span><span class="c-pu">,</span> <span class="c-st">"maxRows"</span><span class="c-pu">:</span> <span class="c-nu">3</span> <span class="c-pu">},</span>
+    <span class="c-st">"settings"</span><span class="c-pu">:</span> <span class="c-kw">true</span>
+  <span class="c-pu">},</span>
+  <span class="c-st">"permissions"</span><span class="c-pu">: [ <span class="c-st">"http"</span><span class="c-pu">,</span> <span class="c-st">"storage"</span> ]<span class="c-pu">,</span>
+  <span class="c-st">"hosts"</span><span class="c-pu">: [ <span class="c-st">"api.example.com"</span> ]</span>
+<span class="c-pu">}</span></pre>
+      <pre class="raw"><span class="c-com">// main.js —— 跑在 QuickJS 沙盒里，能力只有注入的这些</span>
+<span class="c-bi">ufo</span><span class="c-pu">.</span><span class="c-bi">cell</span><span class="c-pu">({</span>
+  <span class="c-st">async draw</span><span class="c-pu">(</span>ctx<span class="c-pu">) {</span>
+    <span class="c-kw">const</span> r <span class="c-pu">=</span> <span class="c-kw">await</span> <span class="c-bi">ufo</span><span class="c-pu">.</span><span class="c-bi">http</span><span class="c-pu">.</span><span class="c-bi">get</span><span class="c-pu">(</span><span class="c-st">'https://api.example.com/v1/balance'</span><span class="c-pu">, {</span>
+      <span class="c-st">headers</span><span class="c-pu">: {</span> <span class="c-st">Authorization</span><span class="c-pu">:</span> <span class="c-st">`Bearer ${</span><span class="c-bi">ufo</span><span class="c-pu">.</span><span class="c-bi">secret</span><span class="c-pu">(</span><span class="c-st">'TOKEN'</span><span class="c-pu">)}`</span> <span class="c-pu">}</span>
+    <span class="c-pu">})</span>
+    <span class="c-bi">ufo</span><span class="c-pu">.</span><span class="c-bi">log</span><span class="c-pu">(</span><span class="c-st">'info'</span><span class="c-pu">,</span> <span class="c-st">'轮询完成'</span><span class="c-pu">, {</span> <span class="c-st">ms</span><span class="c-pu">:</span> r<span class="c-pu">.</span>ms <span class="c-pu">})</span>   <span class="c-com">// ← 04/05 那三行日志的唯一来源</span>
+    <span class="c-kw">return</span> <span class="c-pu">{</span> <span class="c-st">k</span><span class="c-pu">:</span> <span class="c-st">'余额'</span><span class="c-pu">,</span> <span class="c-st">v</span><span class="c-pu">:</span> <span class="c-bi">ufo</span><span class="c-pu">.</span><span class="c-bi">format</span><span class="c-pu">.</span><span class="c-bi">money</span><span class="c-pu">(</span>r<span class="c-pu">.</span>json()<span class="c-pu">.</span>balance<span class="c-pu">)</span> <span class="c-pu">}</span>
+  <span class="c-pu">},</span>
+
+  <span class="c-com">// 3a：悬停「自己这块格子」→ 插件自己的信息卡（尺寸见 manifest，外壳夹进工作区）</span>
+  <span class="c-st">tooltip</span><span class="c-pu">(</span>ctx<span class="c-pu">) {</span>
+    <span class="c-kw">return</span> <span class="c-pu">{</span>
+      <span class="c-st">title</span><span class="c-pu">:</span> <span class="c-st">'账户额度'</span><span class="c-pu">,</span>
+      <span class="c-st">rows</span><span class="c-pu">: [ {</span> <span class="c-st">label</span><span class="c-pu">:</span> <span class="c-st">'余额'</span><span class="c-pu">,</span> <span class="c-st">value</span><span class="c-pu">:</span> ctx<span class="c-pu">.</span>v <span class="c-pu">}, {</span> <span class="c-st">label</span><span class="c-pu">:</span> <span class="c-st">'配额'</span><span class="c-pu">,</span> <span class="c-st">value</span><span class="c-pu">:</span> ctx<span class="c-pu">.</span>quota <span class="c-pu">} ],</span>
+      <span class="c-st">meter</span><span class="c-pu">:</span> ctx<span class="c-pu">.</span>quotaPct<span class="c-pu">,</span>
+      <span class="c-st">hasContent</span><span class="c-pu">:</span> <span class="c-pu">()</span> <span class="c-kw">=</span><span class="c-pu">&gt;</span> ctx<span class="c-pu">.</span>v <span class="c-pu">!=</span> <span class="c-kw">null</span>   <span class="c-com">// 假 = 整卡不弹，不留一块空的</span>
+    <span class="c-pu">}</span>
+  <span class="c-pu">},</span>
+
+  <span class="c-com">// 3b：悬停 agent 的灯 → 往那张卡尾部追加一块（最多 3 行，受 MAX_FIELDS 预算）</span>
+  <span class="c-st">extension</span><span class="c-pu">(</span>ctx<span class="c-pu">) {</span>
+    <span class="c-kw">return</span> <span class="c-pu">[{</span> <span class="c-st">label</span><span class="c-pu">:</span> <span class="c-st">'余额'</span><span class="c-pu">,</span> <span class="c-st">value</span><span class="c-pu">:</span> ctx<span class="c-pu">.</span>v <span class="c-pu">}, {</span> <span class="c-st">label</span><span class="c-pu">:</span> <span class="c-st">'配额'</span><span class="c-pu">,</span> <span class="c-st">value</span><span class="c-pu">:</span> ctx<span class="c-pu">.</span>quota <span class="c-pu">}]</span>
+  <span class="c-pu">}</span>
+<span class="c-pu">})</span></pre>
+    </div>
+    <p class="spec__note">
+      红线（沿用现网约束，一条都不放宽）：<b>插件没有 fs / net / child_process，也没有模块加载器</b>，出网只走注入的 <code>ufo.http</code> 且必过 <code>validate_http_url</code>；
+      密钥只在闭包里按名取，值不落盘、不进日志；<b>外壳代码里不得出现插件 id</b>（注册表与 <code>src/windows/index.ts</code> 是唯一允许点名的组合根）；
+      <code>ufo.log</code> 只进该插件自己的环形缓冲（200 条），<b>关调试即零写盘</b>；日志里的明文落盘风险与转灯日志同级，导出前要在这一刻提示一次；
+      安装 = 校验 manifest + 落到 <code>app-data/plugins/&lt;id&gt;/</code>，卸载两步确认，路径一律过 <code>validate_export_target</code> 那类白名单，不接受未校验输入拼路径。
+    </p>
+  </section>
+
+</div>
+<script>
+  // 方便无头截图与分享：#light 直接以浅色主题打开
+  if (location.hash === '#light') document.documentElement.dataset.theme = 'light'
+</script>
+</body>
+</html>
