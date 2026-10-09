@@ -1620,39 +1620,23 @@
   font-weight: 600;
 }
 
-/* ══ 整窗浮层：外壳照 `.jse-modal` 那一套（实色铺满、无 blur）══
+/* ══ 独立转灯日志窗的正文（`.lg-window__body`）══
  *
- * ⚠️ `absolute` 而不是 `fixed`：本层由 `StatusLogOverlay` `Teleport` 到主窗的浮层宿主
- * `#main-content`（标题栏以下、含两级 tabbar 那一整块），铺满的是**那块区域** ——
- * 顶边落在关闭按钮下面，四周不越出 `.main-shell` 的圆角边框。
- * 写成 `fixed inset-0` 时铺满的是整个 webview —— 实测既压住标题栏，
- * 方角又伸出圆角之外（浮层看起来比窗口还大）。
+ * 外壳（圆角实色面板 + 可拖标题栏 + 「完成」）由公共的 `PanelWindow.vue`（`.panel-*`）给，
+ * 这一层只剩正文：它铺满 `.panel-body`，所以是 `flex-1`，不再是从前的 `absolute inset-0`
+ * —— 旧的浮层必须 `absolute` 是因为它的宿主是主窗内容区 `#main-content`（那块比视口小，
+ * 写 `fixed` 会压住标题栏并把方角画出圆角之外）；现在它整块就是一扇窗，没有这层约束。
+ * ⚠️ `relative` 是给导出遮罩（`BaseLoadingOverlay placement="inline"`）当定位祖先的。
+ * ⚠️ 高度链：body flex-1 → 两栏各自滚，少一环就退化成整页滚。
  */
-.lg-modal {
-  @apply absolute inset-0 z-40 flex flex-col;
-  background: var(--ufo-bg-main);
-  color: var(--ufo-text);
+.lg-window__body {
+  @apply relative flex min-h-0 flex-1 flex-col gap-2.5 p-3;
 }
 
-.lg-modal__bar {
-  @apply flex h-11 shrink-0 items-center gap-3 border-b px-3;
-  background: var(--ufo-overlay-sunken);
-  border-color: var(--ufo-border);
-}
-
-.lg-modal__title {
-  @apply m-0 shrink-0 text-[13px] font-semibold;
-}
-
-/* 提示行吃掉剩余宽度并截断，保证「完成」在任何宽度下都在栏内。 */
-.lg-modal__hint {
-  @apply m-0 min-w-0 flex-1 truncate text-[12px];
+/* 主窗还没递来会话时的占位（正常路径看不见：那一刻窗口还藏着）。 */
+.lg-window__empty {
+  @apply m-auto px-4 py-6 text-center text-[11.5px];
   color: var(--ufo-muted);
-}
-
-/* ⚠️ 高度链：bar 固定 → body flex-1 → 两栏各自滚，少一环就退化成整页滚。 */
-.lg-modal__body {
-  @apply flex min-h-0 flex-1 flex-col gap-2.5 p-3;
 }
 
 .lg-filters {

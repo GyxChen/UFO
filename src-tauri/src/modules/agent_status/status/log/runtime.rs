@@ -79,8 +79,11 @@ struct Runtime {
     next_seq: u64,
     /// tail 游标：None = 还一次都没读过。
     cursor: Option<Cursor>,
-    /// 面板是否开着：关着时不广播（盘上照样在写，读侧随时能按盘分页）。
-    viewer: bool,
+    /// 此刻正在看日志的窗口 label：空 = 没人看，关着时不广播（盘上照样在写，读侧随时能按盘分页）。
+    ///
+    /// ⚠️ 按 label 记账而不是一个 bool：主窗的「会话记录」页与独立的转灯日志窗会各自
+    /// attach / detach，单一开关被其中一方关掉时会把另一方也带成「没人看」（实时行就此停住）。
+    viewers: Vec<String>,
     /// 上次回收文件的时刻（与 monitor 的 10 秒清理同频）。
     last_sweep: i64,
     /// 目录占用读数：由 [`LogState::refresh_usage`] 按 `USAGE_REFRESH_MS` 刷新，读侧只取这份。
@@ -397,18 +400,26 @@ impl LogState {
         }
     }
 
-    /// 面板开关：只有开着才广播（省掉没人看时的 IPC）。
-    pub fn set_viewer(&self, attached: bool) {
+    /// 面板开关：按调用方窗口 label 记账，只有还有窗口开着才广播（省掉没人看时的 IPC）。
+    ///
+    /// 同一个 label 重复 attach 只记一份，这样一次 detach 就能真的把它摘掉。
+    pub fn set_viewer(&self, label: &str, attached: bool) {
         if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.viewer = attached;
+            if attached {
+                if !runtime.viewers.iter().any(|item| item == label) {
+                    runtime.viewers.push(label.to_string());
+                }
+            } else {
+                runtime.viewers.retain(|item| item != label);
+            }
         }
     }
 
-    /// 面板是否开着（monitor 据此决定要不要发那一批）。
+    /// 是否还有窗口在看（monitor 据此决定要不要发那一批）。
     pub fn viewer_attached(&self) -> bool {
         self.runtime
             .lock()
-            .map(|runtime| runtime.viewer)
+            .map(|runtime| !runtime.viewers.is_empty())
             .unwrap_or(false)
     }
 
@@ -470,6 +481,9 @@ impl LogState {
         if let Ok(mut runtime) = self.runtime.lock() {
             let mut cleared = Runtime::default();
             cleared.seeded = true;
+            // `viewers` 是「哪个窗口正开着」的运行时事实，跟盘上有没有内容无关：
+            // 跟着 default 归零的话，用户点一次「清空日志」后面板就再也收不到实时行了。
+            cleared.viewers = std::mem::take(&mut runtime.viewers);
             cleared.cursor = parse_file_name(&next).map(|(day, seq)| Cursor { day, seq, offset: 0 });
             *runtime = cleared;
         }
@@ -1344,8 +1358,40 @@ mod tests {
         assert!(!log.viewer_attached());
         log.report(entry(LogStage::HookAttempt, None));
         assert_eq!(log.drain().len(), 1, "没人看的时候照样记账");
-        log.set_viewer(true);
+        log.set_viewer("main", true);
         assert!(log.viewer_attached());
+    }
+
+    /// 主窗的「会话记录」页与独立的转灯日志窗各自 attach / detach：
+    /// 任何一方关掉都不能把另一方也带成「没人看」，全关掉才真的停广播。
+    #[test]
+    fn viewers_are_counted_per_window_label() {
+        let temp = TempDir::new("log-runtime-viewers");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        log.set_viewer("main", true);
+        log.set_viewer("status-log", true);
+        log.set_viewer("main", false);
+        assert!(log.viewer_attached(), "日志窗还开着，实时行不能停");
+        log.set_viewer("status-log", false);
+        assert!(!log.viewer_attached(), "两个窗口都关了才该停广播");
+
+        // 同一个 label 重复 attach 只记一份：一次 detach 就该真摘掉。
+        log.set_viewer("main", true);
+        log.set_viewer("main", true);
+        log.set_viewer("main", false);
+        assert!(!log.viewer_attached());
+    }
+
+    /// 清空只动盘上的内容，不动「谁正在看」：否则面板挂着也再也收不到实时行。
+    #[test]
+    fn clear_keeps_the_attached_viewers() {
+        let temp = TempDir::new("log-runtime-clear-viewers");
+        let log = LogState::new(temp.path().to_path_buf(), recording());
+        log.set_viewer("status-log", true);
+        log.report(entry(LogStage::HookAttempt, None));
+        log.clear();
+        assert!(log.page(&StatusLogQuery::default()).entries.is_empty());
+        assert!(log.viewer_attached(), "清空不该把窗口那侧的订阅一起抹掉");
     }
 
     #[test]

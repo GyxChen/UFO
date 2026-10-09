@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 /**
- * 「记录详情 · 转灯日志条目」的渲染回归：关闭态、折叠态、展开成浮层。
+ * 「记录详情 · 转灯日志条目」的渲染回归：关闭态、折叠态、把会话交给独立窗口。
  *
  * 这一层之所以值得单独测：条目同时受三份状态影响（配置里的开关、store 的 peek 行、
  * store 的加载/降级态），任何一个读错都会显示成「没日志」，而用户没法分辨
@@ -13,18 +13,35 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import StatusLogFeed from './StatusLogFeed.vue'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { AGENT_STATUS_MODULE_ID } from '../settings'
+import { PANEL_WINDOW_OPEN_EVENT } from '@/lib/panel-window'
+import { STATUS_LOG_WINDOW_LABEL } from '../lib/status-log-window'
 import type { FloatingModuleConfig } from '@/lib/floating-modules'
 import type { StatusLogEntry, StatusLogPage } from '../lib/status-log'
 import { emptyLogUsage } from '../lib/status-log'
 
-const { invokeMock, listenMock, saveMock } = vi.hoisted(() => ({
+const { invokeMock, listenMock, saveMock, emitToMock, getAllWindowsMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   listenMock: vi.fn(),
   saveMock: vi.fn(),
+  emitToMock: vi.fn(),
+  getAllWindowsMock: vi.fn(),
 }))
 
+/** 假的独立日志窗：只关心「有没有被叫起来」。放在 hoisted **外面**，才能用真的 label 常量。 */
+const logWindow = {
+  label: STATUS_LOG_WINDOW_LABEL,
+  show: vi.fn(),
+  unminimize: vi.fn(),
+  setFocus: vi.fn(),
+  hide: vi.fn(),
+}
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
-vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock, default: {} }))
+vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock, emitTo: emitToMock, default: {} }))
+vi.mock('@tauri-apps/api/window', () => ({
+  getAllWindows: getAllWindowsMock,
+  getCurrentWindow: () => ({ label: 'main' }),
+}))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: saveMock }))
 
 /** 造一条记录（字段按线协议命名；`id` 是盘上身份，store 的合并去重靠它）。 */
@@ -54,20 +71,6 @@ function page(entries: StatusLogEntry[]): StatusLogPage {
 }
 
 /**
- * 浮层宿主：主窗把内容区标成 `#main-content`（`MainWindow.vue`），浮层 `Teleport` 到那里。
- * 测试环境没有主窗外壳，所以要自己摆一块 —— 目标不存在时 Teleport 会直接抛错。
- */
-function ensureOverlayHost(): HTMLElement {
-  const existing = document.getElementById('main-content')
-  if (existing) return existing
-  const host = document.createElement('div')
-  host.id = 'main-content'
-  host.className = 'main-content'
-  document.body.append(host)
-  return host
-}
-
-/**
  * 挂上组件并把配置灌进外壳 store。
  *
  * ⚠️ 两点都是这个仓库里踩过的（写法照 `sections/GeneralSection.spec.ts`）：
@@ -75,7 +78,6 @@ function ensureOverlayHost(): HTMLElement {
  * ② invoke 的假实现必须在 `mount` 之前装好：组件挂载即发首帧 peek（watch immediate）。
  */
 async function mountFeed(on: boolean, entries = [entry(3), entry(2), entry(1)]) {
-  ensureOverlayHost()
   invokeMock.mockImplementation(async (command: string) => {
     if (command === 'get_status_log') return page(entries)
     // 条数另有一条命令按盘数出来（精确值 + 截至时刻）；折叠条目那行读的是它，不是行数。
@@ -96,7 +98,11 @@ async function mountFeed(on: boolean, entries = [entry(3), entry(2), entry(1)]) 
         : { log: { level: 'off', hook_enabled: false } },
     },
   } as FloatingModuleConfig)
-  const wrapper = mount(StatusLogFeed, { props: { sessionKey: 'codex:s1' }, attachTo: document.body, global: { plugins: [pinia] } })
+  const wrapper = mount(StatusLogFeed, {
+    props: { sessionKey: 'codex:s1' },
+    attachTo: document.body,
+    global: { plugins: [pinia] },
+  })
   await flushPromises()
   return wrapper
 }
@@ -107,6 +113,12 @@ beforeEach(() => {
   listenMock.mockReset()
   listenMock.mockResolvedValue(() => {})
   saveMock.mockReset()
+  emitToMock.mockReset()
+  emitToMock.mockResolvedValue(undefined)
+  getAllWindowsMock.mockReset()
+  getAllWindowsMock.mockResolvedValue([logWindow])
+  logWindow.show.mockReset()
+  logWindow.setFocus.mockReset()
 })
 
 describe('StatusLogFeed', () => {
@@ -141,30 +153,18 @@ describe('StatusLogFeed', () => {
     expect(colored).toEqual(['绿', '黄'])
   })
 
-  it('expands into the two-pane overlay and shows every field of the picked row', async () => {
+  it('把选中的那条会话交给独立窗口，条目本身不再画两栏', async () => {
     const wrapper = await mountFeed(true)
-    expect(document.querySelector('.lg-modal')).toBeNull()
     await wrapper.find('.lg-inline__expand').trigger('click')
     await flushPromises()
-    const modal = document.querySelector('.lg-modal')
-    // ⚠️ 宿主必须是内容区 `#main-content`，不是 `body`：挂在 body 上时浮层按视口铺满，
-    // 实测会盖住一级 / 二级标签页，方角还伸出 `.main-shell` 的圆角之外（比窗口还大）。
-    expect(modal, '浮层要 Teleport 进主窗内容区宿主').not.toBeNull()
-    expect(modal?.parentElement?.id, '浮层的父节点必须是 #main-content').toBe('main-content')
-    expect(modal?.closest('.main-window'), '浮层不许落在滚动区里面').toBeNull()
-    expect(modal.querySelectorAll('.lg-split > *').length).toBe(2, '左右两栏')
-    expect(modal.textContent).toContain('c4-1')
-    // 行尾与右栏标的都是**盘上坐标**（`文件序号@字节偏移`），不再有进程内游标那种假身份。
-    expect(modal.textContent).toMatch(/\d+@\d+/)
-    expect(modal.textContent).toContain('盘上的字节坐标')
 
-    // 「完成」收回浮层，条目本身还在。
-    const done = Array.from(modal.querySelectorAll('button')).find(b => b.textContent?.includes('完成'))
-    expect(done).toBeTruthy()
-    done?.click()
-    await flushPromises()
-    expect(document.querySelector('.lg-modal')).toBeNull()
-    expect(wrapper.find('.lg-inline').exists()).toBe(true)
+    expect(logWindow.show, '要把那一扇窗叫起来').toHaveBeenCalledTimes(1)
+    expect(logWindow.setFocus, '开完要聚焦，否则用户看不见它开在哪').toHaveBeenCalledTimes(1)
+    const call = emitToMock.mock.calls.find(item => item[1] === PANEL_WINDOW_OPEN_EVENT)
+    expect(call?.[0], 'open 载荷只发给那一扇窗').toBe(STATUS_LOG_WINDOW_LABEL)
+    expect(call?.[2]).toMatchObject({ requester: 'main', data: { sessionKey: 'codex:s1' } })
+    // 两栏正文已经搬进独立窗口：条目里再画一层，就是当年「浮层盖住两级标签页」的复发。
+    expect(document.querySelector('.lg-split')).toBeNull()
   })
 
   it('does not fire an export when the save dialog is cancelled', async () => {

@@ -29,10 +29,12 @@ const props = withDefaults(
     placeholder?: string
     /** 是否在编辑框内部右上角显示「扩大」按钮 */
     expandable?: boolean
-    /** 撑满父容器（整窗弹窗里用），默认是固定高度的小编辑框 */
+    /** 撑满父容器（整窗编辑里用），默认是固定高度的小编辑框 */
     fill?: boolean
+    /** 只读：正文由独立窗口那一侧写（见 `ScriptEditor.vue`），这里只看不改 */
+    readonly?: boolean
   }>(),
-  { ariaLabel: '脚本源码', placeholder: '', expandable: false, fill: false }
+  { ariaLabel: '脚本源码', placeholder: '', expandable: false, fill: false, readonly: false }
 )
 
 const emit = defineEmits<{
@@ -102,6 +104,8 @@ function onInput(event: Event) {
  */
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Tab') return
+  // 只读态（正文正在独立窗口那一侧写）不该有任何输入落进来，Tab 也不许改缩进。
+  if (props.readonly) return
   // 先挡掉默认行为：否则 Tab 会把焦点移出编辑框。
   event.preventDefault()
 
@@ -122,7 +126,7 @@ function onKeydown(event: KeyboardEvent) {
   })
 }
 
-// 外部改值（弹窗与内嵌框共用一份草稿、切换 endpoint 回填）后重算滚动位置：
+// 外部改值（独立窗口回传、调用方换一份草稿回填）后重算滚动位置：
 // 值变短时 textarea 会把 scrollTop 夹回可见范围，高亮层要跟上，否则两层错位。
 watch(
   () => props.modelValue,
@@ -167,13 +171,14 @@ defineExpose({ readCaret, restoreCaret })
 </script>
 
 <template>
-  <div ref="frameEl" class="jse" :class="{ 'jse--fill': fill }">
+  <div ref="frameEl" class="jse" :class="{ 'jse--fill': fill, 'jse--readonly': readonly }">
     <!-- 高亮层：aria-hidden，读屏与表单语义只认下面的 textarea，避免同一段文本被读两遍。 -->
     <pre ref="highlightEl" class="jse__highlight" aria-hidden="true" v-html="highlightHtml"></pre>
 
     <!--
       输入层：文本透明（否则与高亮层叠字加粗），只显示光标与选区。
       wrap="off" 换行交给横向滚动，也让两层不会因软换行宽度不同而错位。
+      只读态仍然可以选中与滚动 —— 那是「看这份脚本」的基本能力，只是不再落输入。
     -->
     <textarea
       ref="inputEl"
@@ -181,6 +186,7 @@ defineExpose({ readCaret, restoreCaret })
       :value="modelValue"
       :aria-label="ariaLabel"
       :placeholder="placeholder"
+      :readonly="readonly"
       spellcheck="false"
       autocomplete="off"
       autocapitalize="off"
@@ -196,8 +202,8 @@ defineExpose({ readCaret, restoreCaret })
       v-if="expandable"
       class="jse__expand"
       type="button"
-      title="在整窗中编辑"
-      aria-label="在整窗中编辑脚本"
+      title="在独立窗口中编辑"
+      aria-label="在独立窗口中编辑脚本"
       @click="emit('expand')"
     >
       <svg class="jse__expand-icon" viewBox="0 0 24 24" aria-hidden="true">

@@ -6,7 +6,8 @@ Tauri 2 + Vue 3 + Tailwind v4 的桌面 App。UI 设计走 `ui-ux-pro-max` skill
 
 UFO 是一块**可拼装的悬浮窗**：显示 Claude / Codex / Qoder 等 agent 的运行状态灯，悬停展示 endpoint、token 用量与流程脚本拓展字段；主窗负责配置。
 
-- 三个窗口（`src-tauri/tauri.conf.json`）：`floating` 状态灯（默认 45×45、透明、alwaysOnTop）、`main` 设置主窗（实色哑光）、`tooltip` 悬停信息窗（`focusable: false` + 点击穿透，「声明 + 隐藏 + 按需显示」，不在运行时建窗）。
+- 五个窗口（`src-tauri/tauri.conf.json`，一律「声明 + 隐藏 + 按需显示」，不在运行时建窗）：`floating` 状态灯（默认 45×45、透明、alwaysOnTop）、`main` 设置主窗（实色哑光）、`tooltip` 悬停信息窗（`focusable: false` + 点击穿透）、`script-editor` 整窗编辑脚本、`status-log` 转灯日志完整链路。
+- 后两个是主窗派出去的**独立面板窗**：外壳 `components/ui/PanelWindow.vue`（圆角实色面板 + 与主窗同版式的标题栏：左端 UFO 图标 + 名字 + 本窗标题，右端 × 关闭），来回协议 `lib/panel-window.ts`，视图登记 `src/windows/index.ts`，label 与声明 / 权限的同源护栏 `src/windows/panel-windows.spec.ts`。它们不挂模块格子，因此**不参与 `activateModules`**（见悬浮窗 guide §9.1）。
 - 悬浮窗是容器，组件（模块）同级共享同一块窗：注册表在 `src/modules/index.ts`，**外壳不认识任何模块**。
 - 悬浮窗三形态：方形（默认未贴边）/ 横条（上下贴边、宽度放大）/ 竖条（左右贴边、高度放大）。窗口尺寸随贴边状态变化，布局不得写死固定像素。
 - Rust 与前端同构：`src-tauri/src/floating/` = 外壳，`src-tauri/src/modules/<id>/` = 组件，组合根 `lib.rs` 点名登记钩子。
@@ -46,7 +47,7 @@ UFO 是一块**可拼装的悬浮窗**：显示 Claude / Codex / Qoder 等 agent
 - **配置下放**：外壳配置只留 `modules[].enabled|order` + 窗口级 `cell_px`；其余字段一律进各模块自己的 `module_settings[<id>]`，字段名 / 默认值 / 取值范围只写在模块的 `settings.ts` 与 Rust `settings.rs`，逐字段宽松夹取（坏一个只影响它自己）。
 - **样式**：颜色 / 圆角 / 字体一律复用 token，禁止新增硬编码灰色系；模块样式写在 `src/modules/<id>/<id>.css`（独立 CSS 里用 `@apply` 必须先 `@reference`）；写死的设计像素要乘 `--floating-cell-scale`，槽内尺寸用 cq 单位。
 - **界面**：解释性 tips 走问号角标 `ui/SettingsHint.vue`；「当前是什么状态」的读数必须常驻，不许把读数藏进 hover；组件名已由两级 tab 表达，页面标题用 `sr-only`。
-- **Tauri 接线**：新增命令三处注册（`#[tauri::command]` + `permissions/*.toml` + capability），读命令给三窗、写命令只给 `main`；新增窗口必须把 label 加进 `capabilities/default.json` 的 `windows`。要读盘的命令一律 `async` + `spawn_blocking`。
+- **Tauri 接线**：新增命令三处注册（`#[tauri::command]` + `permissions/*.toml` + capability），读命令给所有窗口、写命令只给设置侧（`main` 与它派出的面板窗）；新增窗口要把 label 加进 `capabilities/default.json` 的 `windows`（要写命令的再加 `main-module-settings.json`），并在 `src/windows/index.ts` 登记视图。要读盘的命令一律 `async` + `spawn_blocking`。
 - **护栏**：前端文案 / 常量与 Rust 同源的地方保住 `?raw` 双向断言；改硬约定（格子、单位、样式权重、行高）就补对应 spec。
 - 悬浮窗 UI 改动必须在方形 / 四角 / 横条 / 竖条下都验证过才算完成。
 

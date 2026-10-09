@@ -1,7 +1,8 @@
 //! 面板读日志 / 清空 / 导出 / 跟随的 tauri 命令。
 //!
-//! 权限拆分照会话记录那一套：**读命令给三个窗口**（悬浮窗也可能要看，见
-//! `capabilities/default.json`），**清空与导出只给主窗**（`capabilities/main-module-settings.json`）。
+//! 权限拆分照会话记录那一套：**读命令给所有窗口**（悬浮窗也可能要看，见
+//! `capabilities/default.json`），**清空 / 导出 / 计数 / 订阅只给主窗与它派出的独立面板窗**
+//! （`capabilities/main-module-settings.json`）。
 //!
 //! ⚠️ 这些命令一律**不碰 registry、不碰灯态**：只做「把已经落盘的账拿出来给人看」。
 
@@ -61,7 +62,7 @@ pub fn clear_status_log(state: State<'_, StatusState>) -> StatusLogPage {
 ///
 /// `path` 来自前端的原生「另存为」对话框：给了就写到那里，没给（或用户取消、对话框不可用）
 /// 就落到日志目录内的 `export/` 子目录。路径校验在 `LogState::export_to`，这条命令是**唯一**
-/// 能按调用方给的地点写文件的地方，因此只授权给主窗。
+/// 能按调用方给的地点写文件的地方，因此只授权给设置侧的窗口（主窗 + 独立转灯日志窗）。
 ///
 /// ⚠️ 声明为 `async` 并把扫描丢进 `spawn_blocking`：导出要翻完整个日志目录（`max_total_bytes`
 /// 可以被配到几百 MiB）再逐行写出，而非 async 命令跑在**主线程** —— 一次导出就能把窗口事件
@@ -84,8 +85,12 @@ pub async fn export_status_log(
     }
 }
 
-/// 面板挂载 / 卸载时上报，决定 monitor 要不要每轮发那一批（关着时零 IPC）。
+/// 面板挂载 / 卸载时上报，决定 monitor 要不要发那一批（关着时零 IPC）。
+///
+/// ⚠️ 记账按**调用方窗口的 label**（`tauri::Window` 由 tauri 注入，前端不必传参）：
+/// 主窗的「会话记录」页与独立的转灯日志窗都会调这条命令，共用一个开关时任何一方
+/// 关掉都会让另一方停止跟随最新（见 `LogState::set_viewer`）。
 #[tauri::command]
-pub fn set_status_log_view(state: State<'_, StatusState>, attached: bool) {
-    state.log.set_viewer(attached);
+pub fn set_status_log_view(window: tauri::Window, state: State<'_, StatusState>, attached: bool) {
+    state.log.set_viewer(window.label(), attached);
 }

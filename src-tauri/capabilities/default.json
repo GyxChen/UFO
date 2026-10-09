@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Window controls used by the floating launcher.",
-  "windows": ["main", "floating", "tooltip"],
+  "description": "Window controls and read-only commands shared by every window (launcher, main, tooltip, detached panel windows).",
+  "windows": ["main", "floating", "tooltip", "script-editor", "status-log"],
   "permissions": [
     "core:default",
     "core:event:default",

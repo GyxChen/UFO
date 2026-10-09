@@ -61,9 +61,7 @@ use modules::todo::{
 use mouse::is_left_mouse_pressed;
 
 const MAIN_WINDOW: &str = "main";
-/// 悬浮窗 label。除被 `UFO_DEVTOOLS` 点名开 devtools 外没有别处用到，故限定调试构建。
-#[cfg(debug_assertions)]
-const FLOATING_WINDOW: &str = "floating";
+/// 信息提示窗 label：点击穿透与 devtools 例外都要点名它，故留在非调试构建里。
 const TOOLTIP_WINDOW: &str = "tooltip";
 const TRAY_ICON: &str = "main";
 const SHOW_MENU_ITEM: &str = "show";
@@ -173,14 +171,13 @@ pub fn run() {
             // 是否打开各窗口的 devtools 由环境变量 `UFO_DEVTOOLS` 决定（默认全关，见 devtools.rs）。
             // 只在调试构建下有意义：`open_devtools` 本身仅在 debug_assertions 或开 `devtools`
             // feature 时才存在，release 二进制里这段会被整个编译掉。
+            // ⚠️ 遍历**当下真实存在的窗口**而不是抄一份 label 清单：配置里加窗口时这里不用跟着改，
+            // 也避免清单漏项导致新窗口永远开不出 devtools。
             #[cfg(debug_assertions)]
             let devtools_targets = devtools::DevtoolsTargets::from_env();
             #[cfg(debug_assertions)]
-            for label in [MAIN_WINDOW, FLOATING_WINDOW, TOOLTIP_WINDOW] {
-                if !devtools_targets.wants(label) {
-                    continue;
-                }
-                if let Some(window) = app.get_webview_window(label) {
+            for (label, window) in app.webview_windows() {
+                if devtools_targets.wants(&label) {
                     window.open_devtools();
                 }
             }

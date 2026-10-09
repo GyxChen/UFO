@@ -48,13 +48,14 @@ identifier = "allow-manage-session-records"
 description = "Allows deleting or clearing persisted session records from the main window."
 commands.allow = ["delete_session_record", "clear_session_records"]
 
-# 转灯日志：读命令给三个窗口（悬浮窗 / 提示窗也可能要查），清空、导出与计数只给主窗。
+# 转灯日志：读命令给所有窗口（悬浮窗也可能要查），清空 / 导出 / 计数 / 订阅只给设置侧的窗口
+# （主窗 + 它派出的独立日志窗，见 `capabilities/main-module-settings.json`）。
 # 事件名常量在 Rust 与前端各一份，由 lib/status-log-reasons.spec.ts 锁住同源。
 #
 # ⚠️ `get_status_log` 现在按盘倒序分页（不再只读内存环形缓冲），理论上一次窄过滤会扫完整个
-# 目录，所以它虽然授权给三窗，成本靠「子串预筛 + 扫描预算 + 默认 7 天保留」三层兜住。
+# 目录，所以它虽然授权给所有窗口，成本靠「子串预筛 + 扫描预算 + 默认 7 天保留」三层兜住。
 # `count_status_log` 与之相反：它必定扫完整目录，是**最贵**的读，而两个调用方（详情里的折叠
-# 条目、整窗浮层）都在主窗 ⇒ 归到 manage 那一侧，权限面不扩大。
+# 条目、独立日志窗）都在设置侧 ⇒ 归到 manage 那一侧，权限面不扩大。
 [[permission]]
 identifier = "allow-get-status-log"
 description = "Allows reading a page of the light-transition log (转灯日志) by paging the on-disk JSONL."

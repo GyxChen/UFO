@@ -171,11 +171,11 @@ v1 → v2 就是给 `upstream_url` 补列：`ALTER TABLE ADD COLUMN`，老行取
 
 | 命令 | 授权窗口 | capability |
 |---|---|---|
-| `get_session_records` | 三个窗口 | `capabilities/default.json` |
-| `delete_session_record` / `clear_session_records` | **只主窗** | `capabilities/main-module-settings.json` |
-| `get_endpoint_profiles`（对照项，见 endpoint-flow 篇） | 三个窗口 | `default.json` |
+| `get_session_records` | 所有窗口 | `capabilities/default.json` |
+| `delete_session_record` / `clear_session_records` | **只设置侧** | `capabilities/main-module-settings.json` |
+| `get_endpoint_profiles`（对照项，见 endpoint-flow 篇） | 所有窗口 | `default.json` |
 
-**拆分策略**：只读命令给三窗（悬浮窗与提示窗都要显示），写命令只给主窗。**读侧一律是 `async` + `spawn_blocking`** —— 存档要读盘，非 async 命令跑在主线程会冻窗口（纪律见 floating-module-guide §12.3）。事件名：`session-records`（`SESSION_RECORDS_EVENT`）。
+**拆分策略**：只读命令给所有窗口（悬浮窗、提示窗与主窗派出的独立面板窗都要显示），写命令只给设置侧 —— 即 `main` 与它派出去带着同一套设置动作的 `status-log`。**读侧一律是 `async` + `spawn_blocking`** —— 存档要读盘，非 async 命令跑在主线程会冻窗口（纪律见 floating-module-guide §12.3）。事件名：`session-records`（`SESSION_RECORDS_EVENT`）。
 
 ## 6. 敏感数据与已知代价
 

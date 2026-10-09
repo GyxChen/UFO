@@ -271,14 +271,23 @@ html.is-main-window body,
 html.is-main-window #app,
 html.is-tooltip-window,
 html.is-tooltip-window body,
-html.is-tooltip-window #app {
+html.is-tooltip-window #app,
+html.is-panel-window,
+html.is-panel-window body,
+html.is-panel-window #app {
   background: transparent;
 }
 
-/* 主窗：锁死整窗滚动，只允许内部 .main-window 滚动。 */
+/*
+ * 主窗，以及主窗派出去的独立面板窗（脚本编辑 / 转灯日志）：锁死整窗滚动，
+ * 只允许内部那些有 `min-height: 0` 的容器滚。
+ */
 html.is-main-window,
 html.is-main-window body,
-html.is-main-window #app {
+html.is-main-window #app,
+html.is-panel-window,
+html.is-panel-window body,
+html.is-panel-window #app {
   height: 100%;
   overflow: hidden;
 }
@@ -369,6 +378,89 @@ html.is-tooltip-window #app {
  */
 .main-content {
   @apply relative flex min-h-0 flex-1 flex-col;
+}
+
+/*
+ * 独立面板窗（`script-editor` / `status-log`）的公共外壳：与 `.main-shell` 同一套实色 token
+ * 与圆角 —— 它们是主窗派出去的窗，不是另一套皮肤。
+ *
+ * 这两个窗口在 `tauri.conf.json` 里同样是 `decorations: false` + `transparent: true`，
+ * 所以边框、圆角、拖窗、收起都得自己来；标题栏只留「拖窗 + 收起」，不放导航。
+ * ⚠️ 收起按钮要 `-webkit-app-region: no-drag`：否则按下它先被当成拖窗，点不动。
+ */
+.panel-shell {
+  @apply flex h-full max-h-full min-h-0 flex-col overflow-hidden rounded-2xl;
+  background: var(--ufo-bg-main);
+  border: 1px solid var(--ufo-shell-border);
+  color: var(--ufo-text);
+}
+
+.panel-bar {
+  @apply relative flex h-10 shrink-0 items-center gap-2 border-b px-2 select-none;
+  border-color: var(--ufo-border);
+  background: var(--ufo-overlay-sunken);
+  cursor: grab;
+}
+
+.panel-bar:active {
+  cursor: grabbing;
+}
+
+/* 品牌位：与 `.main-titlebar__title` 同一版式，整块不吃指针事件，拖窗仍由 header 接管。 */
+.panel-bar__brand {
+  @apply pointer-events-none ml-1 flex shrink-0 items-center gap-1.5;
+}
+
+/* logo 是彩色（白＋灰渐变）图标，所以不加 `.ufo-mono-icon`：反相会把立体阴影翻成负片。 */
+.panel-bar__logo {
+  @apply pointer-events-none block h-5 w-5 object-contain;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+
+.panel-bar__name {
+  @apply text-xs leading-none;
+  color: var(--ufo-muted);
+}
+
+/* 这一扇窗自己的标题（带上下文），紧跟品牌位。 */
+.panel-bar__title {
+  @apply m-0 shrink-0 text-[13px] font-semibold;
+  color: var(--ufo-text);
+}
+
+/* 提示行吃掉剩余宽度并截断，保证右端关闭钮在任何窗口宽度下都在栏内。 */
+.panel-bar__hint {
+  @apply m-0 min-w-0 flex-1 truncate text-[12px];
+  color: var(--ufo-muted);
+}
+
+/* 关闭钮：与 `.main-titlebar__close` 同一枚图标、同一块 36×36 可点区（不只点得到像素）。 */
+.panel-bar__close {
+  @apply flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border-0 p-0;
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.panel-bar__close-icon {
+  @apply block h-4 w-4 object-contain opacity-70;
+  pointer-events: none;
+}
+
+.panel-bar__close:hover {
+  background: var(--ufo-danger-soft);
+}
+
+.panel-bar__close:hover .panel-bar__close-icon {
+  opacity: 1;
+}
+
+.panel-bar__close:focus-visible {
+  outline: 2px solid var(--ufo-ring);
+  outline-offset: 2px;
+}
+
+.panel-body {
+  @apply flex min-h-0 flex-1 flex-col;
 }
 
 .main-window {
@@ -1258,38 +1350,40 @@ html.is-tooltip-window #app {
   pointer-events: none;
 }
 
-/* 整窗编辑弹窗：主窗是实色哑光面板，弹窗同 token（实色底、无 blur、细边框）。 */
 /*
- * 整窗编辑弹层：铺满的是浮层宿主 `#main-content`（标题栏以下那一整块），不是视口 ——
- * 所以 `absolute` 而不是 `fixed`（同 `.lg-modal`）。顶边落在关闭按钮下面，四周不越出
- * `.main-shell` 的圆角边框，标题栏始终可点（拖窗 / 隐藏到托盘）。
+ * 「整窗编辑脚本」独立窗口的正文区：标题栏与外壳由 `PanelWindow.vue`（`.panel-*`）给，
+ * 这里只剩吃满 `.panel-body` 剩余高度的那一块，编辑框由 `.jse--fill` 拉伸填满。
  */
-.jse-modal {
-  @apply absolute inset-0 z-40 flex flex-col;
-  background: var(--ufo-bg-main);
-  color: var(--ufo-text);
+.jse-window__body {
+  @apply flex min-h-0 flex-1 p-3;
 }
 
-.jse-modal__bar {
-  @apply flex h-11 shrink-0 items-center gap-3 border-b px-3;
-  background: var(--ufo-overlay-sunken);
-  border-color: var(--ufo-border);
-}
-
-.jse-modal__title {
-  @apply shrink-0 text-[13px] font-semibold;
-  color: var(--ufo-text);
-}
-
-/* 提示行吃掉剩余宽度并截断，保证「完成」按钮在任何窗口宽度下都在栏内。 */
-.jse-modal__hint {
-  @apply min-w-0 flex-1 truncate text-[12px];
+/* 主窗还没递来脚本时的占位（正常路径看不见：那一刻窗口还藏着）。 */
+.jse-window__empty {
+  @apply m-auto px-4 py-6 text-center text-[12px];
   color: var(--ufo-muted);
 }
 
-/* 编辑区：吃满剩余高度，内部编辑框由 .jse--fill 拉伸填满。 */
-.jse-modal__body {
-  @apply flex min-h-0 flex-1 p-3;
+/*
+ * 这份草稿正在独立窗口里编辑 ⇒ 主窗的内嵌框转只读：两个写入方会互相顶掉光标与选区，
+ * 所以这一侧只看不写（下面那行常驻说明负责讲清「为什么点不动」）。
+ * ⚠️ 只动边框与焦点环：`.jse__input` 的 color 是透明的（靠下层高亮显字），
+ * 给它上色会把光标与选中区现形，而抹 `.jse__highlight` 的颜色会一起干掉语法色。
+ */
+.jse--readonly {
+  border-color: var(--ufo-border);
+  opacity: 0.78;
+}
+
+.jse--readonly:focus-within {
+  border-color: var(--ufo-border);
+  box-shadow: none;
+}
+
+/* 「正在独立窗口中编辑」是读数，必须常驻在编辑框下面，不许藏进 hover 或 title。 */
+.jse__editing {
+  @apply mt-1.5 text-[11px] leading-snug;
+  color: var(--ufo-muted);
 }
 
 /* 语法高亮：色值集中在 :root 的 --jse-* token，规则里不再写死颜色。 */

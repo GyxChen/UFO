@@ -19,7 +19,7 @@
 import { describe, expect, it } from 'vitest'
 import { OVERFLOW_TOOLTIP_METRICS } from './lib/tooltip-size'
 import { LOG_ROW_HEIGHT_PX } from './lib/status-log'
-import overlayRaw from './panels/StatusLogOverlay.vue?raw'
+import panelRaw from './panels/StatusLogPanel.vue?raw'
 
 /** 模块样式文件：路径 → 原文。 */
 const moduleStyles = import.meta.glob('/src/modules/agent-status/*.css', {
@@ -431,18 +431,16 @@ describe('模块样式 · 设置页卡片必须真的撑满列宽', () => {
     // 满宽设置卡：突破 .ufo-card 限宽必须有两条类权重（同 `.push-panel > .push-master`）。
     expect(css, '设置卡要占满页宽').toContain('.sr-page > .lg-settings')
 
-    const modalBody = blockAfter(css, '.lg-modal__body {')
-    expect(modalBody, '浮层主体要吃满剩余高度且允许收缩').toContain('min-h-0')
-    expect(modalBody).toContain('flex-1')
-    // ⚠️ 浮层必须 `absolute`（宿主 = 主窗内容区 `#main-content`）：`fixed` 铺的是视口，
-    // 实测既盖住顶部两级标签页，又把方角画到 `.main-shell` 圆角之外（1000×750 的窗，
-    // 浮量到 1249×1221）。
-    const modal = blockAfter(css, '.lg-modal {')
-    expect(modal, '整窗浮层要贴着内容区铺，不许按视口').toContain('absolute')
-    expect(modal, '不许改回 fixed：那会盖住标签页并伸出窗口圆角').not.toContain('fixed')
+    // 转灯日志现在是一扇独立窗（`StatusLogWindow.vue` + `.panel-*` 外壳），正文不再是浮层：
+    // 铺满一块窗靠 flex 高度链，而不是 `absolute inset-0` 去贴主窗的内容区。
+    const windowBody = blockAfter(css, '.lg-window__body {')
+    expect(windowBody, '日志窗正文要吃满剩余高度且允许收缩').toContain('min-h-0')
+    expect(windowBody).toContain('flex-1')
+    expect(windowBody, '导出遮罩以这一层为定位祖先，少了 relative 就盖不住').toContain('relative')
+    expect(css, '整窗浮层那一层已经删干净，不许再回来').not.toContain('.lg-modal')
     const split = blockAfter(css, '.lg-split {')
-    expect(split, '浮层两栏都要能独立滚').toContain('min-h-0')
-    // 浮层左右 = 流水 : 详情 = 1.8 : 1（用户点名：行是长文本，宽度给流水）。
+    expect(split, '日志窗两栏都要能独立滚').toContain('min-h-0')
+    // 两栏左右 = 流水 : 详情 = 1.8 : 1（用户点名：行是长文本，宽度给流水）。
     expect(decl(split, 'grid-template-columns'), '两栏比例必须是 1.8fr : 1fr').toContain(
       'minmax(0, 1.8fr) minmax(0, 1fr)'
     )
@@ -587,8 +585,8 @@ describe('agent-status.css · 转灯日志虚拟列表', () => {
     expect(cell, '条目必须绝对定位（偏移由库给出）').toContain('absolute')
 
     // 组件侧同一件事：绑 padding 当垫高就是回到老坑；虚拟列表则由库驱动。
-    expect(overlayRaw, '组件不许再用 padding 垫高').not.toMatch(/paddingTop|paddingBottom/)
-    expect(overlayRaw, '左栏必须走 @tanstack/vue-virtual').toContain('useVirtualizer')
+    expect(panelRaw, '组件不许再用 padding 垫高').not.toMatch(/paddingTop|paddingBottom/)
+    expect(panelRaw, '左栏必须走 @tanstack/vue-virtual').toContain('useVirtualizer')
   })
 
   it('左栏包装层允许收缩，脚注在滚动区外面', () => {

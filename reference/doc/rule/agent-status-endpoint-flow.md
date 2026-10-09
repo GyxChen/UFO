@@ -99,7 +99,7 @@ FlowState::tick（只跑「存活会话涉及的 endpoint」且到点者）     
 
 ## 3. Endpoint 档案：持久化与登记口径
 
-`endpoint_profiles.rs` 的 `EndpointProfileState` 是一张 JSON 表（`<app-data>/endpoint-profiles.json`），供三窗口读取、供拓展面板增删。
+`endpoint_profiles.rs` 的 `EndpointProfileState` 是一张 JSON 表（`<app-data>/endpoint-profiles.json`），供所有窗口读取、供拓展面板增删。
 
 | 规则 | 说明 |
 |---|---|
@@ -112,7 +112,7 @@ FlowState::tick（只跑「存活会话涉及的 endpoint」且到点者）     
 
 - ⚠️ **历史 bug 已锁**：`normalize_host_port` 早期把 `[::1]:8080` 切成 `[::1:8080`（漏了 `]`），会让 loopback 判定失效、本地地址被登记成档案。护栏：`proxy/mod.rs` 的 `normalize_host_port_keeps_ipv6_brackets_and_port`。
 - ⚠️ **tick 读配置必须走 `profiles.with_profile(id, …)`**（只 clone 该档案的 `extensions`），**不要用 `snapshot()`** —— 后者整表 clone 含脚本正文（单份上限 64KB × 64 条），每 500ms 一次是纯浪费。同样的纪律写在推送那边（push 篇 §3：取脚本内容只查 `session_fields(key)` 一个 key）。
-- 读写分离：`get_endpoint_profiles` 给三窗口；`add_endpoint_profile` / `delete_endpoint_profile` **只在 `main-module-settings.json` 授权**（仅主窗）。
+- 读写分离：`get_endpoint_profiles` 给所有窗口；`add_endpoint_profile` / `delete_endpoint_profile` **只在 `main-module-settings.json` 授权**（设置侧的窗口）。
 - ⚠️ 档案面板的反馈**不能用 `window.alert` / `confirm`**（装了 `tauri-plugin-prevent-default`，原生对话框会被拦，红线见接入指南 §11）；一律 `role="status"` 行内提示，移除用两步确认。
 - 配置面板（齿轮页签 → 组件列表行的齿轮 / 点悬浮窗上的状态灯 → 二级 tab「信息卡拓展」）用左右主从布局配各 endpoint；**版面规范见 `visual-style.md`**。
 
@@ -135,7 +135,7 @@ FlowState::tick（只跑「存活会话涉及的 endpoint」且到点者）     
 
 ### 4.1 ⚠️ `console` 不广播
 
-`console` 的输出只进本次运行的环形缓冲（`MAX_LOG_LINES = 50`，超限只留最新），**仅供「运行测试」按钮回显**，绝不进 `flow-results` 广播、绝不进状态日志。原因很直白：脚本作者（或抄来的一段脚本）很可能写 `console.log(secrets.get('KEY'))`，一旦广播就等于把凭据推给三个窗口并可能落盘。行数与单行长度都有帽（`MAX_LOG_CHARS`），防止脚本用日志把内存吃光。
+`console` 的输出只进本次运行的环形缓冲（`MAX_LOG_LINES = 50`，超限只留最新），**仅供「运行测试」按钮回显**，绝不进 `flow-results` 广播、绝不进状态日志。原因很直白：脚本作者（或抄来的一段脚本）很可能写 `console.log(secrets.get('KEY'))`，一旦广播就等于把凭据推给每一个窗口并可能落盘。行数与单行长度都有帽（`MAX_LOG_CHARS`），防止脚本用日志把内存吃光。
 
 ## 5. 为什么出网只收成一个 `http`
 
@@ -239,8 +239,12 @@ status monitor 每轮（约 500ms）调一次 `FlowState::tick(&snapshot, &profi
 
 | 命令 | 授权 |
 |---|---|
-| `get_endpoint_profiles` / `get_flow_results` / `get_flow_snapshot` | 三个窗口（`capabilities/default.json` 的 `allow-get-flow-results` 等） |
-| `save_endpoint_flow` / `run_flow_test` / `set_flow_secret` / `delete_flow_secret` / `add_endpoint_profile` / `delete_endpoint_profile` | **只主窗**（`capabilities/main-module-settings.json`） |
+| `get_endpoint_profiles` / `get_flow_results` / `get_flow_snapshot` | 所有窗口（`capabilities/default.json` 的 `allow-get-flow-results` 等） |
+| `save_endpoint_flow` / `run_flow_test` / `set_flow_secret` / `delete_flow_secret` / `add_endpoint_profile` / `delete_endpoint_profile` | **只设置侧**（`capabilities/main-module-settings.json`） |
+
+⚠️ `script-editor` 那扇独立窗口**一条命令都不拿**：它只通过 `lib/panel-window.ts` 的 open 事件收下这份草稿，
+每次输入把整份正文回传给主窗，保存 / 运行测试仍然只在主窗发生 —— 于是「脚本正文能改到哪个 endpoint」这件事
+始终只有一个入口，权限面没有因为开窗而扩大。
 
 事件：`endpoint-profiles`（档案变化）、`flow-results`（脚本结果）。配置写回仍走外壳的 `updateModuleSettings('agent-status', …)`，不新增保存命令。
 
@@ -249,7 +253,7 @@ status monitor 每轮（约 500ms）调一次 `FlowState::tick(&snapshot, &profi
 | 做法 | 后果 |
 |---|---|
 | 给脚本加任何一条新的外界通道（fs / net / IPC / 模块加载） | ❌ 三条不变量当场破两条：地址策略无法集中、agent 全停不再等于零出网。必须收敛成带策略校验的宿主闭包（§5） |
-| 让 `console` 进广播或进日志 | ❌ 脚本一句 `log(secrets.get('K'))` 就把凭据推给三个窗口（§4.1） |
+| 让 `console` 进广播或进日志 | ❌ 脚本一句 `log(secrets.get('K'))` 就把凭据推给所有窗口（§4.1） |
 | 在 `validate_http_url` 之后才判地址、或给 push/flow 共用一份校验 | ❌ 两边的地址来源性质不同，统一 = 要么砍掉局域网自建推送服务器，要么放开脚本打私网（§6） |
 | 登记 loopback 地址当档案 | ❌ 本地代理不是可配置对象、端口随重启变，档案表会被垃圾行灌满（§3） |
 | tick 用 `snapshot()` 读配置 | ❌ 每 500ms clone 整表含脚本正文（64KB × 64）。必须 `with_profile(id, …)`（§3） |

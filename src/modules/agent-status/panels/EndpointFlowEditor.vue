@@ -9,7 +9,8 @@
  * ⚠️ 反馈一律走行内 `role="status"`，不用 window.alert / window.confirm：
  * 本应用装了 tauri-plugin-prevent-default，原生对话框可能被拦掉。
  * ⚠️ 面板在主窗口内，不是悬浮窗，按钮无需 @click.stop（该约定只约束悬浮窗内的独立点击元素）。
- * ⚠️ 脚本框是 `ScriptEditor`（轻量高亮 + 整窗编辑弹窗），不是裸 textarea；它只读写 `draft.script`。
+ * ⚠️ 脚本框是 `ScriptEditor`（轻量高亮 + 独立窗口整块编辑），不是裸 textarea；它只读写 `draft.script`。
+ *    正文由窗口逐条同步回这份草稿，保存 / 运行测试仍然只在这里发生（窗口不碰命令，也就没有第二处写盘）。
  */
 import { computed, reactive, ref, watch } from 'vue'
 import type { EndpointProfile } from '../lib/endpoint-profiles'
@@ -222,13 +223,16 @@ function clampInt(value: number, min: number, max: number): number {
       </div>
 
       <!--
-        脚本：轻量高亮编辑器（ScriptEditorFrame 双层渲染）；右上角「扩大」按钮弹出整窗编辑框。
+        脚本：轻量高亮编辑器（ScriptEditorFrame 双层渲染）；右上角「扩大」把这份草稿开进独立窗口。
         这里不用 <label> 包住：编辑器内部有「扩大」按钮，label 的隐式激活会抢焦点。
+        ⚠️ `scope` 传档案 id：切换 endpoint 时 ScriptEditor 据此收起独立窗口并作废那一条迟到回传，
+        否则 A 的正文会被写进 B 的草稿（编辑器组件不认识 id，只当身份字符串比较）。
       -->
       <div class="flow-editor__field">
         <span>脚本</span>
         <ScriptEditor
           v-model="draft.script"
+          :scope="profile.id"
           aria-label="流程脚本源码"
           :title="`编辑脚本 · ${profile.url}`"
           placeholder="return [{ label: '余额', value: '¥12.30', color: 'green' }]"

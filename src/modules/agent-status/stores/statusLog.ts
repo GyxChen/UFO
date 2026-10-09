@@ -15,10 +15,10 @@ import {
 
 let stopListener: UnlistenFn | undefined
 
-/** 详情条目一次最多读多少行：折叠态只露摘要那几条，其余靠「看更早的」与浮层。 */
+/** 详情条目一次最多读多少行：折叠态只露摘要那几条，其余靠「看更早的」与独立日志窗。 */
 export const PEEK_WINDOW = 50
 
-/** 浮层右栏「同一条信号的其它行」一次最多读多少行（与 PEEK_WINDOW 同数不同用途）。 */
+/** 日志窗右栏「同一条信号的其它行」一次最多读多少行（与 PEEK_WINDOW 同数不同用途）。 */
 export const TRACE_WINDOW = 50
 
 /** 空页：后端还没答话时也要有个结构完整的对象可渲染（面板不许判 undefined）。 */
@@ -56,11 +56,13 @@ function isPage(value: unknown): value is StatusLogPage {
 }
 
 /**
- * 转灯日志 store（主窗「会话记录」页的数据源）。
+ * 转灯日志 store（主窗「会话记录」页与独立日志窗各自持有一份）。
  *
  * 三条来源都汇到同一份状态：初始 `get_status_log`、monitor 每轮广播的新行、
- * 用户往上翻页。⚠️ 只有本 store `start()` 过（也就是那一页挂着）后端才广播 ——
- * `set_status_log_view` 决定 monitor 每轮要不要发那一批，没人看时零 IPC。
+ * 用户往上翻页。⚠️ 后端按**调用方窗口的 label** 记 attach（`set_status_log_view`），
+ * 所以两边都要在自己的挂载 / 收起里 `start()` / `stop()`：漏掉 `stop()` 就等于
+ * 「人早走了还在每轮广播」，而把对方的 attach 当成自己的关掉是不可能的（各自一条记录）。
+ * 每个 webview 一份 pinia，两份状态互不干扰。
  */
 export const useStatusLogStore = defineStore('status-log', {
   state: () => ({
@@ -180,7 +182,7 @@ export const useStatusLogStore = defineStore('status-log', {
         return
       }
       if (!this.following || !this.pinned) {
-        // 暂停跟随、或人已经滚离顶部：新行只累计条数，不动画面（浮层那颗 chip 负责「跟回最新」）。
+        // 暂停跟随、或人已经滚离顶部：新行只累计条数，不动画面（日志窗那颗 chip 负责「跟回最新」）。
         this.pending += page.entries.length
         return
       }
@@ -226,7 +228,7 @@ export const useStatusLogStore = defineStore('status-log', {
       }
     },
 
-    /** 按 `trace_id` 读一条信号的完整链路（浮层右栏用，不受那边勾选的过滤条件影响）。 */
+    /** 按 `trace_id` 读一条信号的完整链路（日志窗右栏用，不受那边勾选的过滤条件影响）。 */
     async queryTrace(traceId: string): Promise<StatusLogEntry[]> {
       try {
         const page = await invoke<StatusLogPage>('get_status_log', {

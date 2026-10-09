@@ -1,19 +1,16 @@
 <script setup lang="ts">
 /**
- * 转灯日志的整窗浮层：左栏本会话流水，右栏选中那条记录的完整信息。
+ * 转灯日志窗的正文：左栏本会话流水，右栏选中那条记录的完整信息。
  *
- * 外壳照 `.jse-modal` 那一层（实色铺满、44px 标题栏、「完成」+ Esc），但**没有复用**
- * `ScriptEditorModal.vue` —— 它模板里写死了 `ScriptEditorFrame` 与 `aria-label`，
- * 塞不进两栏内容；加 slot 会动到正在用的脚本编辑器，所以这里另写一个薄组件。
- *
- * ⚠️ 浮层的宿主是主窗的 `#main-content`（不是 `body`）：那是标题栏以下、含两级 tabbar 的
- * 一整块，所以顶边落在关闭按钮下面 —— 展开时盖住 tabbar 是允许的，圆角由 `.main-shell` 裁
- * （为什么不能挂 body，见模板里的注释）。
+ * 它住在一扇独立的窗里（`StatusLogWindow.vue` 给出圆角面板 + 与主窗同版式的标题栏 + 右端 ×，
+ * 正文由本组件铺满 `.panel-body`）。从前它是主窗里的一层 `Teleport` 浮层，所以外壳、
+ * Esc、「完成」都在自己身上；现在那些都归窗口外壳，本组件只管「看哪一条会话、怎么看」。
  *
  * 主从布局与「信息卡拓展 / 会话记录」同一套语言：左选一条，右看全字段。
  * ⚠️ 两处滚动都靠 `min-height: 0` 的高度链，少一环就退化成整页滚。
+ * ⚠️ 挂载即干净：窗口收起时外层把本组件卸掉，过滤条件与选中因此不跨次残留。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useStatusLogStore } from '../stores/statusLog'
@@ -41,13 +38,8 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoadingOverlay from '@/components/ui/BaseLoadingOverlay.vue'
 
 const props = defineProps<{
-  /** 会话 key（`provider:session_id`）：浮层只看这一条会话。 */
+  /** 会话 key（`provider:session_id`）：本栏只看这一条会话。 */
   sessionKey: string
-}>()
-
-const emit = defineEmits<{
-  /** 请求关闭浮层（「完成」或 Esc）。 */
-  close: []
 }>()
 
 const log = useStatusLogStore()
@@ -142,9 +134,7 @@ function scrollToTop() {
 const countLabel = computed(() => logCountLabel('共', log.count, log.countState))
 
 /** 选中的那条：按盘上身份从已载入的行里现找（列表会因广播与翻页而变化）。 */
-const selected = computed<StatusLogEntry | null>(
-  () => rows.value.find(entry => entry.id === selectedId.value) ?? null
-)
+const selected = computed<StatusLogEntry | null>(() => rows.value.find(entry => entry.id === selectedId.value) ?? null)
 
 /**
  * 同一条信号（同 `trace_id`）的其它行：**独立按 trace_id 查盘**，不从 `rows` 里筛。
@@ -277,22 +267,6 @@ async function clearNow() {
   }
 }
 
-/** Esc 关闭；键盘用户的另一个出口是标题栏「完成」。 */
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Escape') return
-  event.preventDefault()
-  emit('close')
-}
-
-onMounted(() => {
-  window.addEventListener('keydown', onKeydown)
-})
-onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onKeydown)
-  // 浮层关掉不等于这一页关掉：条目还在，所以不动 `set_status_log_view`（由页面管）。
-  pendingClear.value = false
-})
-
 /** 灯色字：「黄」「绿」这两个字染成状态灯色，但只染灯态，不染提问原文里的字。 */
 const PHASE_CHARS: Record<string, string> = { 黄: 'lg-light--yellow', 绿: 'lg-light--green', 红: 'lg-light--red' }
 
@@ -315,168 +289,150 @@ function positionOf(id: string): string {
 
 <template>
   <!--
-    宿主是主窗的浮层区 `#main-content`（标题栏以下、含两级 tabbar 那一整块），不是 `body`：
-    挂在 body 上时铺的是视口 —— 实测既压住标题栏，方角又伸出窗口圆角之外。
-    挂进宿主后顶边正好落在关闭按钮下面：展开时盖住 tabbar 是允许的（本层有「完成」与 Esc），
-    但标题栏要留着 —— 拖窗与「隐藏到托盘」在浮层开着时也得能用。
+    独立转灯日志窗的正文：外壳（圆角实色面板 + 可拖标题栏 + 「完成」）在 `StatusLogWindow.vue`。
+    ⚠️ 本层是 `.panel-body` 的 flex 子项，靠 `flex-1` + `min-h-0` 吃满剩余高度（`.lg-window__body`），
+    它的 `relative` 同时是下面那层导出遮罩的定位祖先。
   -->
-  <Teleport to="#main-content">
-    <div class="lg-modal" role="dialog" aria-modal="true" aria-label="转灯日志完整链路" @wheel.stop>
-      <header class="lg-modal__bar">
-        <h2 class="lg-modal__title">转灯日志 · {{ sessionKey }}</h2>
-        <p class="lg-modal__hint">
-          左列本会话的裁决流水（新→旧），点一行在右列看它的全部字段
-        </p>
-        <BaseButton variant="primary" size="sm" @click="emit('close')">完成</BaseButton>
-      </header>
+  <div class="lg-window__body">
+    <div class="lg-filters">
+      <label class="lg-filters__label">
+        环节
+        <select v-model="stage" class="lg-filters__select" @change="reload">
+          <option v-for="option in STAGE_OPTIONS" :key="String(option.value)" :value="option.value">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
+      <label class="lg-check"><input v-model="onlyRejected" type="checkbox" @change="reload" />只看被拒 / 被丢</label>
+      <label class="lg-check"><input v-model="paused" type="checkbox" />暂停跟随</label>
+      <button v-if="!log.following && log.pending" type="button" class="lg-chip" @click="resume">
+        攒了 {{ log.pending }} 条，跟回最新
+      </button>
+      <span class="lg-filters__count">{{ countLabel }}</span>
+    </div>
 
-      <div class="lg-modal__body">
-        <div class="lg-filters">
-          <label class="lg-filters__label">
-            环节
-            <select v-model="stage" class="lg-filters__select" @change="reload">
-              <option v-for="option in STAGE_OPTIONS" :key="String(option.value)" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
-          </label>
-          <label class="lg-check"><input v-model="onlyRejected" type="checkbox" @change="reload" />只看被拒 / 被丢</label>
-          <label class="lg-check"><input v-model="paused" type="checkbox" />暂停跟随</label>
-          <button v-if="!log.following && log.pending" type="button" class="lg-chip" @click="resume">
-            攒了 {{ log.pending }} 条，跟回最新
-          </button>
-          <span class="lg-filters__count">{{ countLabel }}</span>
-        </div>
-
-        <div class="lg-split">
-          <!--
+    <div class="lg-split">
+      <!--
             左：流水。虚拟列表只渲染「视口 ±overscan」那几十行，总高由 `.lg-rows__sizer`
             这一个占位元素撑出来，条目绝对定位 + `translateY` —— 容器自己的高度只由版面决定，
             不会被内容或垫高顶大（这是上一版用 padding 垫高踩的坑，见 `rowVirtualizer` 上方注释）。
           -->
-          <div class="lg-pane">
+      <div class="lg-pane">
+        <div ref="scroller" class="lg-rows" role="list" aria-label="本会话的转灯裁决流水" @scroll="onScroll">
+          <div class="lg-rows__sizer" :style="{ height: totalSize + 'px' }">
             <div
-              ref="scroller"
-              class="lg-rows"
-              role="list"
-              aria-label="本会话的转灯裁决流水"
-              @scroll="onScroll"
+              v-for="item in renderedRows"
+              :key="item.key"
+              class="lg-rows__cell"
+              role="listitem"
+              :style="{ transform: 'translateY(' + item.top + 'px)', height: item.height + 'px' }"
             >
-              <div class="lg-rows__sizer" :style="{ height: totalSize + 'px' }">
-                <div
-                  v-for="item in renderedRows"
-                  :key="item.key"
-                  class="lg-rows__cell"
-                  role="listitem"
-                  :style="{ transform: 'translateY(' + item.top + 'px)', height: item.height + 'px' }"
-                >
-                  <button
-                    type="button"
-                    class="lg-row"
-                    :class="[`lg-row--${logTone(item.entry)}`, { 'lg-row--current': item.entry.id === selectedId }]"
-                    :aria-current="item.entry.id === selectedId ? 'true' : undefined"
-                    @click="pick(item.entry)"
-                  >
-                    <span class="lg-row__line">
-                      <span class="lg-row__time">{{ clock(item.entry.ts_ms) }}</span>
-                      <span class="lg-row__stage">{{ STAGE_LABELS[item.entry.stage] }}</span>
-                      <span class="lg-row__seq">@{{ positionOf(item.entry.id) }}</span>
-                    </span>
-                    <span class="lg-row__msg">
-                      <b>{{ item.entry.reason ?? STAGE_LABELS[item.entry.stage] }}</b>
-                      · {{ logHeadline(item.entry) }}
-                      <template v-if="logPhaseChange(item.entry)">
-                        ·
-                        <template v-for="part in phaseParts(logPhaseChange(item.entry))" :key="part.char">
-                          <span :class="part.cls">{{ part.char }}</span>
-                        </template>
-                      </template>
-                      <span v-if="item.entry.trace_id" class="lg-row__trace">{{ item.entry.trace_id }}</span>
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 空态与「看更早的」都在滚动区**外面**：混进去就成了没计入高度模型的一行。 -->
-            <p v-if="!rows.length" class="lg-pane__note">
-              {{ log.loaded ? '这个会话在当前过滤条件下没有记录。摘掉过滤看看全量。' : '正在读取转灯日志…' }}
-            </p>
-            <div v-else class="lg-pane__foot">
-              <BaseButton
-                v-if="log.canPageBack"
-                variant="ghost"
-                size="sm"
-                :disabled="log.loadingMore"
-                @click="log.loadOlder(query)"
+              <button
+                type="button"
+                class="lg-row"
+                :class="[`lg-row--${logTone(item.entry)}`, { 'lg-row--current': item.entry.id === selectedId }]"
+                :aria-current="item.entry.id === selectedId ? 'true' : undefined"
+                @click="pick(item.entry)"
               >
-                {{ log.loadingMore ? '读取中…' : '看更早的' }}
-              </BaseButton>
-              <span v-else class="lg-pane__note">已经翻到这批日志的头部。</span>
-              <span class="lg-filters__loaded">已载入 {{ rows.length }} 行</span>
+                <span class="lg-row__line">
+                  <span class="lg-row__time">{{ clock(item.entry.ts_ms) }}</span>
+                  <span class="lg-row__stage">{{ STAGE_LABELS[item.entry.stage] }}</span>
+                  <span class="lg-row__seq">@{{ positionOf(item.entry.id) }}</span>
+                </span>
+                <span class="lg-row__msg">
+                  <b>{{ item.entry.reason ?? STAGE_LABELS[item.entry.stage] }}</b>
+                  · {{ logHeadline(item.entry) }}
+                  <template v-if="logPhaseChange(item.entry)">
+                    ·
+                    <template v-for="part in phaseParts(logPhaseChange(item.entry))" :key="part.char">
+                      <span :class="part.cls">{{ part.char }}</span>
+                    </template>
+                  </template>
+                  <span v-if="item.entry.trace_id" class="lg-row__trace">{{ item.entry.trace_id }}</span>
+                </span>
+              </button>
             </div>
           </div>
-
-          <!-- 右：选中那条的完整信息 -->
-          <section class="lg-recard" aria-label="选中记录的完整信息">
-            <template v-if="selected">
-              <div class="lg-recard__head">
-                <span class="lg-row__stage">{{ STAGE_LABELS[selected.stage] }}</span>
-                <b>{{ selected.reason ?? '—' }}</b>
-                <span class="lg-recard__clock">{{ formatLogClockMillis(selected.ts_ms) }}</span>
-              </div>
-              <p class="lg-recard__lead">{{ reasonExplain(selected.reason) || STAGE_EXPLAIN[selected.stage] }}</p>
-
-              <dl class="lg-rec__fields">
-                <template v-for="field in fields" :key="field.label">
-                  <dt>{{ field.label }}</dt>
-                  <dd>{{ field.value }}</dd>
-                </template>
-                <dt>环节说明</dt>
-                <dd>{{ STAGE_EXPLAIN[selected.stage] }}</dd>
-              </dl>
-
-              <template v-if="selected.detail">
-                <p class="lg-rec__sub">detail（白名单标量）</p>
-                <pre class="lg-rec__raw">{{ JSON.stringify(selected.detail) }}</pre>
-              </template>
-
-              <template v-if="traceSiblings.length">
-                <p class="lg-rec__sub">同一条信号（{{ selected.trace_id }}）的其它 {{ traceSiblings.length }} 行 · 正序</p>
-                <ol class="lg-chain">
-                  <li v-for="sibling in traceSiblings" :key="sibling.seq" class="lg-chain__item">
-                    <span class="lg-row__time">{{ formatLogClockMillis(sibling.ts_ms) }}</span>
-                    <span class="lg-row__stage">{{ STAGE_LABELS[sibling.stage] }}</span>
-                    <span>
-                      <b>{{ sibling.reason ?? '—' }}</b>
-                      <span class="lg-chain__why">{{ logDetailNote(sibling) }}</span>
-                    </span>
-                  </li>
-                </ol>
-              </template>
-
-              <p class="lg-rec__sub">线协议一行（按字段重建；@{{ positionOf(selected.id) }} 是它在盘上的字节坐标）</p>
-              <pre class="lg-rec__raw">{{ logWireLine(selected) }}</pre>
-            </template>
-            <p v-else class="lg-recard__placeholder">先在左列选一条记录。</p>
-          </section>
         </div>
 
-        <div class="lg-foot">
-          <BaseButton variant="ghost" size="sm" :disabled="exporting" @click="exportNow">导出当前条件</BaseButton>
-          <BaseButton variant="danger" size="sm" :armed="pendingClear" :disabled="exporting" @click="clearNow">
-            {{ pendingClear ? '确认清空' : '清空日志' }}
+        <!-- 空态与「看更早的」都在滚动区**外面**：混进去就成了没计入高度模型的一行。 -->
+        <p v-if="!rows.length" class="lg-pane__note">
+          {{ log.loaded ? '这个会话在当前过滤条件下没有记录。摘掉过滤看看全量。' : '正在读取转灯日志…' }}
+        </p>
+        <div v-else class="lg-pane__foot">
+          <BaseButton
+            v-if="log.canPageBack"
+            variant="ghost"
+            size="sm"
+            :disabled="log.loadingMore"
+            @click="log.loadOlder(query)"
+          >
+            {{ log.loadingMore ? '读取中…' : '看更早的' }}
           </BaseButton>
-          <p v-if="feedback" class="lg-foot__status" role="status">{{ feedback }}</p>
-          <p class="lg-dir">{{ log.dir }}</p>
+          <span v-else class="lg-pane__note">已经翻到这批日志的头部。</span>
+          <span class="lg-filters__loaded">已载入 {{ rows.length }} 行</span>
         </div>
       </div>
 
-      <!--
-        导出遮罩：后端要扫完整个日志目录才回，秒级到十几秒都可能。挂在这里（`.lg-modal` 是
-        定位祖先）能盖住整窗，包括那两个钮 —— 扫描在飞的时候再点一次只会多打一次全目录扫描。
-      -->
-      <BaseLoadingOverlay :loading="exporting" text="正在扫描日志目录…" tone="solid" placement="inline" />
+      <!-- 右：选中那条的完整信息 -->
+      <section class="lg-recard" aria-label="选中记录的完整信息">
+        <template v-if="selected">
+          <div class="lg-recard__head">
+            <span class="lg-row__stage">{{ STAGE_LABELS[selected.stage] }}</span>
+            <b>{{ selected.reason ?? '—' }}</b>
+            <span class="lg-recard__clock">{{ formatLogClockMillis(selected.ts_ms) }}</span>
+          </div>
+          <p class="lg-recard__lead">{{ reasonExplain(selected.reason) || STAGE_EXPLAIN[selected.stage] }}</p>
+
+          <dl class="lg-rec__fields">
+            <template v-for="field in fields" :key="field.label">
+              <dt>{{ field.label }}</dt>
+              <dd>{{ field.value }}</dd>
+            </template>
+            <dt>环节说明</dt>
+            <dd>{{ STAGE_EXPLAIN[selected.stage] }}</dd>
+          </dl>
+
+          <template v-if="selected.detail">
+            <p class="lg-rec__sub">detail（白名单标量）</p>
+            <pre class="lg-rec__raw">{{ JSON.stringify(selected.detail) }}</pre>
+          </template>
+
+          <template v-if="traceSiblings.length">
+            <p class="lg-rec__sub">同一条信号（{{ selected.trace_id }}）的其它 {{ traceSiblings.length }} 行 · 正序</p>
+            <ol class="lg-chain">
+              <li v-for="sibling in traceSiblings" :key="sibling.seq" class="lg-chain__item">
+                <span class="lg-row__time">{{ formatLogClockMillis(sibling.ts_ms) }}</span>
+                <span class="lg-row__stage">{{ STAGE_LABELS[sibling.stage] }}</span>
+                <span>
+                  <b>{{ sibling.reason ?? '—' }}</b>
+                  <span class="lg-chain__why">{{ logDetailNote(sibling) }}</span>
+                </span>
+              </li>
+            </ol>
+          </template>
+
+          <p class="lg-rec__sub">线协议一行（按字段重建；@{{ positionOf(selected.id) }} 是它在盘上的字节坐标）</p>
+          <pre class="lg-rec__raw">{{ logWireLine(selected) }}</pre>
+        </template>
+        <p v-else class="lg-recard__placeholder">先在左列选一条记录。</p>
+      </section>
     </div>
-  </Teleport>
+
+    <div class="lg-foot">
+      <BaseButton variant="ghost" size="sm" :disabled="exporting" @click="exportNow">导出当前条件</BaseButton>
+      <BaseButton variant="danger" size="sm" :armed="pendingClear" :disabled="exporting" @click="clearNow">
+        {{ pendingClear ? '确认清空' : '清空日志' }}
+      </BaseButton>
+      <p v-if="feedback" class="lg-foot__status" role="status">{{ feedback }}</p>
+      <p class="lg-dir">{{ log.dir }}</p>
+    </div>
+
+    <!--
+        导出遮罩：后端要扫完整个日志目录才回，秒级到十几秒都可能。挂在本层（`.lg-window__body`
+        是定位祖先）能盖住整块正文，包括那两个钮 —— 扫描在飞的时候再点一次只会多打一次全目录扫描。
+        标题栏在本层之外，所以窗口在扫描期间仍然收得掉。
+      -->
+    <BaseLoadingOverlay :loading="exporting" text="正在扫描日志目录…" tone="solid" placement="inline" />
+  </div>
 </template>

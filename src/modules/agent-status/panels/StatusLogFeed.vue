@@ -1,15 +1,19 @@
 <script setup lang="ts">
 /**
- * 「记录详情」末尾那一项：转灯日志的折叠视图 + 打开整窗浮层的入口。
+ * 「记录详情」末尾那一项：转灯日志的折叠视图 + 打开独立窗口的入口。
  *
  * 折叠态只有约一行高：一条结论 + 最近两行摘要，右边两个动作（导出本会话 / 展开）。
- * 数据走 `store.refreshPeek()` 的独立查询，而不是从浮层那份 `entries` 里筛 ——
- * 浮层的过滤条件（环节 / 只看被拒）会随时变，详情条目不该跟着变空。
+ * 数据走 `store.refreshPeek()` 的独立查询，而不是从窗口那一侧的 `entries` 里筛 ——
+ * 那边的过滤条件（环节 / 只看被拒）会随时变，详情条目不该跟着变空。
+ *
+ * 「展开」把这一条会话交给独立窗口（`StatusLogWindow.vue`）：两栏的完整链路在主窗这块内容区里
+ * 摆不开，而实时订阅由那一扇窗自己按自己的 label attach / detach（见 `set_status_log_view`），
+ * 所以本条目收起与否都不影响窗口那边的跟随。
  *
  * ⚠️ 关闭态按已批准的 mock 画法 ②：条目**留在原处**、内容说清「没在记」。
  * 整块不显示会让人分不清「没发生」与「没记录」，那正是排障时最需要一个答案的地方。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useStatusLogStore } from '../stores/statusLog'
 import {
@@ -21,11 +25,11 @@ import {
   logTone,
   type StatusLogEntry,
 } from '../lib/status-log'
+import { STATUS_LOG_WINDOW_LABEL, openStatusLogWindow } from '../lib/status-log-window'
 import { agentStatusSettings, logSwitchOn } from '../settings'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseLoadingOverlay from '@/components/ui/BaseLoadingOverlay.vue'
-import StatusLogOverlay from './StatusLogOverlay.vue'
 
 const props = defineProps<{
   /** 会话 key（`provider:session_id`）；空串 = 还没选中任何存档。 */
@@ -38,10 +42,7 @@ const modules = useFloatingModulesStore()
 /** 日志开关是否打开（配置由本模块解释，见 `settings.ts`）。 */
 const recording = computed(() => logSwitchOn(agentStatusSettings(modules.config).log))
 
-/** 浮层是否展开。 */
-const open = ref(false)
-
-/** 行内反馈（导出结果 / 失败原因）；本项目禁止 alert/confirm，一律 `role="status"`。 */
+/** 行内反馈（导出结果 / 打不开窗口 / 失败原因）；本项目禁止 alert/confirm，一律 `role="status"`。 */
 const feedback = ref('')
 
 /**
@@ -55,9 +56,7 @@ const exporting = ref(false)
  *
  * 查询只带 `key`：这一行说的是「这个会话在盘上一共多少条」，不该被浮层那套过滤条件影响。
  */
-const countLabel = computed(() =>
-  logCountLabel('本会话', log.count, log.countState)
-)
+const countLabel = computed(() => logCountLabel('本会话', log.count, log.countState))
 
 /** 折叠态露出的行：第一条做结论，后两条做摘要。 */
 const shown = computed(() => log.peek.slice(0, 3))
@@ -84,15 +83,23 @@ watch(
   { immediate: true }
 )
 
-/** 展开浮层前先确保订阅在跑（页面卸载过就得重新 attach）。 */
-function expand() {
-  open.value = true
-}
-
-/** 关掉浮层：右栏那份过滤视图留着不动（再开不用重拉），只清行内反馈。 */
-function collapse() {
-  open.value = false
+/**
+ * 把这一条会话交给独立窗口：实时订阅由那一扇窗自己按它的 label attach / detach，
+ * 本条目这边只决定「看哪一条」。
+ *
+ * 开窗失败只有这一处能看见，因此必须说清：返回 `false` = `tauri.conf.json` 里没声明那个窗口。
+ */
+async function expand() {
+  if (!props.sessionKey) return
   feedback.value = ''
+  try {
+    if (!(await openStatusLogWindow({ sessionKey: props.sessionKey }))) {
+      feedback.value = '打不开转灯日志窗口：配置里没有声明这个窗口。'
+    }
+  } catch (error) {
+    feedback.value = `打不开转灯日志窗口：${error}`
+    console.warn('failed to open the status log window', error)
+  }
 }
 
 /**
@@ -123,11 +130,6 @@ async function exportSession() {
   }
 }
 
-/** 浮层开着时页面被切走要一起收掉，免得留一层看不见的面板。 */
-onBeforeUnmount(() => {
-  open.value = false
-})
-
 /** 灯色字：只染灯态那两个字，不染提问原文里的同名字。 */
 const PHASE_CHARS: Record<string, string> = { 黄: 'lg-light--yellow', 绿: 'lg-light--green', 红: 'lg-light--red' }
 
@@ -144,13 +146,7 @@ function phaseParts(text: string) {
         {{ recording ? countLabel : '已关闭 · 零写盘' }}
       </span>
       <span class="lg-inline__acts">
-        <BaseButton
-          v-if="recording && headline"
-          variant="ghost"
-          size="sm"
-          :disabled="exporting"
-          @click="exportSession"
-        >
+        <BaseButton v-if="recording && headline" variant="ghost" size="sm" :disabled="exporting" @click="exportSession">
           导出本会话
         </BaseButton>
         <button
@@ -158,8 +154,8 @@ function phaseParts(text: string) {
           type="button"
           class="lg-inline__expand"
           :disabled="exporting"
-          title="在整窗中查看完整链路"
-          aria-label="在整窗中查看完整链路"
+          title="在独立窗口中查看完整链路"
+          aria-label="在独立窗口中查看完整链路"
           @click="expand"
         >
           <!-- 内联同一枚「扩大」图标（与 `ScriptEditorFrame` 用的路径一致）：
@@ -213,7 +209,5 @@ function phaseParts(text: string) {
       不会把整张详情卡压住 —— 用户仍能看见右边的字段表在原地。
     -->
     <BaseLoadingOverlay :loading="exporting" text="正在扫描日志目录…" tone="solid" placement="inline" />
-
-    <StatusLogOverlay v-if="open && sessionKey" :session-key="sessionKey" @close="collapse" />
   </div>
 </template>

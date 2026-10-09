@@ -1,6 +1,6 @@
 # 全 App 视觉规范（Matte Panel · 方案 A）
 
-> **管什么**：全 App 的设计 token（颜色 / 字体 / 圆角 / 叠层）、三窗的透明与滚动策略、交互控件的外观约定，以及主窗设置页的**版面规范**（两级导航、页面容器、`fill` 高度链、解释性 tips 的落点）。以上四件事以本文为**唯一权威来源**。
+> **管什么**：全 App 的设计 token（颜色 / 字体 / 圆角 / 叠层）、五窗的透明与滚动策略、交互控件的外观约定，以及主窗设置页的**版面规范**（两级导航、页面容器、`fill` 高度链、解释性 tips 的落点）。以上四件事以本文为**唯一权威来源**。
 > **不管什么**：悬浮窗组件在槽位内的缩放与三形态适配（`cell_px` / `--floating-cell-px` / `--floating-cell-scale` / cq 单位 / 格子需求）→ `../guide/floating-module-guide.md`；组件独立样式文件的写法（`@reference`、样式归属边界、类名命名、物理像素与 `scaleFactor` 陷阱）→ 同上 §10；各业务面板自己的具体链路（信息卡拓展 / 会话记录 / 推送）→ `./agent-status-endpoint-flow.md`、`./agent-status-session-data.md`、`../guide/agent-status-push-guide.md`。
 > **与其它文档的关系**：token 的**取值**只在这里解释一遍。guide §10.2 的 token 速查表是本文的子集，§7.4 是组件设置页的落地清单，两处若与本文不一致，以本文为准并回改那边。
 
@@ -10,7 +10,7 @@
 2. [Token 的定义位置与双主题机制](#2-token-的定义位置与双主题机制)
 3. [颜色 token](#3-颜色-token)
 4. [字体与圆角](#4-字体与圆角)
-5. [窗口透明策略（三窗）](#5-窗口透明策略三窗)
+5. [窗口透明策略（五窗）](#5-窗口透明策略五窗)
 6. [滚动容器与滚动条槽位](#6-滚动容器与滚动条槽位)
 7. [交互控件约定](#7-交互控件约定)
 8. [主窗两级导航](#8-主窗两级导航)
@@ -61,7 +61,7 @@
 | `--ufo-surface` | `#2A2A2A` | 卡片表面 |
 | `--ufo-surface-2` | `#323232` | 次级表面（列表行等） |
 | `--ufo-input` | `#1F1F1F` | 输入框底 |
-| `--ufo-window-backdrop` | `radial-gradient(circle at top left, #4a4a4a 0%, #1c1c1c 55%), #141414` | `html` 的桌面底纹（渐变 + 压暗）；三窗根类会把 html 设回 `transparent`，因此它是「窗口没打透明」时的兜底，不是可见层 |
+| `--ufo-window-backdrop` | `radial-gradient(circle at top left, #4a4a4a 0%, #1c1c1c 55%), #141414` | `html` 的桌面底纹（渐变 + 压暗）；五窗各自的根类会把 html 设回 `transparent`，因此它是「窗口没打透明」时的兜底，不是可见层 |
 
 ⚠️ `--ufo-bg` 的两处写法**当前并不一致**：`:root` 是 `0.95`，`@theme` 镜像 `--color-ufo-bg` 仍是 `0.8`。屏幕上的实际通透感由 `:root` + blur 决定（`bg-ufo-bg` 工具类目前全仓没有消费者）。改这个值时两边一起改，别只动一处。
 
@@ -142,24 +142,28 @@
 
 ---
 
-## 5. 窗口透明策略（三窗）
+## 5. 窗口透明策略（五窗）
 
 | 窗口 | `transparent` | 外壳类 | 底 |
 |---|---|---|---|
 | `floating` 悬浮窗 | `true` | `.floating-shell` | 半透明 `--ufo-bg` + `blur(6px)`（毛玻璃） |
 | `tooltip` 提示窗 | `true` | `.tooltip-shell` | 与悬浮窗**同款**毛玻璃 token 复用 |
 | `main` 主窗 | `true`（仅为圆角裁切） | `.main-shell` | 实色 `--ufo-bg-main` |
+| `script-editor` 脚本编辑窗 | `true`（同样只为圆角裁切） | `.panel-shell` | 实色 `--ufo-bg-main`（与主窗同一份 token） |
+| `status-log` 转灯日志窗 | `true`（同上） | `.panel-shell` | 实色 `--ufo-bg-main` |
 
-- ⚠️ 主窗**不加** `backdrop-filter`、**不加** alpha：`transparent: true` 在这里只用来把窗口切成圆角，实色底避开毛玻璃合成开销。想要「玻璃感」是悬浮窗与提示窗的事。
-- 三窗各自的根类（`html.is-main-window` / `is-floating-window` / `is-tooltip-window`）把 html / body / `#app` 的 `background` 设回 `transparent`，底只由 `.main-shell` / `.floating-shell` / `.tooltip-shell` 在壳层画出 —— 于是圆角处不外溢。⚠️ 这三个根类**同时**覆盖掉 `html` 上的 `--ufo-window-backdrop`（选择器更具体），所以那层桌面底纹在三个窗口里都不生效；把它当「窗口圆角外的可见底纹」来设计是错的，圆角外透出来的是桌面本身。
+- ⚠️ 主窗**不加** `backdrop-filter`、**不加** alpha：`transparent: true` 在这里只用来把窗口切成圆角，实色底避开毛玻璃合成开销。想要「玻璃感」是悬浮窗与提示窗的事。⚠️ 两扇面板窗同理 —— 它们是主窗派出去的窗，不是另一套皮肤。
+- 各窗口的根类（`html.is-main-window` / `is-floating-window` / `is-tooltip-window` / `is-panel-window`）把 html / body / `#app` 的 `background` 设回 `transparent`，底只由 `.main-shell` / `.floating-shell` / `.tooltip-shell` / `.panel-shell` 在壳层画出 —— 于是圆角处不外溢。⚠️ 这几个根类**同时**覆盖掉 `html` 上的 `--ufo-window-backdrop`（选择器更具体），所以那层桌面底纹在所有窗口里都不生效；把它当「窗口圆角外的可见底纹」来设计是错的，圆角外透出来的是桌面本身。
 - 主窗去原生边框后**自绘标题栏**（`.main-titlebar`）并调用 `startDragging`；关闭按钮走**隐藏到托盘**，不是真退出。
-- 三窗外壳描边统一取 `--ufo-shell-border`（§3.2），不要各自写死一条白边。
+- 面板窗的壳与标题栏是同一套东西换一处画：`.panel-shell` 取 `.main-shell` 的同款（`--ufo-bg-main` + `--ufo-shell-border` + `rounded-2xl`），`.panel-bar` 与 `.main-titlebar` 同为 40px、同吃 `--ufo-overlay-sunken`，**版式也与主窗一致**：左端 `.panel-bar__brand`（同一枚 `ufo_logo.png` + 「UFO」字样，彩色图标所以不加 `.ufo-mono-icon`）→ 本窗标题 `.panel-bar__title` → 常驻说明 `.panel-bar__hint`（`flex-1 truncate`）→ 右端 `.panel-bar__close`（与 `.main-titlebar__close` 同一枚 `close.svg`、同一块 36×36 可点区与 hover 态）。拖窗同样自己调 `startDragging`（`src/components/ui/PanelWindow.vue`）。⚠️ 关闭钮要 `-webkit-app-region: no-drag`，否则按下它先被当成拖窗。
+- 外壳描边统一取 `--ufo-shell-border`（§3.2），不要各自写死一条白边。
 
 ---
 
 ## 6. 滚动容器与滚动条槽位
 
 - 主窗的外壳与 `html` / `body` / `#app` **一律不滚动**（`html.is-main-window` 那组规则锁死 `height: 100%` + `overflow: hidden`）；只有内部的 `.main-window` 滚动，并使用 Matte 细滚动条（透明轨道 + `--ufo-scroll-thumb` 半透明滑块，靠 `scrollbar-width` + `scrollbar-color` 两个标准属性实现）。⚠️ 「细」的程度完全由 `--ufo-scrollbar-w` 决定，它当前是 `auto`（≈15px）而不是 `thin`（≈8px）；想改粗细动这个 token，不要去补 webkit 块（见下条）。
+- 面板窗（`html.is-panel-window`）与主窗共用那组 `height: 100%` + `overflow: hidden` 规则：`.panel-shell` 自身不滚，滚动只发生在 `.panel-body` 往下那些带 `min-height: 0` 的容器里（`../guide/agent-status-log-guide.md` §7 那条高度链就是靠它）。
 - ⚠️ **所有可滚动容器**（列表 / 详情面板 / 日志 / JS 编辑框）都必须带 `scrollbar-gutter: stable`：滚动条「出现 / 消失」不得改变内容盒宽度，否则列表行与表单会在滚动条出现那一刻被挤窄、长文本重新折行、内容跳动。新增任何 `overflow-y: auto` 容器时把这条一起带上。
 - JS 编辑框额外把量出来的槽宽写进 `--jse-gutter`（`ScriptEditorFrame.syncGutter`），高亮层按 `calc(100% - var(--jse-gutter, 0px))` 收窄 —— 两层叠加时**内容盒逐像素重合**，字符与光标才不会错位。常驻槽位（`scrollbar-gutter: stable`）正是为了让这个宽度是个常量。
 - ⚠️ 全 App 的滚动条只走标准属性这一套：元素只要设了 `scrollbar-color`，它的 `::-webkit-scrollbar` 自定义规则就整体失效。不要再补 webkit 块 —— 那是改了你看不到的死代码。
@@ -247,7 +251,8 @@
 
   ⚠️ 把读数藏进 hover 等于没写 —— 用户必须不悬浮就知道现状。
 - **浮层纪律**：角标面板 `Teleport` 到 body，用纯函数 `placeContextMenu` 定位（贴着锚点摆、越界夹回视口），几何不重写。⚠️ 主窗里**任何**浮层（角标面板 / 下拉 / 右键菜单）都必须 `Teleport`：从 `.main-shell` 到 `.main-window--wide` 有多层 `overflow: hidden`，各分区面板又各自内滚，留在原地的绝对定位一定被裁掉。
-- **z-index 阶梯**：`BaseSelect` `40` → 右键菜单 `60` → **说明角标 `70`**（同一套黑投影，浮层看着是同一层东西，角标必须盖住右键菜单）。整窗大浮层（脚本编辑 / 日志）同样落 `z-40`，但它们 `Teleport` 进 `#main-content` 这块相对定位的宿主，边界由它给出 —— 盖住 tabbar 允许，画到 `.main-shell` 圆角外不允许。⚠️ `../guide/floating-module-guide.md` §7.4 写的「modal 50」在代码里没有对应值（只有 40 / 60 / 70），以代码为准。
+- **z-index 阶梯**：`BaseSelect` `40` → 右键菜单 `60` → **说明角标 `70`**（同一套黑投影，浮层看着是同一层东西，角标必须盖住右键菜单）。⚠️ `../guide/floating-module-guide.md` §7.4 写的「modal 50」在代码里没有对应值（只有 40 / 60 / 70），以代码为准。
+- **搬出主窗的那两个整窗阅读面不参与这套阶梯**：脚本编辑与转灯日志从前是 `Teleport` 进 `#main-content` 的两层 `z-40` 大浮层，现在是 `script-editor` / `status-log` 两扇独立窗口（§5、`../guide/agent-status-log-guide.md` §7）—— 谁盖住谁是桌面窗口的次序，不是层叠上下文，所以这里没有它们的档位，外壳一律走公共的 `.panel-*`。留在主窗里需要这套纪律的只剩**角标面板 / 下拉 / 右键菜单**。
 - ⚠️ 勾选项**自身**的一句话说明与风险告知（如「提问可能含私有代码」）继续用原生 `title` 附着在选项上：每项文案不同，且风险必须落在勾选处 —— 挪到别处就等于没告知。（只对设置页成立；悬浮窗指示灯与信息卡**禁** `title`，见 `../guide/floating-module-guide.md` §8.2。）
 - ⚠️ 反馈类文字不是 tip：不要用 `SettingsHint` 装状态提示，行内反馈走 `role="status"` 那套。
 
