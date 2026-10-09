@@ -197,12 +197,30 @@ async function onPointerMove(event: PointerEvent) {
   dismissTooltip()
   try {
     await window.startDragging()
+    // startDragging() 走的是 Windows 标题栏移动循环（tao 发 WM_NCLBUTTONDOWN/HTCAPTION），
+    // 循环收尾时系统把窗口请出 topmost 带 —— 拖一次掉一次置顶，之后窗口就压在别的窗下面。
+    repinTopmost()
     // 原生拖拽循环会吞掉松手的 pointerup，改由轮询物理按键状态补做贴边。
     startDragReleasePolling()
   } catch (error) {
     dragging.value = false
     console.error('failed to start dragging floating window', error)
   }
+}
+
+/**
+ * 拖完补回置顶。
+ *
+ * ⚠️ 必须**先关再开**：系统只清了 `WS_EX_TOPMOST` 样式位，tao 内部的 `ALWAYS_ON_TOP` 标志仍是 true，
+ * 而它改样式是按「标志有没有变」决定的（`WindowState::apply_diff` 里 diff 为空直接 return），
+ * 所以单发「开」是个空操作，补不回置顶。
+ * 单独一个函数（自带 catch）：补置顶失败不该连带把松手贴边的轮询也跳过。
+ */
+function repinTopmost() {
+  void window
+    .setAlwaysOnTop(false)
+    .then(() => window.setAlwaysOnTop(true))
+    .catch(error => console.warn('failed to restore always-on-top after dragging', error))
 }
 
 /**
