@@ -1,4 +1,4 @@
-//! 台账（ledger）：装了哪些包、从哪来、是不是在调试。
+//! 安装记录（ledger）：装了哪些包、从哪来、是不是在调试。
 //!
 //! 三条不变量，各有对应单测：
 //! 1. **本地源就地装载** —— 只校验、不复制（作者改完存盘就能看见，不需要任何链接步骤）。
@@ -6,7 +6,7 @@
 //!    少一处就会出现「本地装 + 开开关 → 覆盖安装同 id 的远程包」后远程包被自动重扫。
 //! 3. **坏包也要产出记录** —— 校验失败不静默消失，管理区那一行要能说出「为什么没挂上」。
 //!
-//! ⚠️ 台账**不管启用状态**：插件与内置组件在悬浮窗里同级，「开不开」只有一个写入方 ——
+//! ⚠️ 安装记录**不管启用状态**：插件与内置组件在悬浮窗里同级，「开不开」只有一个写入方 ——
 //! 外壳的 `floating-modules.json`（`modules[].enabled`）。这里再存一份就是两个开关。
 
 use std::collections::BTreeMap;
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{manifest, paths};
 
-/// 台账文件的结构版本（库内布局，与线协议 `SCHEMA_VERSION` 无关，可以递增）。
+/// 安装记录文件的结构版本（库内布局，与线协议 `SCHEMA_VERSION` 无关，可以递增）。
 pub const LEDGER_SCHEMA_VERSION: u32 = 1;
 
 /// 来源：本地目录（就地装载）。
@@ -27,7 +27,7 @@ pub const SOURCE_LOCAL: &str = "local";
 /// 来源：已拷进 app-data（zip / npm 安装走这条）。
 pub const SOURCE_COPIED: &str = "copied";
 
-/// 台账里的一条记录（只存「装载所需的最小信息」，清单内容每次从盘上读）。
+/// 安装记录里的单个包（只存「装载所需的最小信息」，清单内容每次从盘上读）。
 /// 没有「启用」字段，理由见模块头。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -54,11 +54,11 @@ impl Default for LedgerEntry {
     }
 }
 
-/// 台账文件本体。
+/// 安装记录文件本体。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Ledger {
-    /// 台账结构版本。
+    /// 安装记录结构版本。
     pub schema_version: u32,
     /// 每次写盘 +1：前端用它丢弃迟到的广播。
     pub revision: u64,
@@ -67,7 +67,7 @@ pub struct Ledger {
 }
 
 impl Default for Ledger {
-    /// 空台账。
+    /// 空安装记录。
     fn default() -> Self {
         Self {
             schema_version: LEDGER_SCHEMA_VERSION,
@@ -77,7 +77,7 @@ impl Default for Ledger {
     }
 }
 
-/// 一条记录的完整视图：台账 + 清单 + 盘上核算 + 失败原因。
+/// 一条记录的完整视图：安装记录 + 清单 + 盘上核算 + 失败原因。
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginRecord {
@@ -118,7 +118,7 @@ struct PackageStat {
     too_big: bool,
 }
 
-/// 台账状态：命令层通过它读写。
+/// 安装记录状态：命令层通过它读写。
 #[derive(Clone, Default)]
 pub struct StoreState(Arc<Mutex<Inner>>);
 
@@ -127,14 +127,14 @@ pub struct StoreState(Arc<Mutex<Inner>>);
 struct Inner {
     /// app-data 目录（所有包的落点基准）。
     app_data: PathBuf,
-    /// 台账。
+    /// 安装记录。
     ledger: Ledger,
-    /// 前端上报的装载耗时（不进台账：它是运行时读数，不是安装事实）。
+    /// 前端上报的装载耗时（不进安装记录：它是运行时读数，不是安装事实）。
     load_ms: BTreeMap<String, u64>,
 }
 
 impl StoreState {
-    /// 读一次台账：文件不存在 = 空台账；解析失败也当空台账，但把原因留在 stderr。
+    /// 读一次安装记录：文件不存在 = 空安装记录；解析失败也当空安装记录，但把原因留在 stderr。
     pub fn load(app_data: PathBuf) -> Self {
         let path = paths::ledger_path(&app_data);
         let ledger = match fs::read_to_string(&path) {
@@ -151,7 +151,7 @@ impl StoreState {
         })))
     }
 
-    /// 扫描全部已装包 → 管理区与装载链共用的记录表（顺序 = 台账顺序）。
+    /// 扫描全部已装包 → 管理区与装载链共用的记录表（顺序 = 安装记录顺序）。
     pub fn scan_records(&self) -> Vec<PluginRecord> {
         let ledger = { lock(&self.0).ledger.clone() };
         ledger
@@ -180,7 +180,7 @@ impl StoreState {
                 }
                 PluginRecord {
                     id: entry.id.clone(),
-                    // 第二个写入口：读取时也夹一次，历史台账里的「远程源 + dev_reload」不得进界面。
+                    // 第二个写入口：读取时也夹一次，历史安装记录里的「远程源 + dev_reload」不得进界面。
                     dev_reload: entry.dev_reload && entry.source == SOURCE_LOCAL,
                     name: read.name,
                     version: read.version,
@@ -202,7 +202,7 @@ impl StoreState {
         self.scan_records().into_iter().find(|record| record.id == id)
     }
 
-    /// 校验一个目录能不能装，并返回将要落台账的内容（**不写盘**）。
+    /// 校验一个目录能不能装，并返回将要写入安装记录的内容（**不写盘**）。
     ///
     /// preview / install 分两步是为了让界面先把逐条披露摊给用户看；
     /// 两步各自读盘，所以 install 会重新校验一遍 —— 用户点的「装」必须是对当下这份字节的同意。
@@ -223,7 +223,7 @@ impl StoreState {
         };
         check_identity(&path, &done.manifest.id)?;
         let stat = stat_package(&path);
-        // 装之前就卡住：越过这两条线就不该落台账（`install_local` 走的也是本函数）。
+        // 装之前就卡住：越过这两条线就不该写入安装记录（`install_local` 走的也是本函数）。
         if stat.overflowed {
             return Err(format!("文件数超过 {} 的上限", paths::MAX_FILES));
         }
@@ -261,7 +261,7 @@ impl StoreState {
         })
     }
 
-    /// 本地目录安装：校验通过后只加一条台账（就地装载，不复制文件）。
+    /// 本地目录安装：校验通过后只加一条安装记录（就地装载，不复制文件）。
     pub fn install_local(&self, dir: &str) -> Result<PluginRecord, String> {
         let record = self.preview(dir)?;
         let mut guard = lock(&self.0);
@@ -279,7 +279,7 @@ impl StoreState {
         Ok(record)
     }
 
-    /// 卸载：删台账条目。
+    /// 卸载：删安装记录条目。
     ///
     /// ⚠️ `local` 源**不动用户的目录**（那是作者自己的工作区，删掉等于删源码）；
     /// 只有 `copied` 源才删 app-data 下那份副本，且只删 `plugins/` 里面那一层。
@@ -328,7 +328,7 @@ impl StoreState {
         })
     }
 
-    /// 取某个包的目录（**只读台账，不扫盘**）。
+    /// 取某个包的目录（**只读安装记录，不扫盘**）。
     ///
     /// 协议 handler 每个产物请求都要用它：那里绝不能触发一次目录遍历，
     /// 否则一次 `import()` 十几条 chunk 就会变成十几趟全盘扫描。
@@ -341,7 +341,7 @@ impl StoreState {
             .map(|entry| entry.dir.clone())
     }
 
-    /// 取当前台账版本（广播给前端，用来丢弃迟到的那一份）。
+    /// 取当前安装记录版本（广播给前端，用来丢弃迟到的那一份）。
     pub fn revision(&self) -> u64 {
         lock(&self.0).ledger.revision
     }
@@ -353,7 +353,7 @@ impl StoreState {
         }
     }
 
-    /// 某个包此刻是否开着逐包热重载（日志通道用它决定「留不留这一行」，**只读台账不扫盘**）。
+    /// 某个包此刻是否开着逐包热重载（日志通道用它决定「留不留这一行」，**只读安装记录不扫盘**）。
     pub fn dev_reload_of(&self, id: &str) -> bool {
         let guard = lock(&self.0);
         guard
@@ -391,7 +391,7 @@ impl StoreState {
     }
 }
 
-/// 加 / 覆盖一条台账记录：覆盖后的 `dev_reload` 仍要过「本地源」判据。
+/// 加 / 覆盖一条安装记录：覆盖后的 `dev_reload` 仍要过「本地源」判据。
 fn upsert(ledger: &mut Ledger, entry: LedgerEntry) {
     let dev_reload = entry.dev_reload && entry.source == SOURCE_LOCAL;
     if let Some(existing) = ledger.entries.iter_mut().find(|item| item.id == entry.id) {
@@ -403,15 +403,15 @@ fn upsert(ledger: &mut Ledger, entry: LedgerEntry) {
     }
 }
 
-/// 写台账：先写临时文件再改名，避免半截 JSON 把下次启动的读路径卡住。
+/// 写安装记录：先写临时文件再改名，避免半截 JSON 把下次启动的读路径卡住。
 fn save(app_data: &Path, ledger: &Ledger) -> Result<(), String> {
     let root = paths::plugins_root(app_data);
     fs::create_dir_all(&root).map_err(|error| format!("建不出插件目录：{error}"))?;
     let target = paths::ledger_path(app_data);
     let temp = root.join("ledger.json.tmp");
-    let text = serde_json::to_string_pretty(ledger).map_err(|error| format!("台账写不出：{error}"))?;
-    fs::write(&temp, text).map_err(|error| format!("台账写不出：{error}"))?;
-    fs::rename(&temp, target).map_err(|error| format!("台账放不下：{error}"))
+    let text = serde_json::to_string_pretty(ledger).map_err(|error| format!("安装记录写不出：{error}"))?;
+    fs::write(&temp, text).map_err(|error| format!("安装记录写不出：{error}"))?;
+    fs::rename(&temp, target).map_err(|error| format!("安装记录放不下：{error}"))
 }
 
 /// 来源目录名必须等于清单 id —— 否则 app-data 里的目录名与 id 会各说一套。
@@ -507,12 +507,22 @@ fn string_of(value: &serde_json::Value, key: &str) -> String {
         .to_string()
 }
 
-/// 取绝对路径（失败就原样返回：台账里的路径只用于读文件与显示）。
+/// 取绝对路径（失败就原样返回：安装记录里的路径只用于读文件与显示）。
+///
+/// ⚠️ Windows 上 `canonicalize` 返回的是 `\\?\C:\...` 这种 verbatim 写法 —— 那是 Win32 API 的形状，
+/// 不该进安装记录：它会直接显示在详情卡上，还会让任何「按字符串比路径」的代码当场判错。
+/// 去掉前缀不牺牲长路径：真正读产物时协议会自己补回来（见 `protocol.rs` 的 `canonicalize_extended`）。
 fn abs(path: &Path) -> String {
-    fs::canonicalize(path)
-        .unwrap_or_else(|_| path.to_path_buf())
-        .to_string_lossy()
-        .to_string()
+    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    deverbatim(&canonical.to_string_lossy())
+}
+
+/// 去掉 Windows 的 verbatim 前缀：`\\?\C:` 回到 `C:`，`\\?\UNC\server\share` 回到 `\\server\share`。
+fn deverbatim(text: &str) -> String {
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    text.strip_prefix(r"\\?\").unwrap_or(text).to_string()
 }
 
 /// 数一个包的体积与文件数（不跟符号链接跑，文件数到上限就停）。
@@ -658,7 +668,7 @@ mod tests {
             .expect_err("目录名与 id 不同必须拒装");
         assert!(error.contains("目录名「wrong-name」"), "{error}");
         assert!(error.contains("清单 id「balance-board」"), "{error}");
-        assert!(store.scan_records().is_empty(), "被拒的包不该进台账");
+        assert!(store.scan_records().is_empty(), "被拒的包不该进安装记录");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -675,7 +685,7 @@ mod tests {
                 ..LedgerEntry::default()
             },
         );
-        save(&root, &ledger).expect("台账写不出");
+        save(&root, &ledger).expect("安装记录写不出");
         let store = StoreState::load(root.clone());
         let records = store.scan_records();
         assert_eq!(records.len(), 1, "坏包也要进表");
@@ -712,7 +722,7 @@ mod tests {
                 dev_reload: false,
             },
         );
-        save(&root, &ledger).expect("台账写不出");
+        save(&root, &ledger).expect("安装记录写不出");
         let store = StoreState::load(root.clone());
         let error = store
             .set_dev_reload("from-url", true)
@@ -787,6 +797,18 @@ mod tests {
         let store = StoreState::load(root.clone());
         let error = store.preview(&abs(&package)).expect_err("超上限的清单不该装");
         assert!(error.contains("plugin.json 超过 64 KiB"), "{error}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 安装记录里的路径既给人读也被拿去比字符串：Windows 的 verbatim 前缀不该出现在里面。
+    #[test]
+    fn ledger_paths_keep_no_verbatim_prefix_and_still_point_at_the_package() {
+        let root = temp_app_data("deverbatim");
+        let package = write_package(&root, "balance-board", "1.0.0");
+        let stored = abs(&package);
+        assert!(!stored.starts_with(r"\\?\"), "安装记录里出现了 verbatim 前缀：{stored}");
+        assert!(!stored.starts_with(r"\\?\UNC\"), "网络路径的前缀也没剥掉：{stored}");
+        assert!(Path::new(&stored).is_dir(), "{stored} 指不到包目录了");
         let _ = fs::remove_dir_all(&root);
     }
 
