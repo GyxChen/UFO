@@ -8,7 +8,7 @@ import { declaredSurfaceIds, type CapabilityFactJson, type LedgerBroadcastJson, 
 let stopListener: UnlistenFn | undefined
 
 /**
- * 读一次台账。
+ * 读一次安装记录。
  *
  * 首帧 IPC 可能早于后端 `setup` 里的 `.manage()`（与悬浮窗配置同一个竞态），
  * 一次失败就退化成「一个包都没有」的话，悬浮窗会白闪一下，所以走统一的重试助手。
@@ -23,14 +23,14 @@ async function fetchRegistry(): Promise<CapabilityFactJson[]> {
 }
 
 /**
- * 插件台账的 store：三个窗口都读它，只有主窗（和它派出的面板窗）写它。
+ * 插件安装记录的 store：三个窗口都读它，只有主窗（和它派出的面板窗）写它。
  *
- * ⚠️ 这里**不认识任何具体插件**：一切从台账与注册表来。
+ * ⚠️ 这里**不认识任何具体插件**：一切从安装记录与注册表来。
  * 写命令失败一律变成 `actionError`（界面走行内 `role="status"`，`window.alert` 被插件拦掉了）。
  */
 export const usePluginsStore = defineStore('plugins', {
   state: () => ({
-    /** 已应用台账的版本号（比它小的广播直接丢）。 */
+    /** 已应用安装记录的版本号（比它小的广播直接丢）。 */
     revision: 0,
     /** 全量记录，含校验失败的包。 */
     records: [] as PluginRecordJson[],
@@ -57,7 +57,7 @@ export const usePluginsStore = defineStore('plugins', {
       state.registry.find(fact => fact.id === id),
     /**
      * 某个包该显示的徽标：挂载点在前、能力在后（与 Rust 表序一致），查不到的名字跳过。
-     * 查不到不是错误 —— 台账里的包可能来自更新的宿主，界面不能因此整块空白。
+     * 查不到不是错误 —— 安装记录里的包可能来自更新的宿主，界面不能因此整块空白。
      */
     badgesOf: state => (record: PluginRecordJson | null): CapabilityFactJson[] => {
       if (!record?.manifest) return []
@@ -91,7 +91,7 @@ export const usePluginsStore = defineStore('plugins', {
       this.selectedId = id
     },
 
-    /** 拉台账 + 注册表并挂上广播。 */
+    /** 拉安装记录 + 注册表并挂上广播。 */
     async start() {
       if (this.started) return
       this.started = true
@@ -154,7 +154,7 @@ export const usePluginsStore = defineStore('plugins', {
       })
     },
 
-    /** 写命令的公共尾巴：成功后应用返回的台账，失败就把中文原因留在行内提示里。 */
+    /** 写命令的公共尾巴：成功后应用返回的安装记录，失败就把中文原因留在行内提示里。 */
     async write(command: string, args: Record<string, unknown>) {
       this.actionError = ''
       try {

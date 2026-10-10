@@ -61,7 +61,7 @@ function manifest(patch: Partial<PluginManifestJson> = {}): PluginManifestJson {
   }
 }
 
-/** 造台账记录。 */
+/** 造安装记录。 */
 function record(patch: Partial<PluginRecordJson> = {}): PluginRecordJson {
   return {
     id: 'balance-board',

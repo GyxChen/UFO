@@ -205,7 +205,7 @@ describe('启用与热重载', () => {
     expect(switches.at(-1)!.attributes('disabled')).toBeDefined()
   })
 
-  it('本地源的开关一拨就落台账命令', async () => {
+  it('本地源的开关一拨就写入安装记录', async () => {
     const { plugins } = seed([record()])
     invokeMock.mockResolvedValue({ revision: 2, records: [record({ devReload: true })] })
     plugins.select('balance-board')

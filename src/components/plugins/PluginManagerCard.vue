@@ -36,7 +36,7 @@ const records = computed(() => {
   return [...plugins.records].sort((left, right) => orderOf(left.id) - orderOf(right.id) || left.id.localeCompare(right.id))
 })
 
-/** 右栏现在讲的是哪个包（台账一变就跟着落回第一条）。 */
+/** 右栏现在讲的是哪个包（安装记录一变就跟着落回第一条）。 */
 const selected = computed<PluginRecordJson | null>(
   () => records.value.find(record => record.id === plugins.selectedId) ?? records.value[0] ?? null
 )
@@ -54,7 +54,7 @@ function reasonOf(record: PluginRecordJson): string {
   return record.error ?? pluginLoadErrors.value[record.id] ?? ''
 }
 
-/** 启用开关走的是**外壳配置**（与内置组件同一个字段、同一套挂载判定），台账不另存一份。 */
+/** 启用开关走的是**外壳配置**（与内置组件同一个字段、同一套挂载判定），安装记录不另存一份。 */
 function isEnabled(record: PluginRecordJson): boolean {
   return modules.moduleEnabled(record.id, true)
 }
@@ -89,7 +89,7 @@ async function pickAndPreview() {
   }
 }
 
-/** 用户在确认弹窗里点头：这才落台账。 */
+/** 用户在确认弹窗里点头：这才写入安装记录。 */
 async function confirmInstall() {
   const record = pending.value
   if (!record) return

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 装前确认弹窗：把清单声明的每一项能力逐条摊给用户看，用户点头才落台账。
+ * 装前确认弹窗：把清单声明的每一项能力逐条摊给用户看，用户点头才写入安装记录。
  *
  * 三条规矩都在这一个文件里：
  * 1. **披露照原文渲染**（`disclosure` 来自 Rust 注册表），界面上不改写；
@@ -15,7 +15,7 @@ import { formatBytes } from '@/lib/plugin-format'
 import type { CapabilityFactJson, PluginRecordJson } from '@/lib/plugin-types'
 
 const props = defineProps<{
-  /** `preview_plugin` 的返回：将要落台账的那份记录。 */
+  /** `preview_plugin` 的返回：将要写入安装记录的那条。 */
   record: PluginRecordJson
   /** id → 能力事实（徽标语义与披露原文）。 */
   factOf: (id: string) => CapabilityFactJson | undefined

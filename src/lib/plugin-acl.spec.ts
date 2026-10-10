@@ -169,7 +169,7 @@ describe('插件命令的授权链同源', () => {
    *
    * 写侧命令集合不从名字猜：它就是前端 `write('…')` 那条公共尾巴用到的命令名。
    * 「所有窗口」那份 = windows 里含 `floating` 或 `tooltip` 的 capability —— 组件包的 UI
-   * 就跑在这两扇窗里，它只要能调自己那套能力，不能装包、不能改台账。
+   * 就跑在这两扇窗里，它只要能调自己那套能力，不能装包、不能改安装记录。
    */
   it('写命令没有漏给含悬浮窗 / 提示窗的那份 capability', () => {
     const writes = new Set<string>()
@@ -199,7 +199,7 @@ describe('插件命令的授权链同源', () => {
       const leaked = sorted(granted.filter(name => writes.has(name)))
       expect(
         leaked,
-        `${file} 覆盖悬浮窗 / 提示窗，却把设置侧的写命令授了出去（组件包能从那儿装包、改台账）`
+        `${file} 覆盖悬浮窗 / 提示窗，却把设置侧的写命令授了出去（组件包能从那儿装包、改安装记录）`
       ).toEqual([])
     }
   })
@@ -208,7 +208,7 @@ describe('插件命令的授权链同源', () => {
   it('护栏真的抓到了调用面（不是空集合自证）', () => {
     expect(invoked.size, '一个插件命令都没扫到 —— glob 或调用写法变了').toBeGreaterThan(20)
     expect(registered.size).toBeGreaterThan(20)
-    // 台账读写与两条外设命令都该在里面，缺一个就是判据退化。
+    // 安装记录读写与两条外设命令都该在里面，缺一个就是判据退化。
     for (const name of ['get_plugins', 'install_plugin', 'plugin_ble_scan', 'plugin_serial_open']) {
       expect(registered.has(name), `Rust 注册表里少了 ${name}`).toBe(true)
     }

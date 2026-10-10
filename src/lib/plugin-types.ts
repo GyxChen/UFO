@@ -48,7 +48,7 @@ export interface PluginManifestJson {
   hosts: string[]
 }
 
-/** 台账里一条已装记录（Rust `plugin::store::PluginRecord` 的镜像）。 */
+/** 安装记录里的单个包（Rust `plugin::store::PluginRecord` 的镜像）。 */
 export interface PluginRecordJson {
   id: string
   /** 展示名：清单有效时取清单，坏包尽力从原始 JSON 读，读不到是目录名。 */
@@ -75,9 +75,9 @@ export interface PluginRecordJson {
   error: string | null
 }
 
-/** 一次台账读取 / 变更的返回（Rust `commands::LedgerBroadcast` 的镜像）。 */
+/** 一次安装记录读取 / 变更的返回（Rust `commands::LedgerBroadcast` 的镜像）。 */
 export interface LedgerBroadcastJson {
-  /** 台账版本：每次写盘 +1，前端用它丢弃迟到的广播。 */
+  /** 安装记录版本：每次写盘 +1，前端用它丢弃迟到的广播。 */
   revision: number
   /** 全量记录（含校验失败的包）。 */
   records: PluginRecordJson[]

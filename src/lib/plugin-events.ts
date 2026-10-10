@@ -1,7 +1,7 @@
 /** 插件相关的事件名（与 Rust 侧各写一份，靠 spec 对撞）。 */
 
 /**
- * 台账变更广播：安装 / 卸载 / 开关 / 重扫之后 Rust 把它发给所有窗口。
+ * 安装记录变更广播：安装 / 卸载 / 开关 / 重扫之后 Rust 把它发给所有窗口。
  * payload 是 `{ revision, records }`（见 `plugin-types.ts` 的 `LedgerBroadcastJson`）。
  */
 export const PLUGINS_CHANGED_EVENT = 'plugins-changed'

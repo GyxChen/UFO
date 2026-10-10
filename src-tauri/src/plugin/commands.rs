@@ -2,7 +2,7 @@
 //!
 //! 授权口径（与 `capabilities/*.json` 一一对应）：
 //! - **读**（`get_plugins` / `get_plugin_registry` / `report_plugin_load_ms`）给所有窗口 ——
-//!   悬浮窗与提示窗要按台账挂载，必须能读；
+//!   悬浮窗与提示窗要按安装记录挂载，必须能读；
 //! - **写**（预览 / 安装 / 卸载 / 开关 / 重扫）只授主窗和它派出的面板窗。
 //!
 //! ⚠️ 全部读盘的命令都是 `async` + `spawn_blocking`：同步命令跑在主线程，
@@ -28,23 +28,23 @@ use super::serial::{SerialHandle, SerialPortRow, SerialState};
 use super::store::{self, PluginRecord, StoreState};
 use super::storage::{StorageState, StorageUsage};
 
-/// 台账变更广播的事件名（前端 store 订阅它）。
+/// 安装记录变更广播的事件名（前端 store 订阅它）。
 pub const PLUGINS_CHANGED_EVENT: &str = "plugins-changed";
 
-/// 一次读取 / 变更的返回：台账版本 + 全量记录。
+/// 一次读取 / 变更的返回：安装记录版本 + 全量记录。
 ///
 /// 带上 `revision` 是为了让前端能丢弃迟到的那一份广播（与悬浮窗配置同一套做法）：
 /// 安装与卸载几乎同时发生时，界面不该被旧记录盖回去。
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LedgerBroadcast {
-    /// 台账版本（每次写盘 +1）。
+    /// 安装记录版本（每次写盘 +1）。
     pub revision: u64,
     /// 全量记录（含校验失败的包）。
     pub records: Vec<PluginRecord>,
 }
 
-/// 取一份当前台账的广播体。
+/// 取一份当前安装记录的广播体。
 fn snapshot(store: &StoreState) -> LedgerBroadcast {
     LedgerBroadcast {
         revision: store.revision(),
@@ -52,7 +52,7 @@ fn snapshot(store: &StoreState) -> LedgerBroadcast {
     }
 }
 
-/// 把所有窗口都要用的装载输入一次取回：台账记录 + 能力注册表分两条命令，
+/// 把所有窗口都要用的装载输入一次取回：安装记录 + 能力注册表分两条命令，
 /// 但都在同一批 IPC 里读（悬浮窗启动时先拿记录，再按需拿注册表）。
 #[tauri::command]
 pub async fn get_plugins(state: tauri::State<'_, StoreState>) -> Result<LedgerBroadcast, String> {
@@ -96,7 +96,7 @@ pub async fn preview_plugin(
         .map_err(|error| format!("校验没跑完：{error}"))?
 }
 
-/// 安装（本地目录 · 就地装载），并把新台账广播出去。
+/// 安装（本地目录 · 就地装载），并把新安装记录广播出去。
 #[tauri::command]
 pub async fn install_plugin(
     app: AppHandle,
@@ -193,7 +193,7 @@ pub async fn reload_plugins(
 
 /// 把变更广播给所有窗口。
 ///
-/// 事件发失败只记 stderr：台账已经落盘，任何窗口下次读都会拿到，不该因为 IPC 抖动报错给用户。
+/// 事件发失败只记 stderr：安装记录已经落盘，任何窗口下次读都会拿到，不该因为 IPC 抖动报错给用户。
 fn publish(app: &AppHandle, broadcast: &LedgerBroadcast) {
     if let Err(error) = app.emit(PLUGINS_CHANGED_EVENT, broadcast) {
         eprintln!("failed to broadcast plugin ledger: {error}");
@@ -202,7 +202,7 @@ fn publish(app: &AppHandle, broadcast: &LedgerBroadcast) {
 
 /// 插件写一条自己的日志（`ufo.log` / `host.log` 的落点，需求点名的「特例能力」）。
 ///
-/// 留不留这一行由**台账里的调试开关**决定，不由调用方自报：关着就整条丢弃（零写盘、零广播）。
+/// 留不留这一行由**安装记录里的调试开关**决定，不由调用方自报：关着就整条丢弃（零写盘、零广播）。
 /// 授权给所有窗口 —— 挂载插件的不止主窗，日志必须能从它实际跑起来的那个窗口写进来。
 #[tauri::command]
 pub async fn plugin_log_write(
@@ -400,7 +400,7 @@ where
 
 /// 弹一次原生文件对话框，把「用户亲手选中的这个文件」登记成一个会话内句柄。
 ///
-/// ⚠️ 授权=这一次点击：句柄不落台账、不跨启动，卸载 / 重载即作废，
+/// ⚠️ 授权=这一次点击：句柄不写入安装记录、不跨启动，卸载 / 重载即作废，
 /// 所以界面上那句「每次都要重新选」不是客套，是这里的实现形状。
 #[tauri::command]
 pub async fn plugin_fs_pick(
@@ -660,7 +660,7 @@ fn newest_mtime(dir: &Path) -> u64 {
 // ---- 蓝牙能力（`host.ble`）----
 //
 // 闸与其它能力同一句（`require_permission`），差别只在**执行位置**：
-// btleplug 的调用本身是 async，所以这里先过闸（读的是内存里的台账，不占盘）再直接 `.await`；
+// btleplug 的调用本身是 async，所以这里先过闸（读的是内存里的安装记录，不占盘）再直接 `.await`；
 // 用 `gated` 反而会把 async 活塞进 blocking 线程里再 `block_on`，绕一圈还容易自锁。
 
 /// 扫一会儿蓝牙，返回扫到的外设（带连接用的句柄）。
@@ -1045,7 +1045,7 @@ pub async fn plugin_http_fetch(
     .map_err(|error| format!("请求没跑完：{error}"))?
 }
 
-/// 组合根用：确保 `plugins/` 存在（第一次写台账才不会 ENOENT），并读出台账。
+/// 组合根用：确保 `plugins/` 存在（第一次写安装记录才不会 ENOENT），并读出安装记录。
 pub fn load_store(app_data: &std::path::Path) -> StoreState {
     let root = paths::plugins_root(app_data);
     if let Err(error) = std::fs::create_dir_all(&root) {

@@ -85,7 +85,7 @@ pub fn validated_frame_host(url: &str) -> Result<String, String> {
 
 /// 执行一次出网请求。
 ///
-/// `hosts` 是这个包清单里的白名单（命令层从台账取，不接受调用方自报）。
+/// `hosts` 是这个包清单里的白名单（命令层从安装记录取，不接受调用方自报）。
 pub fn fetch(request: &FetchRequest, hosts: &[String]) -> Result<FetchResponse, String> {
     let method = request.method.trim().to_ascii_uppercase();
     if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD") {
@@ -192,7 +192,7 @@ fn allowed_by_manifest(host: &str, hosts: &[String]) -> bool {
 ///
 /// `Host` / `Content-Length` / `Connection` 一类由 ureq 自己算，让组件覆写会造出
 /// 请求走私形状；`Authorization`/`Cookie` 反过来**要**让组件设（它自己管密钥），
-/// 但值只在这次请求里活着，不落日志、不进台账。
+/// 但值只在这次请求里活着，不落日志、不进安装记录。
 fn is_sendable_header(name: &str) -> bool {
     let lower = name.trim().to_ascii_lowercase();
     !matches!(

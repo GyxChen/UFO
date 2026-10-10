@@ -9,7 +9,7 @@ UFO 是一块**可拼装的悬浮窗**：显示 Claude / Codex / Qoder 等 agent
 - 五个窗口（`src-tauri/tauri.conf.json`，一律「声明 + 隐藏 + 按需显示」，不在运行时建窗）：`floating` 状态灯（默认 45×45、透明、alwaysOnTop）、`main` 设置主窗（实色哑光）、`tooltip` 悬停信息窗（`focusable: false` + 点击穿透）、`script-editor` 整窗编辑脚本、`status-log` 转灯日志完整链路。
 - 后两个是主窗派出去的**独立面板窗**：外壳 `components/ui/PanelWindow.vue`（圆角实色面板 + 与主窗同版式的标题栏：左端 UFO 图标 + 名字 + 本窗标题，右端 × 关闭），来回协议 `lib/panel-window.ts`，视图登记 `src/windows/index.ts`，label 与声明 / 权限的同源护栏 `src/windows/panel-windows.spec.ts`。它们不挂模块格子，因此**不参与 `activateModules`**（见悬浮窗 guide §9.1）。
 - 悬浮窗是容器，组件（模块）同级共享同一块窗：注册表在 `src/modules/index.ts`，**外壳不认识任何模块**。
-- 组件包（插件）是第三层：宿主侧基建在 `src/lib/plugin-*.ts`、`src/stores/plugins.ts`、`src/components/plugins/**` 与 Rust `src-tauri/src/plugin/`。这些文件里**同样不许出现某个包的 id 或专有字段**，一切从台账与清单来；作者侧模板与产物在 `reference/plugin-template/`，契约与能力边界见 `reference/doc/guide/plugin-guide.md`。
+- 组件包（插件）是第三层：宿主侧基建在 `src/lib/plugin-*.ts`、`src/stores/plugins.ts`、`src/components/plugins/**` 与 Rust `src-tauri/src/plugin/`。这些文件里**同样不许出现某个包的 id 或专有字段**，一切从安装记录与清单来；作者侧模板与产物在 `reference/plugin-template/`，契约与能力边界见 `reference/doc/guide/plugin-guide.md`。
 - 悬浮窗三形态：方形（默认未贴边）/ 横条（上下贴边、宽度放大）/ 竖条（左右贴边、高度放大）。窗口尺寸随贴边状态变化，布局不得写死固定像素。
 - Rust 与前端同构：`src-tauri/src/floating/` = 外壳，`src-tauri/src/modules/<id>/` = 组件，组合根 `lib.rs` 点名登记钩子。
 

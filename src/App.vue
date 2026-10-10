@@ -29,7 +29,7 @@ const isTooltipWindow = windowLabel === 'tooltip'
 const panelWindowView = PANEL_WINDOW_VIEWS[windowLabel] ?? null
 // 悬浮窗配置（组件开关 / 上限）是窗口级数据，所有窗口都读，属于外壳自己的 store。
 const floatingModules = useFloatingModulesStore()
-// 组件包台账同样是窗口级数据：每个 webview 都要自己装载一遍产物（不共享 JS realm）。
+// 组件包安装记录同样是窗口级数据：每个 webview 都要自己装载一遍产物（不共享 JS realm）。
 const plugins = usePluginsStore()
 // 界面主题同样是窗口级数据：每个窗口都要跟同一份取值（见 stores/theme.ts）。
 const theme = useThemeStore()
@@ -79,7 +79,7 @@ let stopRecordWatch: (() => void) | undefined
 let stopDefinitionWatch: (() => void) | undefined
 let stopDevReload: (() => void) | undefined
 
-/** 重算一次组件包定义（台账变更与开发期热重载都走这里，装载本身是异步的）。 */
+/** 重算一次组件包定义（安装记录变更与开发期热重载都走这里，装载本身是异步的）。 */
 function resyncPlugins() {
   return syncPluginDefinitions(plugins.records, {
     reportLoadMs: (id, loadMs) => plugins.reportLoad(id, loadMs),
@@ -91,7 +91,7 @@ onMounted(() => {
   // 主题：首帧已由 main.ts 的 hydrate() 落地，这里只挂上跟随其它窗口的广播。
   void theme.start()
   void plugins.start()
-  // 台账一变就重算组件包定义（装载是异步的，完成后会换掉注册表里那半截）。
+  // 安装记录一变就重算组件包定义（装载是异步的，完成后会换掉注册表里那半截）。
   stopRecordWatch = watch(() => plugins.records, () => void resyncPlugins(), { immediate: true })
   // 开发期热重载：作者 `yarn dev` 改完文件，靠指纹问到就重挂一次（读命令，每个窗口都能问）。
   stopDevReload = startPluginDevReload({

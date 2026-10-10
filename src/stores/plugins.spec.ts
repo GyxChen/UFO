@@ -104,7 +104,7 @@ describe('plugins store 启动', () => {
   })
 })
 
-describe('台账的跟随规则', () => {
+describe('安装记录的跟随规则', () => {
   it('迟到的广播被丢弃（revision 更小就不覆盖新状态）', () => {
     const store = usePluginsStore()
     store.applyBroadcast(broadcast(5, [record()]))
@@ -162,7 +162,7 @@ describe('徽标推导', () => {
 })
 
 describe('写命令的失败口径', () => {
-  it('失败原因留在行内提示，且不破坏已有台账', async () => {
+  it('失败原因留在行内提示，且不破坏已有安装记录', async () => {
     const store = usePluginsStore()
     store.applyBroadcast(broadcast(1, [record()]))
     invokeMock.mockRejectedValue('只有本地目录安装的组件能开热重载')
@@ -172,7 +172,7 @@ describe('写命令的失败口径', () => {
     expect(store.records[0].devReload).toBe(false)
   })
 
-  it('成功后应用返回的台账并清掉旧错误', async () => {
+  it('成功后应用返回的安装记录并清掉旧错误', async () => {
     const store = usePluginsStore()
     invokeMock.mockResolvedValue(broadcast(2, [record({ manifest: null, error: '清单校验失败' })]))
     await store.setDevReload('balance-board', true)

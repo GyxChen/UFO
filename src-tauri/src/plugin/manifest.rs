@@ -112,7 +112,7 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
         .map_err(|error| format!("清单不是合法 JSON 或字段类型不对：{error}"))
 }
 
-/// 解析 + 校验的一入口（安装与扫描台账都走这条）。
+/// 解析 + 校验的一入口（安装与扫描安装记录都走这条）。
 pub fn from_text(text: &str) -> Result<Validated, String> {
     validate(parse(text)?)
 }

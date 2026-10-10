@@ -17,7 +17,7 @@ mod migrate;
 /// 悬浮窗组件在 Rust 侧的家：一个组件一个目录（与前端 `src/modules/` 一一对应）。
 mod modules;
 mod mouse;
-/// 插件（组件包）：清单契约、能力注册表、装载协议与台账。
+/// 插件（组件包）：清单契约、能力注册表、装载协议与安装记录。
 mod plugin;
 
 // 组合根：只有这里点名具体组件（登记它的配置钩子、运行时状态与命令），
@@ -148,11 +148,11 @@ pub fn run() {
             // 与 profiles 同样处理：clone 进 StatusState（monitor 线程写），再 manage 一份（命令读）。
             let session_store =
                 SessionStoreState::load(app_data.join("session-records.db"), now_ms());
-            // 插件台账：`load_store` 里先确保 `plugins/` 在盘上存在（第一次写台账才不会被
-            // ENOENT 挡掉），再读台账。这里只读内存，扫描留给命令层的 spawn_blocking。
+            // 插件安装记录：`load_store` 里先确保 `plugins/` 在盘上存在（第一次写安装记录才不会被
+            // ENOENT 挡掉），再读安装记录。这里只读内存，扫描留给命令层的 spawn_blocking。
             let plugin_store = plugin::commands::load_store(&app_data);
             // 协议 handler 在 build 之前就注册好了（见下面的 register_…），它只能在运行时
-            // 从这份静态引用拿台账；所以这里必须紧跟在 load_store 之后注入。
+            // 从这份静态引用拿安装记录；所以这里必须紧跟在 load_store 之后注入。
             plugin::protocol::attach(plugin_store.clone());
             // 信息卡拓展的流程脚本运行态：HTTP/密钥用生产实现；worker 线程消费调度队列。
             let (flow_state, flow_rx) =
@@ -191,7 +191,7 @@ pub fn run() {
             app.manage(WeatherState::default());
             app.manage(TodoState::default());
             app.manage(plugin_store);
-            // 插件日志运行态：环形缓冲 + 按包的 JSONL 落点（落点基准与台账同一个 `plugins/`）。
+            // 插件日志运行态：环形缓冲 + 按包的 JSONL 落点（落点基准与安装记录同一个 `plugins/`）。
             app.manage(plugin::log::LogState::new(app_data.clone()));
             // 灯态事件总线：组件包「按包拉取」，闸在 `open_plugin_events` 那道命令里
             // （不广播 —— 广播等于把提问原文发给同窗的每个包）。
