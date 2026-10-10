@@ -108,6 +108,13 @@ describe('插件上限的跨语言对撞', () => {
     expect(PLUGIN_LIMITS.MAX_FILES).toBe(256)
   })
 
+  it('信息卡尺寸区间与内置组件同一档预算（清单声明与运行时 setSize 共用它）', () => {
+    expect(PLUGIN_LIMITS.MIN_TOOLTIP_WIDTH).toBe(220)
+    expect(PLUGIN_LIMITS.MAX_TOOLTIP_WIDTH).toBe(420)
+    expect(PLUGIN_LIMITS.MIN_TOOLTIP_HEIGHT).toBe(120)
+    expect(PLUGIN_LIMITS.MAX_TOOLTIP_HEIGHT).toBe(620)
+  })
+
   it('格子帽是物理约束：16 格不随其它帽一起被抬', () => {
     expect(PLUGIN_LIMITS.MIN_CELLS).toBe(1)
     expect(PLUGIN_LIMITS.MAX_CELLS).toBe(16)

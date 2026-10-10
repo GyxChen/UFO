@@ -17,6 +17,7 @@ import {
 import type { FloatingModuleDefinition } from '@/lib/floating-modules'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import { pluginExtensions } from '@/lib/plugin-loader'
+import { pluginTooltipSizeOf, pluginTooltipSizes } from '@/lib/plugin-tooltip-size'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 
 /**
@@ -40,6 +41,13 @@ let latestSequence = 0
 let transitionGeneration = 0
 /** 串联 present/hide，保证窗口操作按请求顺序执行。 */
 let transitionTail: Promise<void> = Promise.resolve()
+/**
+ * 最近一次「该展示哪张卡」的请求。
+ *
+ * 组件包在运行时改卡尺寸时要**按同一份**重新量窗与定位 —— 只改尺寸会把卡留在旧位置，
+ * 贴边时可能一下飞出屏幕。
+ */
+let lastRequest: PresentRequest | null = null
 
 /**
  * 此刻该展示哪个模块的信息卡：有悬停目标 + 该模块声明了 `tooltip` + 模块认为内容已就绪。
@@ -141,7 +149,8 @@ async function applyTooltipSize(
   target: TooltipHoverPayload['target'],
   workArea: PhysicalSize
 ) {
-  const declared = resolveTooltipSize(definition.tooltip, target)
+  // 运行时申请过的尺寸优先于清单初值（作者按内容量要地方），没申请过才用声明的那份。
+  const declared = pluginTooltipSizeOf(definition.id) ?? resolveTooltipSize(definition.tooltip, target)
   const base = declared ?? defaultSize
   if (!base) return
   const size = clampTooltipSize(extendTooltipSizeForPlugs(base, plugSlots.value), workArea)
@@ -151,6 +160,19 @@ async function applyTooltipSize(
     console.warn('failed to resize tooltip window', error)
   }
 }
+
+/**
+ * 组件包在运行时改这张卡的尺寸：只让**正在显示的那张**立刻重新量窗，
+ * 别的包的卡不该被一次调用带偏（所以 watch 源按当前模块 id 取）。
+ */
+watch(
+  () => (activeDefinition.value ? pluginTooltipSizes.value[activeDefinition.value.id] : undefined),
+  () => {
+    const request = lastRequest
+    if (!request || request.definition !== activeDefinition.value) return
+    enqueueTransition(() => present(request))
+  }
+)
 
 /** 定位并显示提示窗；先 setPosition 再 show，避免在旧位置闪一下。 */
 async function present(request: PresentRequest) {
@@ -191,6 +213,8 @@ async function present(request: PresentRequest) {
 
 async function hide(generation?: number) {
   if (generation !== undefined && generation !== transitionGeneration) return
+  // 卡已经不在了：运行时改尺寸的回调不该再拿旧请求去量窗。
+  lastRequest = null
   try {
     notifyTooltipInteraction(false)
     await window.hide()
@@ -222,6 +246,9 @@ watch(
     }
 
     const request: PresentRequest = { payload, target, definition, generation }
+    // 请求一登记就记下来（不是等 present 真的跑到量窗那一步）：
+    // 卡片的组件可能在那之前就 mounted 并申请尺寸，晚记会让第一次申请落空、卡按初值弹出来。
+    lastRequest = request
     enqueueTransition(() => present(request))
   }
 )

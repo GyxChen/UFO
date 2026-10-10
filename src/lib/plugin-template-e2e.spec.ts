@@ -25,7 +25,14 @@ const { syncPluginDefinitions, clearPluginDefinitions, pluginDefinitions, plugin
 const types = await import('@/lib/plugin-types')
 const template = await import('../../reference/plugin-template/src/index.js')
 
-/** 台账里的那条记录：清单直接用模板自己的 `plugin.json`（同源，不另写一份）。 */
+/**
+ * 「import 那一刻样式就挂上了吗」—— 必须在 `beforeAll` 之前取这个读数：
+ * 下面的用例都会先跑一次 activate，晚一步就分不清是顶层挂的还是 activate 挂的。
+ * 顶层挂是硬要求：热重载只重新 import，不会重跑同一个包的 activate。
+ */
+const injectedOnImport = document.getElementById('ufo-plugin-my-plugin-styles') !== null
+
+/** 安装记录里的那条：清单直接用模板自己的 `plugin.json`（同源，不另写一份）。 */
 function recordOf() {
   const manifest = JSON.parse(manifestRaw.replace(/\r\n/g, '\n'))
   return {
@@ -118,11 +125,11 @@ describe('模板源码过真实装载链路', () => {
   })
 
   /** 样式没有 `styles` 这个口子：它必须由 JS 带进来并挂到文档上，否则「挂上了但没样式」。 */
-  it('activate 之后文档里出现了样式，且重复激活不会重复插', () => {
+  it('import 就把样式挂上，重复激活不再插第二份', () => {
+    expect(injectedOnImport, '样式必须在 import 时就挂上（热重载不重跑 activate）').toBe(true)
     const count = document.querySelectorAll('style').length
-    expect(count, '模板的样式没被挂进文档（?inline 那条链路断了）').toBeGreaterThan(0)
     const again = definition.activate?.()
-    expect(document.querySelectorAll('style').length).toBe(count)
+    expect(document.querySelectorAll('style').length, 'activate 不该再插一份').toBe(count)
     again?.()
   })
 

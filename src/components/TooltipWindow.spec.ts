@@ -7,6 +7,7 @@ import { defineComponent, h, nextTick } from 'vue'
 import TooltipWindow from './TooltipWindow.vue'
 import { TOOLTIP_HOVER_EVENT, plugBlockHeight, type TooltipHoverPayload } from '@/lib/tooltip'
 import { pluginExtensions, type PluginExtensionSlot } from '@/lib/plugin-loader'
+import { clearPluginTooltipSizes, setPluginTooltipSize } from '@/lib/plugin-tooltip-size'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 
 /** 本用例的 pinia：`mount` 必须显式装上，否则组件里的 `useXxxStore()` 会拿到另一份实例。 */
@@ -154,6 +155,7 @@ beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
   pluginExtensions.value = []
+  clearPluginTooltipSizes()
   tauri.listeners.clear()
   testState.hasContent!.value = true
 
@@ -353,5 +355,44 @@ describe('TooltipWindow transitions', () => {
     testState.hasContent!.value = true
     await flushPromises()
     expect(tauri.currentWindow.show).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('组件包运行时改自己信息卡的尺寸（host.tooltip.setSize）', () => {
+  /** 走到「已定位已显示」那一步之后清空窗口调用记录，只观察尺寸变更引发的重排。 */
+  async function presentThenRecord() {
+    await mountTooltip()
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    tauri.currentWindow.setSize.mockClear()
+    tauri.currentWindow.setPosition.mockClear()
+    tauri.currentWindow.show.mockClear()
+  }
+
+  it('运行时申请的那一份优先于清单初值', async () => {
+    await presentThenRecord()
+    // mock 的模块没声明 size ⇒ 基准是默认 300×260；申请过就该换成 460×620。
+    setPluginTooltipSize('test-module', { width: 400, height: 600 })
+    await flushPromises()
+
+    expect(tauri.currentWindow.setSize).toHaveBeenCalledWith(expect.objectContaining({ width: 400, height: 600 }))
+  })
+
+  it('正显示时改尺寸要重新定位并再显示一次（只换尺寸会留在旧位置上）', async () => {
+    await presentThenRecord()
+    setPluginTooltipSize('test-module', { width: 400, height: 600 })
+    await flushPromises()
+
+    expect(tauri.currentWindow.setPosition).toHaveBeenCalledTimes(1)
+    expect(tauri.currentWindow.show).toHaveBeenCalledTimes(1)
+  })
+
+  it('别的包改尺寸不动正显示的这张卡', async () => {
+    await presentThenRecord()
+    setPluginTooltipSize('another-plugin', { width: 500, height: 800 })
+    await flushPromises()
+
+    expect(tauri.currentWindow.setSize).not.toHaveBeenCalled()
+    expect(tauri.currentWindow.show).not.toHaveBeenCalled()
   })
 })

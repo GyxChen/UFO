@@ -12,14 +12,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPluginHost, PLUGIN_HOST_KEY } from '@/lib/plugin-host'
 import type { PluginAgentEvent, PluginHost } from '@/lib/plugin-host'
 import { PLUGIN_ORIGIN } from '@/lib/plugin-runtime'
-import type { PluginRecordJson } from '@/lib/plugin-types'
+import { PLUGIN_LIMITS } from '@/lib/plugin-limits'
+import { clearPluginTooltipSizes, pluginTooltipSizeOf } from '@/lib/plugin-tooltip-size'
+import type { PluginRecordJson, PluginSurfacesJson } from '@/lib/plugin-types'
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 /** 造一条记录：`permissions` / `hosts` 是这些测试唯一关心的清单字段。 */
-function record(permissions: string[], hosts: string[] = ['api.example.com']): PluginRecordJson {
+function record(
+  permissions: string[],
+  hosts: string[] = ['api.example.com'],
+  surfaces: PluginSurfacesJson = { cell: 1 }
+): PluginRecordJson {
   return {
     id: 'balance-board',
     name: '余额看板',
@@ -30,7 +36,7 @@ function record(permissions: string[], hosts: string[] = ['api.example.com']): P
       version: '1.2.0',
       description: '看看余额',
       entry: 'main.js',
-      surfaces: { cell: 1 },
+      surfaces,
       permissions,
       hosts,
     },
@@ -52,6 +58,11 @@ function fullHost(): PluginHost {
   )
 }
 
+/** 声明了 `surfaces.tooltip.own` 的 host：运行时改卡尺寸只有这一条路进得去。 */
+function ownCardHost(): PluginHost {
+  return createPluginHost(record([], ['api.example.com'], { tooltip: { own: true, size: [300, 300] } }))
+}
+
 /** 取某条命令**最近一次**调用的参数（断言「命令名 + 逐字段参数」与 Rust 一致）。 */
 function callArg(cmd: string) {
   for (let i = invokeMock.mock.calls.length - 1; i >= 0; i -= 1) {
@@ -63,6 +74,8 @@ function callArg(cmd: string) {
 beforeEach(() => {
   invokeMock.mockReset()
   invokeMock.mockResolvedValue(undefined)
+  // 运行时卡尺寸是模块级状态：不清就会把上一条测试的申请带进下一条。
+  clearPluginTooltipSizes()
 })
 
 afterEach(() => {
@@ -83,6 +96,7 @@ describe('host 的形状与冻结', () => {
       'secrets',
       'serial',
       'storage',
+      'tooltip',
     ])
     const raw = fullHost() as unknown as Record<string, unknown>
     expect(raw.invoke).toBeUndefined()
@@ -93,7 +107,9 @@ describe('host 的形状与冻结', () => {
     const host = fullHost()
     expect(Object.isFrozen(host)).toBe(true)
     // 只冻一层是不够的：`host.storage.set = ...` 动的还是共享对象。
-    for (const key of ['plugin', 'storage', 'http', 'fs', 'secrets', 'frame', 'ble', 'serial', 'event'] as const) {
+    for (
+      const key of ['plugin', 'storage', 'http', 'fs', 'secrets', 'frame', 'ble', 'serial', 'event', 'tooltip'] as const
+    ) {
       expect(Object.isFrozen(host[key]), `host.${key} 没冻住`).toBe(true)
     }
     expect(() => {
@@ -441,5 +457,47 @@ describe('外设的字节与参数形状', () => {
       baud: 115200,
       timeoutMs: null,
     })
+  })
+})
+
+describe('host.tooltip.setSize', () => {
+  it('没声明 surfaces.tooltip.own 就抛：改不了不属于自己的卡', () => {
+    // 这条判据是「授权来自挂载点声明」的落点：去掉它，任何包都能把提示窗撑大。
+    expect(() => fullHost().tooltip.setSize({ width: 300, height: 300 })).toThrow(/tooltip\.own/)
+    expect(pluginTooltipSizeOf('balance-board')).toBeNull()
+  })
+
+  it('申请值被夹进清单同一对常量，并把生效的那一份报回来', () => {
+    // 数值本身由 `plugin-limits.spec.ts` 手写字面量钉住；这里只断言「超了必被夹」。
+    const host = ownCardHost()
+    expect(host.tooltip.setSize({ width: 9999, height: 9999 })).toEqual({
+      width: PLUGIN_LIMITS.MAX_TOOLTIP_WIDTH,
+      height: PLUGIN_LIMITS.MAX_TOOLTIP_HEIGHT,
+    })
+    expect(host.tooltip.setSize({ width: 1, height: 1 })).toEqual({
+      width: PLUGIN_LIMITS.MIN_TOOLTIP_WIDTH,
+      height: PLUGIN_LIMITS.MIN_TOOLTIP_HEIGHT,
+    })
+    expect(host.tooltip.setSize({ width: 400, height: 600 })).toEqual({ width: 400, height: 600 })
+    expect(pluginTooltipSizeOf('balance-board')).toEqual({ width: 400, height: 600 })
+  })
+
+  it('不是两个数就抛：NaN / 缺字段都不许落成尺寸', () => {
+    const host = ownCardHost()
+    expect(() => host.tooltip.setSize({ width: NaN, height: 300 })).toThrow(/width/)
+    expect(() => host.tooltip.setSize({ height: 300 } as never)).toThrow(/width/)
+    expect(pluginTooltipSizeOf('balance-board')).toBeNull()
+  })
+
+  it('按包各记各的：一个包改尺寸不顶掉另一个包的卡', () => {
+    // `record()` 的 id 是写死的，第二个包要自己换 id —— 尺寸是按 pluginId 存的。
+    const other = createPluginHost({
+      ...record([], ['api.example.com'], { tooltip: { own: true } }),
+      id: 'clock24',
+    })
+    ownCardHost().tooltip.setSize({ width: 360, height: 500 })
+    other.tooltip.setSize({ width: 260, height: 200 })
+    expect(pluginTooltipSizeOf('balance-board')).toEqual({ width: 360, height: 500 })
+    expect(pluginTooltipSizeOf('clock24')).toEqual({ width: 260, height: 200 })
   })
 })

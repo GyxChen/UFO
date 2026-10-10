@@ -52,6 +52,12 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
 - `surfaces.cell: 1..16` —— 悬浮窗里占几格。`demand()` 只能读自己的数据与当前形态，
   **不许反过来读已分配的格子**（会成环）。返回 0 也至少按 1 格算。
 - `surfaces.tooltip.own: true` + `size: [宽, 高]` —— 悬停**自己的格子**时弹的独立信息卡。
+  `size` 只是**初值**：卡里放不下就按内容再要地方（`host.tooltip.setSize`，见 §4），
+  两条路共用同一对常量（220×120 起、420×620 止，与内置组件的信息卡同一档预算），提示窗再按工作区夹一次。
+  ⚠️ 这张卡由「哪个模块正被悬停」驱动，因此**格子自己得报悬停**：
+  `inject(Symbol.for('ufo.floating.module'))` 取到外壳的 `{ allocatedCells, reportHover }`，
+  在根节点的 `pointerenter` / `pointerleave` 里报与撤（模板 `src/Cell.vue` 是样本）。
+  不报的后果不是报错，是「格子画得出来、卡永远不弹」—— 只有真窗看得见。
 - `surfaces.extension: { into, maxRows }` —— 往**别的组件**的信息卡尾部追加一块，上限 3 行。
   这条通道不在 `FloatingModuleDefinition` 里：`plugin-loader` 另发一份 `pluginExtensions`，
   由提示窗在卡尾渲染，**来源标注（「插件 · 名字」）常驻**，虚线分隔。
@@ -76,6 +82,7 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
 | `fs` | `host.fs.*`（§5） | 用户亲手选中的文件 + 组件私有目录 |
 | `secrets` | `host.secrets.get/set/remove/names` | 值只进出 OS 凭据管理器（service = `<App 标识>/plugin/<id>`，一格一包）。值不落盘、不进日志、界面不回显；盘上只记名字，卸载按名册删干净 |
 | `frame` | `host.frame.allow(url)` | 内嵌网页就是作者界面里的 `<iframe>`：宿主只回答「这个地址能不能嵌」，**不为组件建窗**；只放 https（与 CSP `frame-src` 同一判据 —— 一边放行一边拦死等于让作者猜）。多数站点禁止被嵌，显示不出来是正常现象 |
+| —— | `host.tooltip.setSize({ width, height })` | 改**自己那张独立信息卡**的尺寸（物理像素），返回实际生效的那一份（被夹过就如实报）。授权来自挂载点声明：清单没写 `surfaces.tooltip.own` 就抛，所以它**不占权限位、不加徽标**（那张卡本身就是披露）。也不走 IPC —— 卡就渲染在宿主窗口里，绕一圈只多出一条能被滥用的命令。区间与清单同一对常量，提示窗再按工作区夹一次 |
 | `ble` | `host.ble.scan/connect/write/read/subscribe/unsubscribe/notifications/disconnect/held` | 连接、GATT 树与通知环形**常驻宿主**（组件热重载 / 窗口重建都不会断连）。句柄不跨启动、卸载即断；单写 ≤ 512 字节（长数据自己分包）、环形 64 条溢出丢最旧的并有读数；UUID 只认 128 位写法（`2A37` 那种短 UUID 不翻译） |
 | `serial` | `host.serial.ports/open/write/read/setTimeout/close/held` | 端口名只认 `COM3` 与 `/dev/tty…` 两种形状，**不接受任意路径**；波特率与超时是夹取不是拒绝；每包最多 4 个端口；这一轮读不到回空数组，不算错误 |
 
@@ -88,7 +95,7 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
 
 1. **系统里的文件只能由用户亲手选**：`host.fs.pick(title?)` 弹一次原生对话框，返回
    `{ handle, name, size, archive, url }`。`handle` 是**能力 URL 型授权**——句柄自带一段进程内随机数，
-   谁拿到句柄谁能读；它不落台账、**不跨启动**，卸载 / 重载即作废。这就是披露里那句
+   谁拿到句柄谁能读；它不写入安装记录、**不跨启动**，卸载 / 重载即作废。这就是披露里那句
    「每次都要重新选」的实现形状。
 2. **私有目录随便写**：`app-data/plugins/<id>/files`（与来源无关，本地包也不会写进作者的源码树）。
    三顶帽：单文件 8 MiB、整包 256 MiB、所有包合计 2 GiB；逐段路径校验 + 新建文件的父目录先规范化
@@ -129,24 +136,32 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
    ⚠️ 这个开关**只能挂在 `output` 上**：放在 `rollupOptions` 上只得到一句「Invalid key」警告，
    然后被静默忽略。
 3. **样式只能跟着 JS 进来**。清单**没有** `styles` 字段，宿主装载的就是 `entry` 那一个文件 ——
-   所以模板把 CSS 写成 `import styles from './styles.css?inline'`，在 `activate` 里挂 `<style>`，
-   `.vue` 里不写 `<style>` 块。构建产物目录里出现第二个 `.css` 就是死文件，宿不会读它。
+   所以模板把 CSS 写成 `import styles from './styles.css?inline'`，在**模块顶层**挂一个带 id 的 `<style>`
+   （有则换文本、无则插入），`.vue` 里不写 `<style>` 块。构建产物目录里出现第二个 `.css` 就是死文件，宿不会读它。
+   ⚠️ 挂点必须在顶层而不是 `activate()` 里：热重载只重新 `import`，同一个包的 `activate` 不会重跑
+   （§7 第 5 条），放进 activate 的样式就永远停在第一次那份 —— 表现是「类名对了、样子没变」。
 4. **产物目录就是要安装的目录**（`dist/my-plugin/`），文件名固定 `main.js` 且与清单的 `entry` 一字不差
    （对不上就是「装上了但 import 404」，而那句会被作者当成路径写错）；
    文件数 ≤ 256、总体积 ≤ 48 MiB、单脚本 ≤ 8 MiB —— 超出的**装不上**（预览直接给中文原因），
-   已经躺在台账里的也不再挂载。数字的唯一来源是 `src-tauri/src/plugin/paths.rs`，
+   已经躺在安装记录里的也不再挂载。数字的唯一来源是 `src-tauri/src/plugin/paths.rs`，
    前端 `plugin-limits.ts` 手抄对撞。
 
 ## 7. 热重载怎么工作
 
 1. 详情卡的「热重载」开关只对 `source === 'local'`（就地安装的作者目录）有效；
-   台账在写入处就把它夹成 `devReload ⇒ local`。
+   安装记录在写入处就把它夹成 `devReload ⇒ local`。
 2. 每个窗口按 2 秒问一次 `get_plugin_dev_digest`（**读命令**，所以悬浮窗也能问）：
    所有 dev 包的「最新 mtime + id」指纹。没包开热重载时一次都不问。
 3. 指纹变了 → 重跑 `syncPluginDefinitions` → dev 包的入口 URL 换成新的 `?v=<第几次同步>`。
    ESM 按 URL 缓存模块，不带这个串重 `import()` 拿回来的还是旧的那份。
-4. 台账本身**不重扫**（记录没变，要绕开的只是模块缓存）。作者侧的「文件变动就 build」由
+4. 安装记录本身**不重扫**（记录没变，要绕开的只是模块缓存）。作者侧的「文件变动就 build」由
    `yarn dev`（`vite build --watch`）负责。
+5. 热重载换掉的是**组件与 host 闭包**，`activate` 不重跑：外壳按包 id 记激活账（重跑会把内置模块的
+   订阅一起拆了重建，灯会闪）。所以分工是硬的 ——「每次装载都要做一次」的事（挂 `<style>`）写在模块顶层，
+   「一扇窗一次」的事（订阅、恢复读数）留在 `activate`。
+6. 装载失败会写进**这个包的日志**（`装载失败：…`，字段 `window` 说明出自哪扇窗）。
+   因为 `pluginLoadErrors` 只活在出事的那个窗口里，而悬浮窗 / 提示窗一块插件界面都没有：
+   没有这一条，「装上了、徽标也齐，但格子少一个」在界面上是查不出来的。
 
 ## 8. 界面与安全规约（组件包也适用）
 
@@ -159,10 +174,13 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
 
 ## 9. 待验与已知边界
 
+- 样本包 `E:\workspace\AIProjects\ufo-plugins\epub-shelf` 的真窗验收只走到
+  「格子出现 → 悬停弹出阅读器 → 渲染真 epub 正文 → 运行时改卡尺寸并重新定位」；
+  **目录展开那一档（同一条 `setSize` 路径）没在真窗点过**，只在单测里钉过。
 - 蓝牙 / 串口的代码路径都在，但**没有真设备就没验过收发**：单测覆盖的是形状与闸
   （端口名规则、句柄归属、超大包与压缩/超时夹取、通知环形溢出），
   扫描能不能出设备、连上能不能读写、断连会不会留僵尸 —— 都要接上外设才算验收。
-- **装载是同步的**：台账一变就把每个包的入口 `import()` 一遍。有格子的包开机就要挂进可见槽位，
+- **装载是同步的**：安装记录一变就把每个包的入口 `import()` 一遍。有格子的包开机就要挂进可见槽位，
   所以「懒装载」必须先有「哪个槽位真的可见」的回调，不是清单里补一个字段能解决的事。
   这条风险的兜底是 §6 那道 8 MiB 入口体积帽（超了装之前就被拒）。
 - 从 npm 直接装包没做：那是 §0 里 chosen 的取舍，不是遗漏。
@@ -181,3 +199,13 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
   用 `.vue` 编译出来的默认导出喂 `syncPluginDefinitions`，再逐个挂载点真的 `mount()`。
   它证的是「照这份模板做，四个面真的挂得上、host 真的绑到每一面、样式真的进了文档」；
   测试进程自己就是宿主，所以 `from 'vue'` 与组件实例用的是同一份 Vue —— 正是「不许第二个 Vue」那条。
+  样式那半条钉的是「**import 时**就挂上」（读数在 `beforeAll` 之前取，晚一步就分不清是 activate 挂的），
+  因为热重载不重跑 activate。
+- **格子少一格 / 卡不弹**这一类只有真窗才看得见，所以两条同源的账由 `floating-module-host.spec.ts` 钉住：
+  宿主不注入清单时必须读**响应式**的注册表（prop 的默认值工厂只在 setup 求一次，异步装载的包永远进不来），
+  以及格子必须能用 `Symbol.for('ufo.floating.module')` 拿到 `reportHover`（键退回 `Symbol()` 时组件包那一侧
+  只会静默拿不到上下文）。
+- `host.tooltip.setSize` 的三段各有一处钉：夹取与「没声明 `surfaces.tooltip.own` 就抛」在
+  `plugin-host.spec.ts`，「运行时那份优先于清单初值 + 只重排正显示的那张卡」在 `TooltipWindow.spec.ts`，
+  数值本身（420×620）在 `plugin-limits.spec.ts` 手写字面量 —— 前两处只断言「被夹到常量」，
+  真被抬帽是第三条红。

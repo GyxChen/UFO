@@ -19,7 +19,7 @@ pub const MANIFEST_FILE: &str = "plugin.json";
 pub const PLUGINS_DIR: &str = "plugins";
 /// 包目录里存放该插件日志的目录名（只在调试开着的时候写）。
 pub const LOG_DIR: &str = "logs";
-/// 台账文件名：记录「装了哪些包、从哪来、是不是在调试」。
+/// 安装记录文件名：记「装了哪些包、从哪来、是不是在调试」。
 pub const LEDGER_FILE: &str = "ledger.json";
 
 /// 清单本身的上限：每次冷扫描都要读它，所以刻意不给更大的值。
@@ -56,11 +56,11 @@ pub const MAX_CELLS: u32 = 16;
 pub const MAX_EXTENSION_ROWS: u32 = 3;
 /// 插件自己信息卡宽度的夹取区间（物理像素）。
 pub const MIN_TOOLTIP_WIDTH: u32 = 220;
-/// 插件自己信息卡宽度的上限。
+/// 插件自己信息卡宽度的上限（清单声明与运行时 setSize 共用这一个数）。
 pub const MAX_TOOLTIP_WIDTH: u32 = 420;
 /// 插件自己信息卡高度的下限。
 pub const MIN_TOOLTIP_HEIGHT: u32 = 120;
-/// 插件自己信息卡高度的上限。
+/// 插件自己信息卡高度的上限（与内置组件的信息卡同一档预算，提示窗再按工作区夹一次）。
 pub const MAX_TOOLTIP_HEIGHT: u32 = 620;
 /// 出网域名白名单的条数上限。
 pub const MAX_HOSTS: usize = 64;
@@ -220,7 +220,7 @@ pub fn plugin_files_dir(app_data: &Path, id: &str) -> PathBuf {
     package_dir(app_data, id).join(FS_DIR)
 }
 
-/// 某个包的台账文件路径。
+/// 某个包的安装记录文件路径。
 pub fn ledger_path(app_data: &Path) -> PathBuf {
     plugins_root(app_data).join(LEDGER_FILE)
 }

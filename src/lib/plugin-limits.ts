@@ -18,7 +18,7 @@ export const PLUGIN_LIMITS = {
   PLUGINS_DIR: 'plugins',
   /** 包目录里存放日志的目录名。 */
   LOG_DIR: 'logs',
-  /** 台账文件名。 */
+  /** 安装记录文件名。 */
   LEDGER_FILE: 'ledger.json',
 
   MAX_MANIFEST_BYTES: 65536,

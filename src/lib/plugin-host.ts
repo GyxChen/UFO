@@ -15,6 +15,7 @@ import { PLUGIN_LIMITS } from '@/lib/plugin-limits'
 // 只在值方向用它：`plugin-runtime.ts` 反过来只 `import type` 本文件，所以不构成运行时环。
 import { PLUGIN_ORIGIN } from '@/lib/plugin-runtime'
 import type { PluginRecordJson } from '@/lib/plugin-types'
+import { setPluginTooltipSize } from './plugin-tooltip-size'
 
 /** 组件用 `inject(PLUGIN_HOST_KEY)` 取到自己的 host（作者 SDK 里 re-export 这一个符号）。 */
 export const PLUGIN_HOST_KEY = Symbol.for('ufo.plugin.host')
@@ -310,6 +311,16 @@ export interface PluginHost {
     allow(url: string): Promise<string>
   }
   /**
+   * 自己的信息卡（清单声明 `surfaces.tooltip.own` 才有这张卡）。
+   *
+   * 卡就渲染在本窗口里，所以这条不碰 IPC：只把尺寸诉求交给宿主，由提示窗套用。
+   * ⚠️ 区间与清单同一对常量（超了会被夹），提示窗另外还会按工作区夹一次。
+   */
+  tooltip: {
+    /** 申请这张卡的尺寸（物理像素），返回实际生效的那一份。 */
+    setSize(size: { width: number; height: number }): { width: number; height: number }
+  }
+  /**
    * 蓝牙（清单要声明 `ble`）。
    *
    * 连接、GATT 树与通知队列都**常驻在宿主**：组件的 UI 会随热重载 / 窗口隐藏重建，
@@ -536,6 +547,18 @@ export function createPluginHost(record: PluginRecordJson): PluginHost {
       async allow(url) {
         require('frame')
         return await invoke<string>('plugin_frame_allow', { id, url })
+      },
+    },
+    tooltip: {
+      setSize(size) {
+        // 授权来自挂载点声明本身：没有这张卡就没有可改的尺寸。
+        if (manifest?.surfaces.tooltip?.own !== true) {
+          throw new Error('没声明 surfaces.tooltip.own：这个包没有自己的信息卡，改不了它的尺寸')
+        }
+        if (!Number.isFinite(size?.width) || !Number.isFinite(size?.height)) {
+          throw new Error('setSize 要的是 { width, height } 两个数（物理像素）')
+        }
+        return setPluginTooltipSize(id, { width: size.width, height: size.height })
       },
     },
     ble: {

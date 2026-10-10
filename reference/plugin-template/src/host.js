@@ -21,3 +21,21 @@ export function useHost() {
 export function has(host, permission) {
   return host.plugin.permissions.includes(permission)
 }
+
+/**
+ * 外壳给「这一格」的上下文键（也是 `Symbol.for`，产物才 inject 得到）。
+ *
+ * ⚠️ 悬停上报走的是这一条，不是 `host`：信息卡弹不弹由外壳决定，而外壳只认「哪个模块的哪个 key
+ * 正被悬停」。不报就没有任何悬停事件 —— 清单里声明的 `surfaces.tooltip.own` 永远不会出现。
+ */
+export const FLOATING_MODULE_KEY = Symbol.for('ufo.floating.module')
+
+/**
+ * 取外壳注入给这一格的上下文（`allocatedCells` 与 `reportHover`）。
+ *
+ * 与 `useHost()` 不同，这一份**允许拿不到**：同一个组件被挂在设置页或测试里没有槽位上下文，
+ * 少一次悬停不是错，所以这里返回 null 而不抛。
+ */
+export function useCell() {
+  return inject(FLOATING_MODULE_KEY, null)
+}

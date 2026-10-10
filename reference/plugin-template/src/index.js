@@ -16,7 +16,7 @@ export default {
   cell: Cell,
   /** 悬停自己的格子时弹的独立信息卡。 */
   tooltip: TooltipCard,
-  /** 想要的卡尺寸（物理像素）；宿主会夹进工作区，超了不会出屏。 */
+  /** 想要的卡尺寸（物理像素，初值）；宿主夹进清单区间再夹进工作区。运行时按内容改要走 `host.tooltip.setSize`。 */
   tooltipSize: { width: 320, height: 160 },
   /** 此刻有没有内容可展示：假 = 整卡不弹，不留一块空糊在屏幕上。 */
   hasContent: () => state.phase !== '',
@@ -34,7 +34,6 @@ export default {
    * 那时组件还没 mounted，答案会永远停在「没内容」。
    */
   activate(host) {
-    injectStyles()
     // 日志是需求点名的特例：不需要声明权限，任何时候都能打。
     host.log('info', `${host.plugin.name} 已激活`)
 
@@ -72,13 +71,22 @@ export default {
  *
  * 为什么手动：清单里只有一个 `entry`（一个 JS 产物），构建额外产出的 `.css` 没人去取。
  * `?inline` 让 vite 把 CSS 作为字符串交给 JS，挂 `<style>` 这一步就在自己手里。
- * 带 id 是因为每个窗口都会各调一次 `activate`（悬浮窗、提示窗、主窗），重复挂只会多一份规则。
+ * 带 id 是为了「重复挂只换文本、不堆第二份规则」—— 每个窗口都会各 import 一次这一份。
+ *
+ * ⚠️ 调用点在**模块顶层**，不要挪进 `activate()`：热重载会重新 import 这一份（缓存串换了），
+ * 而宿主按包 id 记激活账，同一个包不会重跑 activate；放进 activate 的话改完样式热重载只换了组件，
+ * `<style>` 里还是旧规则（表现是「类名对了、样子没变」）。
  */
 const STYLE_ID = 'ufo-plugin-my-plugin-styles'
 function injectStyles() {
-  if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return
-  const element = document.createElement('style')
-  element.id = STYLE_ID
+  if (typeof document === 'undefined') return
+  let element = document.getElementById(STYLE_ID)
+  if (!element) {
+    element = document.createElement('style')
+    element.id = STYLE_ID
+    document.head.appendChild(element)
+  }
   element.textContent = styles
-  document.head.appendChild(element)
 }
+
+injectStyles()

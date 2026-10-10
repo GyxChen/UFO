@@ -85,7 +85,7 @@ describe('模板与宿主契约同源', () => {
   /** 清单没有 styles 字段：一个包被装载的就是那一个 JS 产物，样式必须由 JS 自己带进来。 */
   it('样式走 JS（宿主没有 styles 这个口子）', () => {
     expect(manifest, '宿主不认 styles 字段').not.toHaveProperty('styles')
-    expect(codeOf(indexRaw), '样式要以 ?inline 取成字符串，再在 activate 里挂 <style>').toContain('?inline')
+    expect(codeOf(indexRaw), '样式要以 ?inline 取成字符串，再由这份 JS 挂 <style>').toContain('?inline')
   })
 
   it('id 过宿主那套字符规则', () => {
