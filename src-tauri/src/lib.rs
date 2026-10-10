@@ -17,6 +17,8 @@ mod migrate;
 /// 悬浮窗组件在 Rust 侧的家：一个组件一个目录（与前端 `src/modules/` 一一对应）。
 mod modules;
 mod mouse;
+/// 插件（组件包）：清单契约、能力注册表、装载协议与台账。
+mod plugin;
 
 // 组合根：只有这里点名具体组件（登记它的配置钩子、运行时状态与命令），
 // 外壳与其它组件都不认识它。
@@ -59,6 +61,22 @@ use modules::todo::{
     reopen_todo_task, set_todo_token, test_todo_connection, TodoState,
 };
 use mouse::is_left_mouse_pressed;
+use plugin::commands::{
+    clear_plugin_logs, close_plugin_events, get_plugin_ble_held, get_plugin_dev_digest,
+    get_plugin_fs_usage, get_plugin_logs, get_plugin_registry, get_plugin_secret_names,
+    get_plugin_serial_held, get_plugin_storage_usage, get_plugins, get_recent_plugin_logs,
+    install_plugin, open_plugin_events, plugin_ble_connect, plugin_ble_disconnect,
+    plugin_ble_notifications, plugin_ble_read, plugin_ble_scan, plugin_ble_subscribe,
+    plugin_ble_unsubscribe, plugin_ble_write, plugin_frame_allow, plugin_fs_entries,
+    plugin_fs_list, plugin_fs_pick, plugin_fs_read, plugin_fs_read_entry, plugin_fs_read_private,
+    plugin_fs_remove, plugin_fs_stat, plugin_fs_write, plugin_http_fetch, plugin_log_write,
+    plugin_secret_get, plugin_secret_remove, plugin_secret_set, plugin_serial_close,
+    plugin_serial_open, plugin_serial_ports, plugin_serial_read, plugin_serial_timeout,
+    plugin_serial_write, plugin_storage_get, plugin_storage_keys, plugin_storage_remove,
+    plugin_storage_set, poll_plugin_events, preview_plugin, reload_plugins,
+    report_plugin_load_ms, set_plugin_dev_reload, set_plugin_log_view,
+    uninstall_plugin,
+};
 
 const MAIN_WINDOW: &str = "main";
 /// 信息提示窗 label：点击穿透与 devtools 例外都要点名它，故留在非调试构建里。
@@ -83,6 +101,17 @@ fn hide_main<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         window.hide()?;
     }
     Ok(())
+}
+
+/// 把枚举变成它序列化出来的那个小写串（如 `SessionPhase::Running` → `running`）。
+///
+/// 插件事件是对外形状，不该出现 `Debug` 的花括号与变体名；拿不到就回 `unknown`，
+/// 宁可给一个明确读不懂的值也不 unwrap（release 是 `panic = abort`）。
+fn enum_token<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|token| token.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -119,6 +148,12 @@ pub fn run() {
             // 与 profiles 同样处理：clone 进 StatusState（monitor 线程写），再 manage 一份（命令读）。
             let session_store =
                 SessionStoreState::load(app_data.join("session-records.db"), now_ms());
+            // 插件台账：`load_store` 里先确保 `plugins/` 在盘上存在（第一次写台账才不会被
+            // ENOENT 挡掉），再读台账。这里只读内存，扫描留给命令层的 spawn_blocking。
+            let plugin_store = plugin::commands::load_store(&app_data);
+            // 协议 handler 在 build 之前就注册好了（见下面的 register_…），它只能在运行时
+            // 从这份静态引用拿台账；所以这里必须紧跟在 load_store 之后注入。
+            plugin::protocol::attach(plugin_store.clone());
             // 信息卡拓展的流程脚本运行态：HTTP/密钥用生产实现；worker 线程消费调度队列。
             let (flow_state, flow_rx) =
                 FlowState::new(Arc::new(UreqFetch), Arc::new(KeyringSecrets));
@@ -155,6 +190,54 @@ pub fn run() {
             app.manage(push_state.clone());
             app.manage(WeatherState::default());
             app.manage(TodoState::default());
+            app.manage(plugin_store);
+            // 插件日志运行态：环形缓冲 + 按包的 JSONL 落点（落点基准与台账同一个 `plugins/`）。
+            app.manage(plugin::log::LogState::new(app_data.clone()));
+            // 灯态事件总线：组件包「按包拉取」，闸在 `open_plugin_events` 那道命令里
+            // （不广播 —— 广播等于把提问原文发给同窗的每个包）。
+            let plugin_events = plugin::events::EventState::new();
+            app.manage(plugin_events.clone());
+            // 组件包的存储分区（一包含一个 JSON 文件，卸载即删）。
+            app.manage(plugin::storage::StorageState::new(app_data.clone()));
+            // 文件能力运行态：私有目录的落点 + 「用户选中的文件」的会话内句柄表。
+            // 协议层的 `__pick` / `__fs` 两条入口要从这里读，所以顺手交给它一份静态引用。
+            let plugin_fs = plugin::fs::FsState::new(app_data.clone());
+            plugin::protocol::attach_fs(plugin_fs.clone());
+            app.manage(plugin_fs);
+            // 密钥能力运行态：值只进出 OS 凭据管理器，盘上只留「这个包用过哪些名字」。
+            app.manage(plugin::secrets::SecretState::new(app_data.clone()));
+            // 外设能力运行态：蓝牙连接与串口端口都是**活的系统资源**，必须常驻宿主
+            // （组件包会随热重载 / 窗口隐藏重建，重建就断连是不可接受的）。
+            app.manage(plugin::ble::BleState::new());
+            app.manage(plugin::serial::SerialState::new());
+            // 巡检线程：读状态快照换算成「每盏灯的读数」。没人订阅时整轮跳过，
+            // 所以一个包都没装的情况下这条线程完全不查快照。
+            {
+                let status_for_events = app.state::<StatusState>().inner().clone();
+                plugin::events::spawn_loop(plugin_events.clone(), move || {
+                    let snapshot = status_for_events.snapshot_with_upstream();
+                    let samples = snapshot
+                        .sessions
+                        .iter()
+                        .map(|session| plugin::events::LightSample {
+                            key: session.key.clone(),
+                            provider: enum_token(&session.provider),
+                            session_id: session.session_id.clone(),
+                            phase: enum_token(&session.phase),
+                            endpoint: session
+                                .upstream_url
+                                .clone()
+                                .or_else(|| session.base_url.clone()),
+                            prompt: session.prompt.clone(),
+                            started_at_ms: session.started_at_ms,
+                            last_seen_at_ms: session.last_seen_at_ms,
+                            error_code: session.error_code.clone(),
+                            waiting_reason: session.waiting_reason.clone(),
+                        })
+                        .collect();
+                    (samples, now_ms() as i64)
+                });
+            }
             spawn_monitor(app.handle().clone(), status_state);
             spawn_worker(app.handle().clone(), flow_state, flow_rx);
             spawn_push_worker(app.handle().clone(), push_state, push_rx);
@@ -251,6 +334,20 @@ pub fn run() {
         // ⚠️ 这条推理要靠运行时实测确认，别当既成事实：点一次导出、看原生框到底出不出来。
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_prevent_default::init())
+        // 插件产物：`ufo-plugin://<id>/<包内相对路径>`（Windows 上呈递成
+        // `http://ufo-plugin.localhost/<id>/<path>`，handler 里两种形状都认）。
+        // IO 丢给 blocking 线程：同步 handler 会占住协议派发，一次大文件读能拖住整窗加载。
+        .register_asynchronous_uri_scheme_protocol(
+            plugin::protocol::SCHEME,
+            |_ctx, request, responder| {
+                tauri::async_runtime::spawn_blocking(move || {
+                    let method = request.method().clone();
+                    let uri = request.uri().to_string();
+                    let headers = request.headers().clone();
+                    responder.respond(plugin::protocol::handle(&method, &uri, &headers));
+                });
+            },
+        )
         .invoke_handler(tauri::generate_handler![
             get_status_snapshot,
             dismiss_status_session,
@@ -296,6 +393,60 @@ pub fn run() {
             set_todo_token,
             delete_todo_token,
             get_todo_secret_status,
+            get_plugins,
+            get_plugin_registry,
+            report_plugin_load_ms,
+            preview_plugin,
+            install_plugin,
+            uninstall_plugin,
+            set_plugin_dev_reload,
+            reload_plugins,
+            plugin_log_write,
+            get_recent_plugin_logs,
+            get_plugin_logs,
+            clear_plugin_logs,
+            set_plugin_log_view,
+            open_plugin_events,
+            poll_plugin_events,
+            close_plugin_events,
+            plugin_storage_get,
+            plugin_storage_set,
+            plugin_storage_remove,
+            plugin_storage_keys,
+            get_plugin_storage_usage,
+            plugin_http_fetch,
+            plugin_fs_pick,
+            plugin_fs_stat,
+            plugin_fs_entries,
+            plugin_fs_read,
+            plugin_fs_read_entry,
+            plugin_fs_write,
+            plugin_fs_read_private,
+            plugin_fs_list,
+            plugin_fs_remove,
+            get_plugin_fs_usage,
+            plugin_secret_get,
+            plugin_secret_set,
+            plugin_secret_remove,
+            get_plugin_secret_names,
+            plugin_frame_allow,
+            get_plugin_dev_digest,
+            plugin_ble_scan,
+            plugin_ble_connect,
+            plugin_ble_write,
+            plugin_ble_read,
+            plugin_ble_subscribe,
+            plugin_ble_unsubscribe,
+            plugin_ble_notifications,
+            plugin_ble_disconnect,
+            get_plugin_ble_held,
+            plugin_serial_ports,
+            plugin_serial_open,
+            plugin_serial_write,
+            plugin_serial_read,
+            plugin_serial_timeout,
+            plugin_serial_close,
+            get_plugin_serial_held,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

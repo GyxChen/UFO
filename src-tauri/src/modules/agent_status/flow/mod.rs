@@ -18,7 +18,9 @@
 //! ## panic-free（release 是 panic=abort，worker 一次 panic 带走整个 App）
 //! 见 `runner.rs` / `api.rs` 顶部约定；本文件不 unwrap、不索引，失败一律变 `Err(String)` 或跳过。
 
-mod api;
+// `pub(crate)`：组件包的出网口子（`plugin/net.rs`）要复用同一支 URL 校验（scheme + 私网/元数据拦截），
+// 复制一份的话「两条出网路径」迟早会漂移（AGENTS 的禁区里明写着不要再开第二条）。
+pub(crate) mod api;
 mod config;
 mod runner;
 

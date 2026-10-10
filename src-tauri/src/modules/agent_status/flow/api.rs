@@ -202,9 +202,12 @@ pub fn validate_http_url(url: &str) -> Result<String, String> {
         Some((_, host)) => host,
         None => authority,
     };
-    // IPv6 形如 [::1]:8080，先剥括号再判端口。
+    // IPv6 形如 [::1]:8080：括号里才是 host，端口在 `]` 之后。
+    // ⚠️ 只剥尾括号（`strip_suffix(']')`）在带端口时会失败，留下 `::1]:8080` 这种串：
+    //    它解析不成 IP、又含 `:`，于是下面的「无点短主机名」规则放过它 —— `http://[::1]:8080/`
+    //    就这么打到回环。截到 `]` 为止，让 IP 段判断真的看到地址本体。
     let (host_only, had_bracket) = match host.strip_prefix('[') {
-        Some(rest) => (rest.strip_suffix(']').unwrap_or(rest), true),
+        Some(rest) => (rest.split(']').next().unwrap_or(rest), true),
         None => (host.split(':').next().unwrap_or(host), false),
     };
     let host_lower = host_only.to_ascii_lowercase();

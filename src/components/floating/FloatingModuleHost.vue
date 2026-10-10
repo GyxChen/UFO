@@ -34,7 +34,7 @@ const props = withDefaults(
     /** 可挂载的模块清单；默认取注册表，测试可注入替身 */
     definitions?: FloatingModuleDefinition[]
   }>(),
-  { definitions: () => FLOATING_MODULE_DEFINITIONS }
+  { definitions: () => FLOATING_MODULE_DEFINITIONS.value }
 )
 
 const emit = defineEmits<{

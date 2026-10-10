@@ -1,8 +1,10 @@
 import type { Component } from 'vue'
 import ScriptEditorWindow from '@/components/windows/ScriptEditorWindow.vue'
-import { SCRIPT_EDITOR_WINDOW_LABEL } from '@/lib/script-editor-window'
 import StatusLogWindow from '@/modules/agent-status/panels/StatusLogWindow.vue'
+import PluginLogWindow from '@/components/plugins/PluginLogWindow.vue'
+import { SCRIPT_EDITOR_WINDOW_LABEL } from '@/lib/script-editor-window'
 import { STATUS_LOG_WINDOW_LABEL } from '@/modules/agent-status/lib/status-log-window'
+import { PLUGIN_LOG_WINDOW_LABEL } from '@/lib/plugin-log-window'
 
 /**
  * 主窗以外那些「按需显示」的独立面板窗：窗口 label → 该渲染哪个组件。
@@ -17,4 +19,5 @@ import { STATUS_LOG_WINDOW_LABEL } from '@/modules/agent-status/lib/status-log-w
 export const PANEL_WINDOW_VIEWS: Record<string, Component> = {
   [SCRIPT_EDITOR_WINDOW_LABEL]: ScriptEditorWindow,
   [STATUS_LOG_WINDOW_LABEL]: StatusLogWindow,
+  [PLUGIN_LOG_WINDOW_LABEL]: PluginLogWindow,
 }

@@ -40,6 +40,13 @@ keyring = "4"
 # Codex 适配器要读 ~/.codex/config.toml 取 base_url（TOML 格式，Claude 的 JSON 解析器用不上）。
 # 选 basic-toml 而非官方 toml：只需要「读」，后者会连带 toml_edit 一整条序列化链。
 basic-toml = "0.1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+base64 = "0.22"
+btleplug = { version = "0.13.4", default-features = false }
+serialport = "4.10.1"
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+tokio = { version = "1.53.2", features = ["time"] }
 
 # 悬浮窗贴边：轮询物理鼠标左键状态（GetAsyncKeyState），绕开 Windows 原生拖拽吞 pointerup 的问题。
 [target.'cfg(windows)'.dependencies]

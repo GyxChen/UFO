@@ -14,6 +14,7 @@ import defaultCapabilityRaw from '../../src-tauri/capabilities/default.json?raw'
 import settingsCapabilityRaw from '../../src-tauri/capabilities/main-module-settings.json?raw'
 import { SCRIPT_EDITOR_WINDOW_LABEL } from '@/lib/script-editor-window'
 import { STATUS_LOG_WINDOW_LABEL } from '@/modules/agent-status/lib/status-log-window'
+import { PLUGIN_LOG_WINDOW_LABEL } from '@/lib/plugin-log-window'
 import { PANEL_WINDOW_VIEWS } from './index'
 
 /** 只用到的那几个字段：窗口声明的其余项与本护栏无关。 */
@@ -51,8 +52,11 @@ describe('独立面板窗的声明与权限', () => {
   it('契约里的 label 常量与配置里的声明一一对应', () => {
     // 常量写错一个字母 = 开不出一扇窗，所以两头都要比。
     expect(declared.has(SCRIPT_EDITOR_WINDOW_LABEL), '脚本窗常量与配置声明不一致').toBe(true)
-    expect(declared.has(STATUS_LOG_WINDOW_LABEL), '日志窗常量与配置声明不一致').toBe(true)
-    expect(Object.keys(PANEL_WINDOW_VIEWS).sort()).toEqual([SCRIPT_EDITOR_WINDOW_LABEL, STATUS_LOG_WINDOW_LABEL].sort())
+    expect(declared.has(STATUS_LOG_WINDOW_LABEL), '转灯日志窗常量与配置声明不一致').toBe(true)
+    expect(declared.has(PLUGIN_LOG_WINDOW_LABEL), '插件日志窗常量与配置声明不一致').toBe(true)
+    expect(Object.keys(PANEL_WINDOW_VIEWS).sort()).toEqual(
+      [SCRIPT_EDITOR_WINDOW_LABEL, STATUS_LOG_WINDOW_LABEL, PLUGIN_LOG_WINDOW_LABEL].sort()
+    )
   })
 
   /**
@@ -62,6 +66,8 @@ describe('独立面板窗的声明与权限', () => {
    */
   it('转灯日志窗拿到了设置侧的写权限', () => {
     expect(settingsCapabilityWindows).toContain(STATUS_LOG_WINDOW_LABEL)
+    // 插件日志窗同理：它有「清空 / 翻页 / 挂跟随」三枚写动作，没进这份 capability 就只有这三个报权限错。
+    expect(settingsCapabilityWindows).toContain(PLUGIN_LOG_WINDOW_LABEL)
     // 脚本窗只搬正文，不碰任何写命令：它不该出现在这份 capability 里（权限面不扩大）。
     expect(settingsCapabilityWindows).not.toContain(SCRIPT_EDITOR_WINDOW_LABEL)
   })

@@ -1,0 +1,136 @@
+/**
+ * 这个包的全部样式，一处收口。
+ *
+ * ⚠️ 为什么不写在 `.vue` 的 `<style scoped>` 里：宿主的清单**没有 styles 字段**，
+ * 一个包被装载的就是 `entry` 那一个 JS 文件 —— 构建额外产出的 `.css` 没人去取，
+ * 表现是「组件挂上了但完全没样式」。所以模板把样式集中在这份文件，
+ * 由 `src/index.js` 以 `?inline` 取成字符串、在 `activate()` 里挂一个 `<style>`（带 id，重复挂是空操作）。
+ *
+ * 类名一律带 `.tpl-` 前缀：没有 scoped 属性帮忙隔离，前缀就是命名空间。
+ */
+
+.tpl-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.tpl-cell__dot {
+  /* 直径跟着槽位走：小窗里挤不下的圆点比没画更糟。 */
+  width: min(60%, 100cqh);
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  background: var(--tpl-tone, #64748b);
+  color: #0b1220;
+  font-size: min(3.2cqw, 12px);
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tpl-tip {
+  padding: 10px 12px;
+  color: #e5e7eb;
+  font-size: 12px;
+}
+
+.tpl-tip__rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.tpl-tip__row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.tpl-tip__row dt {
+  flex: 0 0 68px;
+  color: #9ca3af;
+}
+
+.tpl-tip__row dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tpl-mono {
+  font-family: ui-monospace, monospace;
+}
+
+.tpl-ext {
+  display: grid;
+  gap: 2px;
+}
+
+.tpl-ext__line {
+  margin: 0;
+  font-size: 11px;
+  color: #d1d5db;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tpl-ext__muted {
+  color: #9ca3af;
+}
+
+.tpl-set {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  color: #e5e7eb;
+  font-size: 13px;
+}
+
+.tpl-set__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.tpl-set__field {
+  display: grid;
+  gap: 6px;
+}
+
+.tpl-set__label,
+.tpl-set__picked,
+.tpl-set__hint {
+  color: #9ca3af;
+}
+
+.tpl-set__input,
+.tpl-set__btn {
+  border-radius: 8px;
+  border: 1px solid #374151;
+  background: #111827;
+  color: inherit;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.tpl-set__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tpl-set__picked,
+.tpl-set__hint {
+  margin: 0;
+}
+
+/* 行内反馈：读数常驻，颜色与宿主的黄档弱底同一档语义。 */
+.tpl-set__status {
+  margin: 0;
+  color: #fbbf24;
+}

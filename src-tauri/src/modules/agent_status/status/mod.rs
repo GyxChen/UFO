@@ -151,7 +151,10 @@ impl StatusState {
     }
 
     /// 取带上游信息的快照（供 command 与 emit 共用）。
-    fn snapshot_with_upstream(&self) -> StatusSnapshot {
+    /// 当前所有会话的快照（含解析出的上游 endpoint）。
+    ///
+    /// `pub(crate)` 是给插件的事件总线用的：巡检线程每秒取一次，换算成灯态读数投进各包的环形。
+    pub(crate) fn snapshot_with_upstream(&self) -> StatusSnapshot {
         let mut snapshot = self
             .registry
             .lock()

@@ -1,0 +1,99 @@
+# 插件（组件包）的读命令给所有窗口：悬浮窗与提示窗要按台账挂载，必须能读；
+# 写命令（预览 / 安装 / 卸载 / 热重载开关 / 重扫）只授主窗和它派出的面板窗
+# （见 `capabilities/main-module-settings.json`）。
+#
+# ⚠️ 「启用与否」不在这里：那条开关写的是外壳的 floating-modules.json（modules[].enabled），
+# 台账不再存第二份，免得同一条行为有两个入口。
+#
+# ⚠️ identifier 必须全仓唯一：`permissions/*.toml` 是跨文件合并的，
+# 撞名的话**前一份**授权的命令会从 ACL 里静默消失（构建与测试全绿，运行时没权限）。
+
+[[permission]]
+identifier = "allow-get-plugins"
+description = "Allows reading the installed plugin ledger and the capability registry for mounting plugin UIs."
+commands.allow = [
+  "get_plugins",
+  "get_plugin_registry",
+  "report_plugin_load_ms",
+  "get_plugin_dev_digest"
+]
+
+[[permission]]
+identifier = "allow-manage-plugins"
+description = "Allows previewing, installing, uninstalling, hot-reloading and rescanning plugin packages from the main window."
+commands.allow = [
+  "preview_plugin",
+  "install_plugin",
+  "uninstall_plugin",
+  "set_plugin_dev_reload",
+  "reload_plugins"
+]
+
+# 插件日志：写与「最近几行」给所有窗口（挂载插件的不止主窗，日志得从它跑起来的那个窗口写进来）；
+# 按盘翻页、清空、实时跟随挂摘只给设置侧（主窗 + 它派出的独立日志窗）。
+[[permission]]
+identifier = "allow-plugin-log-writes"
+description = "Allows a mounted plugin window to write its own log lines and read the last few back for the debug card."
+commands.allow = ["plugin_log_write", "get_recent_plugin_logs"]
+
+[[permission]]
+identifier = "allow-manage-plugin-logs"
+description = "Allows paging, clearing and attaching the live follower to a plugin's log from the settings side."
+commands.allow = ["get_plugin_logs", "clear_plugin_logs", "set_plugin_log_view"]
+
+# 灯态事件的订阅与拉取给所有窗口（组件包的 UI 可能跑在悬浮窗 / 提示窗 / 主窗里）。
+# 真正的闸不在这里：`open_plugin_events` 按 pluginId 查清单，没声明 `events:agent` 的包
+# 连环形都开不了，之后的 `poll` 自然什么都取不到。
+[[permission]]
+identifier = "allow-plugin-events"
+description = "Allows a mounted plugin window to subscribe to and pull agent light events (manifest gate lives in the command)."
+commands.allow = ["open_plugin_events", "poll_plugin_events", "close_plugin_events"]
+
+# 能力调用面（storage / http / fs / secrets）给所有窗口：组件包的 UI 可能跑在悬浮窗 / 提示窗里，
+# 而真正的闸是命令层第一行的 `require_permission`（按 pluginId 查清单 permissions）。
+# 窗口级 capability 只能回答「谁在调」，回答不了「哪个包在调」。
+#
+# ⚠️ `plugin_fs_pick` 会弹一次原生文件对话框 —— 授权模型是「用户这一趟真的点了选」，
+# 所以它不给没声明 `fs` 的包留任何路径：命令里第一行就是那道闸，取消对话框也不留句柄。
+[[permission]]
+identifier = "allow-plugin-capability-calls"
+description = "Allows a mounted plugin window to call host capabilities; each command re-checks the package manifest."
+commands.allow = [
+  "plugin_storage_get",
+  "plugin_storage_set",
+  "plugin_storage_remove",
+  "plugin_storage_keys",
+  "get_plugin_storage_usage",
+  "plugin_http_fetch",
+  "plugin_fs_pick",
+  "plugin_fs_stat",
+  "plugin_fs_entries",
+  "plugin_fs_read",
+  "plugin_fs_read_entry",
+  "plugin_fs_write",
+  "plugin_fs_read_private",
+  "plugin_fs_list",
+  "plugin_fs_remove",
+  "get_plugin_fs_usage",
+  "plugin_secret_get",
+  "plugin_secret_set",
+  "plugin_secret_remove",
+  "get_plugin_secret_names",
+  "plugin_frame_allow",
+  "plugin_ble_scan",
+  "plugin_ble_connect",
+  "plugin_ble_write",
+  "plugin_ble_read",
+  "plugin_ble_subscribe",
+  "plugin_ble_unsubscribe",
+  "plugin_ble_notifications",
+  "plugin_ble_disconnect",
+  "get_plugin_ble_held",
+  "plugin_serial_ports",
+  "plugin_serial_open",
+  "plugin_serial_write",
+  "plugin_serial_read",
+  "plugin_serial_timeout",
+  "plugin_serial_close",
+  "get_plugin_serial_held"
+]

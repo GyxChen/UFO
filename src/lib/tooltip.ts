@@ -1,3 +1,4 @@
+import type { Component } from 'vue'
 import type { DockedEdges, PhysicalPoint, PhysicalSize, WorkArea } from './snap'
 import type { FloatingHoverTarget } from './floating-module-context'
 import type { FloatingModuleDefinition, FloatingModuleTooltip, FloatingTooltipSize } from './floating-modules'
@@ -91,6 +92,67 @@ export function resolveTooltipSize(
     return target ? declared(target) : null
   }
   return declared
+}
+
+/**
+ * 插入块（组件包往别人信息卡尾部追加的那一块）的竖向预算。
+ *
+ * 谁长高由外壳算：模块不知道自己会被追加几块，插件也不知道宿主卡里已经有多少行，
+ * 只有提示窗同时看得见两边。数字与 `main.css` 的 `.tooltip-plug*` 同一口径。
+ */
+export const TOOLTIP_PLUG_HEAD_PX = 16
+/** 插入块一行正文的高度（与信息卡的行高同一档）。 */
+export const TOOLTIP_PLUG_ROW_PX = 16
+/** 插入块之间的间隔（含那条虚线分隔）。 */
+export const TOOLTIP_PLUG_GAP_PX = 8
+
+/** 一块插入块要占多高：头一行 + 它声明的行数 + 间隔。 */
+export function plugBlockHeight(maxRows: number): number {
+  const rows = Number.isFinite(maxRows) ? Math.max(0, Math.floor(maxRows)) : 0
+  return TOOLTIP_PLUG_HEAD_PX + rows * TOOLTIP_PLUG_ROW_PX + TOOLTIP_PLUG_GAP_PX
+}
+
+/** 提示窗用得上的插入块挂载位（`plugin-loader` 的 `PluginExtensionSlot` 的可读子集）。 */
+export interface TooltipExtensionSlot {
+  /** 挂到哪个组件的卡上。 */
+  hostId: string
+  /** 来自哪个包（来源标注与「这包被停用就整块不出现」用它）。 */
+  pluginId: string
+  /** 来源标注上的名字。 */
+  label: string
+  /** 最多贡献几行（清单里已夹到 ≤3）。 */
+  /** 追加那块的内容组件（装载器绑好这个包的 host 之后才交给外壳）。 */
+  component: Component
+  maxRows: number
+  /** 此刻有没有内容可展示；不给 = 有悬停目标就出现。 */
+  hasContent?: (target: FloatingHoverTarget) => boolean
+}
+
+/**
+ * 该往这张卡尾部追加哪些块：目标模块是宿主、那个包没被停用、且块自己说有内容。
+ *
+ * ⚠️ 「没内容就不出现」是外壳负责的（与独立信息卡同一条规矩）：
+ * 一块空的虚线区挂在卡尾，比没有这块更糟。
+ */
+export function resolveTooltipExtensions(
+  slots: readonly TooltipExtensionSlot[],
+  target: FloatingHoverTarget | null | undefined,
+  isEnabled: (pluginId: string) => boolean
+): TooltipExtensionSlot[] {
+  if (!target) return []
+  return slots.filter(
+    slot => slot.hostId === target.moduleId && isEnabled(slot.pluginId) && slot.hasContent?.(target) !== false
+  )
+}
+
+/** 按插入块的预算给提示窗长高；没有块就原样返回。 */
+export function extendTooltipSizeForPlugs(
+  size: FloatingTooltipSize,
+  slots: readonly TooltipExtensionSlot[]
+): FloatingTooltipSize {
+  const extra = slots.reduce((sum, slot) => sum + plugBlockHeight(slot.maxRows), 0)
+  if (!extra) return size
+  return { width: size.width, height: size.height + extra }
 }
 
 /**

@@ -61,7 +61,7 @@ const theme = useThemeStore()
 
 /** 一级页面清单：每个有设置页的组件一页（顺序 = 注册表顺序）+ 右端的「悬浮窗设置」（齿轮）。 */
 const tabs = computed<MainTab[]>(() => [
-  ...FLOATING_MODULE_DEFINITIONS.filter(hasModuleSettings).map(definition => ({
+  ...FLOATING_MODULE_DEFINITIONS.value.filter(hasModuleSettings).map(definition => ({
     key: definition.id,
     label: definition.label,
     sections: definition.settings?.sections ?? [],
@@ -80,10 +80,20 @@ const tabItems = computed(() =>
   }))
 )
 
-/** 默认一级页 = 第一个组件设置页；没有任何组件有设置页时退回「悬浮窗设置」。 */
-const DEFAULT_TAB = FLOATING_MODULE_DEFINITIONS.find(hasModuleSettings)?.id ?? MODULES_TAB
+/**
+ * 默认一级页 = 第一个组件设置页；没有任何组件有设置页时退回「悬浮窗设置」。
+ * 组件包是异步装载的，所以这里只是初值 —— 「当前页没了要回落」由下面那条 watch 负责。
+ */
+const DEFAULT_TAB = FLOATING_MODULE_DEFINITIONS.value.find(hasModuleSettings)?.id ?? MODULES_TAB
 
 const activeTab = ref<string>(DEFAULT_TAB)
+
+// 装完 / 卸完一个包，它那一页可能出现或消失：停在不存在的页上主窗就整块空白。
+watch(tabs, list => {
+  if (!list.some(tab => tab.key === activeTab.value)) {
+    activeTab.value = list.find(tab => !tab.end)?.key ?? MODULES_TAB
+  }
+})
 /** 当前一级页的分区列表。 */
 const activeSections = computed(() => tabs.value.find(tab => tab.key === activeTab.value)?.sections ?? [])
 /** 当前二级分区的 id；空串 = 还没选（只有单分区的组件会出现）。 */

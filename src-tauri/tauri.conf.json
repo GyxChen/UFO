@@ -84,6 +84,20 @@
         "transparent": true,
         "shadow": false,
         "skipTaskbar": false
+      },
+      {
+        "label": "plugin-log",
+        "title": "UFO · 插件日志",
+        "width": 1160,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 420,
+        "center": true,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "skipTaskbar": false
       }
     ],
     "trayIcon": {
@@ -95,10 +109,12 @@
     "security": {
       "csp": {
         "default-src": "'self' customprotocol: asset:",
-        "connect-src": "ipc: http://ipc.localhost",
-        "font-src": "'self",
-        "img-src": "'self' asset: http://asset.localhost blob: data:",
-        "style-src": "'unsafe-inline' 'self'"
+        "script-src": "'self' http://ufo-plugin.localhost",
+        "connect-src": "ipc: http://ipc.localhost http://ufo-plugin.localhost",
+        "font-src": "'self' http://ufo-plugin.localhost",
+        "img-src": "'self' asset: http://asset.localhost blob: data: http://ufo-plugin.localhost",
+        "style-src": "'unsafe-inline' 'self' http://ufo-plugin.localhost",
+        "frame-src": "'self' http://ufo-plugin.localhost ufo-plugin: https:"
       }
     }
   },

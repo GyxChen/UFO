@@ -1,10 +1,16 @@
 // @vitest-environment happy-dom
 
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import TooltipWindow from './TooltipWindow.vue'
-import { TOOLTIP_HOVER_EVENT, type TooltipHoverPayload } from '@/lib/tooltip'
+import { TOOLTIP_HOVER_EVENT, plugBlockHeight, type TooltipHoverPayload } from '@/lib/tooltip'
+import { pluginExtensions, type PluginExtensionSlot } from '@/lib/plugin-loader'
+import { useFloatingModulesStore } from '@/stores/floatingModules'
+
+/** 本用例的 pinia：`mount` 必须显式装上，否则组件里的 `useXxxStore()` 会拿到另一份实例。 */
+let pinia: Pinia
 
 /** 由测试修改的信息卡就绪状态；mock 里会换成一个 Vue ref 以便触发 computed。 */
 const testState = vi.hoisted(() => ({
@@ -68,7 +74,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 vi.mock('@/modules', async () => {
-  const { defineComponent, h, ref } = await import('vue')
+  const { computed, defineComponent, h, ref } = await import('vue')
   const hasContent = ref(true)
   testState.hasContent = hasContent
   const TooltipStub = defineComponent({
@@ -80,7 +86,8 @@ vi.mock('@/modules', async () => {
   })
 
   return {
-    FLOATING_MODULE_DEFINITIONS: [
+    // 消费点读的是 computed（合并注册表要能随装载重算），mock 保持同一形状。
+    FLOATING_MODULE_DEFINITIONS: computed(() => [
       {
         id: 'test-module',
         label: 'Test module',
@@ -94,7 +101,7 @@ vi.mock('@/modules', async () => {
           hasContent: (target: unknown) => hasContent.value && Boolean(target),
         },
       },
-    ],
+    ]),
   }
 })
 
@@ -136,13 +143,17 @@ function emitHover(payload: TooltipHoverPayload) {
 
 /** 挂载提示窗并等 onMounted 的默认尺寸与事件监听就绪。 */
 async function mountTooltip() {
-  const wrapper = mount(TooltipWindow)
+  const wrapper = mount(TooltipWindow, { global: { plugins: [pinia] } })
   await flushPromises()
   return wrapper
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 提示窗现在要读「这个包启用没有」，那是外壳 store 的数据，所以测试得有 pinia。
+  pinia = createPinia()
+  setActivePinia(pinia)
+  pluginExtensions.value = []
   tauri.listeners.clear()
   testState.hasContent!.value = true
 
@@ -154,6 +165,87 @@ beforeEach(() => {
   tauri.currentWindow.hide.mockResolvedValue(undefined)
   tauri.emitTo.mockResolvedValue(undefined)
   tauri.invoke.mockResolvedValue(undefined)
+})
+
+/** 插入块的替身组件：把拿到的 props 直接写进文本，好让断言看得见。 */
+const PlugStub = defineComponent({
+  name: 'PlugStub',
+  props: { target: { type: Object, required: true }, maxRows: { type: Number, required: true } },
+  setup: props => () => h('p', { class: 'plug-stub' }, `rows:${props.maxRows}`),
+})
+
+describe('信息卡的插入块（组件包往别人的卡尾部追加）', () => {
+  /** 造一块挂在 test-module 卡上的挂载位。 */
+  function plug(patch: Partial<PluginExtensionSlot> = {}): PluginExtensionSlot {
+    return {
+      hostId: 'test-module',
+      pluginId: 'balance-board',
+      label: '余额看板',
+      component: PlugStub,
+      maxRows: 2,
+      ...patch,
+    }
+  }
+
+  it('挂上来源标注，并把清单里的行数交给插件组件', async () => {
+    pluginExtensions.value = [plug()]
+    const wrapper = await mountTooltip()
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    await nextTick()
+
+    const plugs = wrapper.find('.tooltip-plugs')
+    expect(plugs.exists()).toBe(true)
+    expect(plugs.text()).toContain('插件 · 余额看板')
+    expect(wrapper.find('.plug-stub').text()).toBe('rows:2')
+  })
+
+  it('提示窗按插入块的预算长高', async () => {
+    pluginExtensions.value = [plug({ maxRows: 2 })]
+    const wrapper = await mountTooltip()
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    await nextTick()
+
+    // mock 的模块没声明 size ⇒ 基准是默认 300×260，加上一块的预算。
+    expect(tauri.currentWindow.setSize).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 300, height: 260 + plugBlockHeight(2) })
+    )
+    expect(wrapper.find('.tooltip-plugs').exists()).toBe(true)
+  })
+
+  it('挂在别人卡上的块不会串到这里', async () => {
+    pluginExtensions.value = [plug({ hostId: 'weather' })]
+    const wrapper = await mountTooltip()
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.find('.tooltip-plugs').exists()).toBe(false)
+  })
+
+  it('包被停用就整块不出现（启用状态读的是外壳配置）', async () => {
+    pluginExtensions.value = [plug()]
+    useFloatingModulesStore().applyConfig({
+      schema_version: 1,
+      revision: 1,
+      modules: [{ id: 'balance-board', enabled: false, order: 0 }],
+      module_settings: {},
+    })
+    const wrapper = await mountTooltip()
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.find('.tooltip-plugs').exists()).toBe(false)
+  })
+
+  it('块自己说没内容就不留一条空虚线', async () => {
+    pluginExtensions.value = [plug({ hasContent: () => false })]
+    const wrapper = await mountTooltip()
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.find('.tooltip-plugs').exists()).toBe(false)
+  })
 })
 
 describe('TooltipWindow transitions', () => {

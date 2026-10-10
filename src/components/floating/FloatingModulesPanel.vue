@@ -9,6 +9,7 @@
 import { computed, ref, watch } from 'vue'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
 import AboutPanel from '@/components/AboutPanel.vue'
+import PluginManagerCard from '@/components/plugins/PluginManagerCard.vue'
 import FloatingShapePreview from './FloatingShapePreview.vue'
 import { FLOATING_BASE_CELL_PX, MAX_CELL_PX, MIN_CELL_PX, clampCellPx } from '@/lib/floating-layout'
 import {
@@ -32,7 +33,7 @@ const emit = defineEmits<{
 const modules = useFloatingModulesStore()
 
 /** 列表顺序 = 配置里的 order；含未启用的组件，否则没法再打开它们。 */
-const definitions = computed(() => orderedModuleDefinitions(modules.config, FLOATING_MODULE_DEFINITIONS))
+const definitions = computed(() => orderedModuleDefinitions(modules.config, FLOATING_MODULE_DEFINITIONS.value))
 /** 当前形态下的运行时数据（各组件占几格、窗口共几格）；还没收到广播时为 null。 */
 const currentRuntime = computed(() => {
   const snapshot = modules.runtime
@@ -284,5 +285,11 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
         />
       </section>
     </div>
+
+    <!--
+      插件管理：压在两列下面的**满宽**卡（`grid-column: 1 / -1`，见 main.css）。
+      它排在注册表合并之后，所以这里的启用开关与上方组件列表写的是同一个 `order` / `enabled`。
+    -->
+    <PluginManagerCard />
   </div>
 </template>

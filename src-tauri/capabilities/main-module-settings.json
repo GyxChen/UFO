@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-module-settings",
   "description": "Write access for floating module settings in the main window and the panel windows it opens.",
-  "windows": ["main", "status-log"],
+  "windows": ["main", "status-log", "plugin-log"],
   "permissions": [
     "allow-set-floating-module-config",
     "allow-manage-endpoint-profiles",
@@ -13,6 +13,9 @@
     "allow-manage-session-records",
     "allow-manage-status-log",
     "dialog:allow-save",
+    "allow-manage-plugins",
+    "allow-manage-plugin-logs",
+    "dialog:allow-open",
     "allow-search-weather-city",
     "allow-test-weather-connection",
     "allow-manage-weather-secret",

@@ -108,6 +108,8 @@
      同一色读成**文字**时用 `-text` 变体 —— 浅底上黄 / 蓝 / 红都得加深才读得清。 */
   --ufo-status-green: #34d399;
   --ufo-status-yellow: #fbbf24;
+  /* 黄色档的弱底：徽标 / 调试读数用（与 --ufo-danger-soft 同一类角色）。 */
+  --ufo-status-yellow-soft: rgba(251, 191, 36, 0.16);
   --ufo-status-red: #f87171;
   --ufo-status-blue: #60a5fa;
   --ufo-status-green-text: #34d399;
@@ -199,6 +201,7 @@
   /* —— 状态色：填充保持鲜艳，文字一律加深 —— */
   --ufo-status-green-text: #047857;
   --ufo-status-yellow-text: #a16207;
+  --ufo-status-yellow-soft: rgba(161, 98, 7, 0.14);
   --ufo-status-red-text: #dc2626;
   --ufo-status-blue-text: #2563eb;
 
@@ -1459,4 +1462,274 @@ textarea {
   .agent-status-module__item.is-flashing .agent-status-module__dot {
     animation: none;
   }
+}
+
+/*
+ * 齿轮页的「插件管理」：压在两列下面的满宽卡（`grid-column: 1 / -1`），内部再分左右两栏。
+ * 颜色一律走 token，不新增灰色系；行版式复用上面的 `.module-row` 槽位。
+ */
+.module-catalog > .plugin-manager {
+  grid-column: 1 / -1;
+}
+
+.plugin-manager {
+  @apply flex w-full flex-col gap-3;
+}
+
+.plugin-manager__head-actions {
+  @apply flex shrink-0 items-center gap-2.5;
+}
+
+.plugin-manager__grid {
+  @apply grid w-full gap-3;
+  grid-template-columns: minmax(300px, 1fr) minmax(0, 1.05fr);
+}
+
+@media (max-width: 760px) {
+  .plugin-manager__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.plugin-manager__column {
+  @apply flex min-w-0 flex-col gap-2;
+}
+
+/* 行首整块是个按钮：点一行就选中它，右栏跟着换。 */
+.plugin-manager__pick {
+  @apply flex min-w-0 flex-1 items-center gap-2 rounded-lg border-0 bg-transparent p-0 text-left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.plugin-manager__row--sel {
+  border-color: var(--ufo-accent);
+}
+
+.plugin-manager__order {
+  @apply flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[11px];
+  background: var(--ufo-accent-soft);
+  color: var(--ufo-accent-text);
+}
+
+.plugin-manager__badge {
+  @apply inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10.5px];
+  background: var(--ufo-input);
+  color: var(--ufo-muted);
+}
+
+/* 调试中用黄档：与「热重载」在状态色里的既有语义一致。 */
+.plugin-manager__badge--debug {
+  background: var(--ufo-status-yellow-soft);
+  color: var(--ufo-status-yellow-text);
+}
+
+.plugin-manager__drop {
+  @apply flex w-full flex-col gap-1 rounded-lg px-3 py-3 text-[11.5px];
+  background: var(--ufo-surface-2);
+  border: 1px dashed var(--ufo-border-strong);
+  color: var(--ufo-muted);
+  cursor: pointer;
+}
+
+.plugin-manager__drop:hover {
+  color: var(--ufo-text);
+}
+
+.plugin-manager__drop-sub {
+  @apply text-[10.5px];
+  opacity: 0.85;
+}
+
+.plugin-manager__empty {
+  @apply text-[11.5px];
+  color: var(--ufo-muted);
+}
+
+.plugin-manager__detail {
+  @apply flex flex-col gap-2 rounded-lg p-3;
+  background: var(--ufo-surface-2);
+}
+
+.plugin-manager__detail-head {
+  @apply flex flex-wrap items-baseline gap-2;
+}
+
+.plugin-manager__detail-title {
+  @apply text-[13px] font-semibold;
+}
+
+.plugin-manager__meta {
+  @apply text-[11px];
+  color: var(--ufo-muted);
+}
+
+.plugin-manager__desc {
+  @apply text-[12px] leading-relaxed;
+}
+
+.plugin-manager__reason {
+  @apply text-[11.5px] leading-relaxed;
+  color: var(--ufo-status-red-text);
+}
+
+.plugin-manager__sub {
+  @apply text-[11px] font-semibold;
+  color: var(--ufo-muted);
+}
+
+/* 权限徽标：一枚一格，图标 + 名字；配色档来自 Rust 注册表的 tone，不在这里另判。 */
+.plugin-manager__perms {
+  @apply m-0 flex list-none flex-wrap gap-1.5 p-0;
+}
+
+.plugin-manager__perms li {
+  @apply inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10.5px];
+  background: var(--ufo-input);
+  color: var(--ufo-muted);
+}
+
+.plugin-manager__perms li[data-tone='danger'] {
+  background: var(--ufo-danger-soft);
+  color: var(--ufo-status-red-text);
+}
+
+.plugin-manager__perms li[data-tone='caution'] {
+  background: var(--ufo-status-yellow-soft);
+  color: var(--ufo-status-yellow-text);
+}
+
+.plugin-manager__hosts,
+.plugin-manager__warns {
+  @apply text-[11px] leading-relaxed;
+  color: var(--ufo-muted);
+}
+
+.plugin-manager__warns {
+  @apply m-0 flex list-none flex-col gap-0.5 p-0;
+  color: var(--ufo-status-yellow-text);
+}
+
+.plugin-manager__debug {
+  @apply flex flex-col gap-2 rounded-lg p-3;
+  background: var(--ufo-surface);
+  border: 1px solid var(--ufo-border);
+}
+
+.plugin-manager__debug-head {
+  @apply flex items-center gap-2;
+}
+
+.plugin-manager__status {
+  @apply text-[11.5px] leading-relaxed;
+  color: var(--ufo-muted);
+  /* 读数常驻：为空时不能塌成一块空白（AGENTS.md「读数不许藏进 hover」）。 */
+  min-height: 16px;
+}
+
+.plugin-manager__status--ok {
+  color: var(--ufo-status-green-text);
+}
+
+.plugin-manager__actions {
+  @apply flex items-center gap-2;
+}
+
+.plugin-manager__actions .base-button:last-child {
+  margin-left: auto;
+}
+
+/* 调试卡里的最近日志：读数常驻（不藏进 hover），完整流水走独立窗。 */
+.plugin-manager__log-head {
+  @apply flex items-center gap-2 text-[11px];
+  color: var(--ufo-muted);
+}
+
+.plugin-manager__log-head .base-button {
+  margin-left: auto;
+}
+
+.plugin-manager__plog {
+  @apply m-0 flex list-none flex-col gap-0.5 p-0;
+}
+
+.plugin-manager__plog li {
+  @apply grid items-baseline gap-1.5 text-[11px];
+  grid-template-columns: 58px 40px 1fr;
+}
+
+.plugin-manager__plog-time {
+  @apply tabular-nums;
+  color: var(--ufo-muted);
+}
+
+.plugin-manager__plog-level {
+  @apply text-[10.5px] font-semibold;
+}
+
+.plugin-manager__plog-level[data-level='error'] {
+  color: var(--ufo-status-red-text);
+}
+
+.plugin-manager__plog-level[data-level='warn'] {
+  color: var(--ufo-status-yellow-text);
+}
+
+.plugin-manager__plog-level[data-level='info'] {
+  color: var(--ufo-status-blue-text);
+}
+
+.plugin-manager__plog-msg,
+.plugin-manager__plog-empty {
+  @apply text-[11px];
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.plugin-manager__plog-empty {
+  color: var(--ufo-muted);
+  white-space: normal;
+}
+
+/*
+ * 信息卡里的「插入块」：组件包往别人的卡尾部追加的一块。
+ * 高度预算与 `lib/tooltip.ts` 的 TOOLTIP_PLUG_* 三个数同源（改这里要改那边，spec 会红）。
+ */
+.tooltip-plugs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--ufo-border-strong);
+}
+
+.tooltip-plug {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tooltip-plug__source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-height: 16px;
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--ufo-muted);
+}
+
+/* 来源必须常驻标出来：这块不是宿主写的，用户得能一眼看出是谁塞的。 */
+.tooltip-plug__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: 10.5px;
+  border-radius: 999px;
+  background: var(--ufo-input);
+  color: var(--ufo-muted);
 }

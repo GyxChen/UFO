@@ -5,8 +5,10 @@ import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, monitorFromPoint, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window'
 import {
   clampTooltipSize,
+  extendTooltipSizeForPlugs,
   placeTooltip,
   resolveTooltipDefinition,
+  resolveTooltipExtensions,
   resolveTooltipSize,
   TOOLTIP_HOVER_EVENT,
   TOOLTIP_INTERACTION_EVENT,
@@ -14,6 +16,8 @@ import {
 } from '@/lib/tooltip'
 import type { FloatingModuleDefinition } from '@/lib/floating-modules'
 import { FLOATING_MODULE_DEFINITIONS } from '@/modules'
+import { pluginExtensions } from '@/lib/plugin-loader'
+import { useFloatingModulesStore } from '@/stores/floatingModules'
 
 /**
  * 悬停信息提示窗（三个窗口里的第三个）。
@@ -45,7 +49,7 @@ const activeDefinition = computed(() => {
   const payload = hover.value
   const target = payload?.target
   if (!payload?.visible || !target) return null
-  const definition = resolveTooltipDefinition(FLOATING_MODULE_DEFINITIONS, target)
+  const definition = resolveTooltipDefinition(FLOATING_MODULE_DEFINITIONS.value, target)
   if (!definition) return null
   return definition.tooltip?.hasContent?.(target) === false ? null : definition
 })
@@ -57,6 +61,20 @@ const content = computed(() => {
   if (!tooltip || !target) return null
   return { component: tooltip.component, target }
 })
+
+const modules = useFloatingModulesStore()
+
+/**
+ * 该往这张卡尾部追加的插入块（组件包声明的 `surfaces.extension`）。
+ *
+ * 外壳只按「目标模块是谁 + 那个包有没有启用 + 块自己有没有内容」筛，
+ * 不认识里面写的是什么字段 —— 提示窗因此仍然不认识任何模块。
+ */
+const plugSlots = computed(() =>
+  resolveTooltipExtensions(pluginExtensions.value, hover.value?.target, pluginId =>
+    modules.moduleEnabled(pluginId, true)
+  )
+)
 
 /**
  * 决定显隐的标识（`模块 id:目标 key`）。
@@ -115,6 +133,8 @@ function enqueueTransition(task: () => Promise<void>) {
  * `size` 可以是「按悬停目标算」的函数：折叠清单要按行数长高才装得下全部行，
  * 所以这里先把目标交给模块算出想要的尺寸，再夹进工作区（比屏幕还高的窗口没法看）。
  * 未声明尺寸时把窗口还原成默认尺寸 —— 上一个内容可能把它撑大过。
+ *
+ * ⚠️ 插入块是外壳追加的，模块不知道会被追加几块，所以那部分预算在这里加完再一起夹。
  */
 async function applyTooltipSize(
   definition: FloatingModuleDefinition,
@@ -122,8 +142,9 @@ async function applyTooltipSize(
   workArea: PhysicalSize
 ) {
   const declared = resolveTooltipSize(definition.tooltip, target)
-  const size = declared ? clampTooltipSize(declared, workArea) : defaultSize
-  if (!size) return
+  const base = declared ?? defaultSize
+  if (!base) return
+  const size = clampTooltipSize(extendTooltipSizeForPlugs(base, plugSlots.value), workArea)
   try {
     await window.setSize(new PhysicalSize(size.width, size.height))
   } catch (error) {
@@ -148,7 +169,9 @@ async function present(request: PresentRequest) {
     size: { width: monitor.workArea.size.width, height: monitor.workArea.size.height },
   }
 
-  await applyTooltipSize(definition, target, workArea.size)
+  // 夹尺寸要用监视器给的那份原物：自己按字面量重拼一份 `{width,height}` 在类型上不是
+  // Tauri 的 `PhysicalSize`（那是个类），运行时凑巧一样而已。
+  await applyTooltipSize(definition, target, monitor.workArea.size)
   if (!isPresentRequestCurrent(request)) return
 
   const size = await window.outerSize()
@@ -191,7 +214,7 @@ watch(
     const generation = ++transitionGeneration
     const target = payload.target
     const definition =
-      displayKey.value && payload.visible ? resolveTooltipDefinition(FLOATING_MODULE_DEFINITIONS, target) : null
+      displayKey.value && payload.visible ? resolveTooltipDefinition(FLOATING_MODULE_DEFINITIONS.value, target) : null
 
     if (!payload.visible || !target || !definition || !hasTooltipContent(definition, target)) {
       enqueueTransition(() => hide(generation))
@@ -228,5 +251,21 @@ onBeforeUnmount(() => {
   >
     <!-- 内容由模块提供（每个组件自带的信息卡）；多根节点渲染，外壳样式不用为谁调整。 -->
     <component :is="content.component" v-if="content" :target="content.target" />
+
+    <!--
+      插入块：组件包往这张卡尾部追加的一块（清单里的 `surfaces.extension`）。
+      外壳只管三件事 —— 挂到谁的卡上、那个包启用没有、这块此刻有没有内容；
+      里面渲染什么字段不认识。
+      ⚠️ 宿主模块自己得声明了信息卡，这块才有地方落：没有卡的模块不会弹提示窗（这是刻意的，
+      否则「装个包就能让任何模块都弹窗」会变成一条谁都能开的口子）。
+    -->
+    <section v-if="content && plugSlots.length" class="tooltip-plugs">
+      <div v-for="slot in plugSlots" :key="slot.pluginId" class="tooltip-plug">
+        <p class="tooltip-plug__source">
+          <span class="tooltip-plug__badge">插件 · {{ slot.label }}</span>
+        </p>
+        <component :is="slot.component" :target="content.target" :max-rows="slot.maxRows" />
+      </div>
+    </section>
   </div>
 </template>
