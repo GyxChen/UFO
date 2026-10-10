@@ -31,11 +31,20 @@ const props = withDefaults(
   defineProps<{
     /** 当前悬浮窗形态，由外壳按贴边状态推出 */
     layoutMode: FloatingLayout
-    /** 可挂载的模块清单；默认取注册表，测试可注入替身 */
+    /** 可挂载的模块清单；不给就取注册表，测试可注入替身 */
     definitions?: FloatingModuleDefinition[]
   }>(),
-  { definitions: () => FLOATING_MODULE_DEFINITIONS.value }
+  { definitions: undefined }
 )
+
+/**
+ * 此刻有哪些模块可挂：不给替身就取注册表。
+ *
+ * ⚠️ 这里必须是 `computed`，不能写成 prop 的默认值工厂：Vue 只在 setup 里求一次默认值，
+ * 而组件包是**异步**装载的 —— 悬浮窗挂载那一刻注册表里只有内置模块，
+ * 之后整份换掉的清单再也进不来（表现：包装上了、徽标也齐，但悬浮窗就是少一格）。
+ */
+const definitions = computed(() => props.definitions ?? FLOATING_MODULE_DEFINITIONS.value)
 
 const emit = defineEmits<{
   /** 汇总后的窗口格子数（当前形态） */
@@ -49,7 +58,7 @@ const emit = defineEmits<{
 const modules = useFloatingModulesStore()
 
 /** 此刻该挂载的模块：已启用 + 支持当前形态，按配置里的 order 排列。 */
-const activeModules = computed(() => enabledModuleDefinitions(modules.config, props.definitions, props.layoutMode))
+const activeModules = computed(() => enabledModuleDefinitions(modules.config, definitions.value, props.layoutMode))
 /** 当前形态下各模块的需求，供分槽与窗口尺寸共用（一次求值，避免重复调用需求函数）。 */
 const currentDemands = computed(() =>
   activeModules.value.map(definition => moduleDemand(definition, props.layoutMode))
@@ -62,7 +71,7 @@ const windowCells = computed(() => resolveWindowCells(currentDemands.value, ABS_
 const allocations = computed(() => weights.value.map((_, index) => allocatedCells(windowCells.value, weights.value, index)))
 /** 全部形态的运行时快照：给主窗口做组件徽标与三形态预览（含当前形态，便于列表标注）。 */
 const runtime = computed(() =>
-  runtimeSnapshot(props.layoutMode, modules.config, props.definitions, () => ABS_MAX_CELLS)
+  runtimeSnapshot(props.layoutMode, modules.config, definitions.value, () => ABS_MAX_CELLS)
 )
 
 /**

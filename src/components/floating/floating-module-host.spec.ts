@@ -2,7 +2,7 @@
 
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, inject } from 'vue'
 import FloatingModuleHost from './FloatingModuleHost.vue'
 import { floatingModuleKey } from '@/lib/floating-module-context'
@@ -13,6 +13,34 @@ import type {
   FloatingRuntimeSnapshot,
 } from '@/lib/floating-modules'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
+
+/**
+ * 注册表替身：宿主**不注入 `definitions`** 时读的就是这一份。
+ *
+ * 为什么要替身而不是直接用 `@/modules` 那份真注册表：真表里是内置模块（各自要 store 与 IPC），
+ * 宿主单测要验的只是「清单换了宿主跟不跟」，把三个真模块装进测试进程只会引入无关失败。
+ */
+const { registry, handOver } = vi.hoisted(() => {
+  let held: { value: unknown[] } | undefined
+  return {
+    /** 测试取用：换掉 `.value` 就等于换掉整份注册表。 */
+    registry: () => {
+      if (!held) throw new Error('注册表替身没建起来：vi.mock 的工厂没跑')
+      return held
+    },
+    /** mock 工厂把建好的那一份交出来（工厂只在首次 import 时跑一次）。 */
+    handOver: (ref: { value: unknown[] }) => {
+      held = ref
+    },
+  }
+})
+
+vi.mock('@/modules', async () => {
+  const { shallowRef } = await import('vue')
+  const ref = shallowRef<unknown[]>([])
+  handOver(ref)
+  return { FLOATING_MODULE_DEFINITIONS: ref, BUILTIN_MODULE_DEFINITIONS: [] }
+})
 
 /**
  * 假模块：像真模块一样注入 floatingModuleKey，
@@ -74,13 +102,21 @@ const config = (extraEnabled: boolean, cellPx?: number): FloatingModuleConfig =>
 /** 装配一次宿主：注入 pinia 与模块清单，并按形态挂载。 */
 function mountHost(
   layoutMode: FloatingLayout,
-  options: { extraEnabled?: boolean; definitions?: FloatingModuleDefinition[]; cellPx?: number } = {}
+  options: {
+    extraEnabled?: boolean
+    definitions?: FloatingModuleDefinition[]
+    cellPx?: number
+    /** 不给 `definitions` 这条 prop：宿主该自己去读注册表（真窗里走的就是这条路）。 */
+    fromRegistry?: boolean
+  } = {}
 ) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useFloatingModulesStore().applyConfig(config(options.extraEnabled ?? true, options.cellPx))
   return mount(FloatingModuleHost, {
-    props: { layoutMode, definitions: options.definitions ?? definitions },
+    props: options.fromRegistry
+      ? { layoutMode }
+      : { layoutMode, definitions: options.definitions ?? definitions },
     global: { plugins: [pinia] },
   })
 }
@@ -94,6 +130,11 @@ function lastCells(wrapper: ReturnType<typeof mountHost>): number {
 describe('FloatingModuleHost', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    // 注册表替身是模块级状态：不清会把上一条测试的清单带进下一条。
+    registry().value = []
   })
 
   it('mounts peer modules and sums their cell demands into the window size', async () => {
@@ -224,5 +265,41 @@ describe('FloatingModuleHost', () => {
     expect(wrapper.get<HTMLElement>('.floating-module-host').element.style.getPropertyValue('--floating-cell-scale')).toBe(
       '1.422'
     )
+  })
+
+  it('不注入清单时读注册表，并且注册表晚到也要跟上', async () => {
+    // 真窗里没有人给宿主传清单（那条路只有测试走），它读的是注册表；
+    // 而组件包是**异步**装载的 —— 悬浮窗挂载那一刻注册表里只有内置模块，
+    // 晚到的那一份如果进不了格子账，表现就是「包装上了、徽标也齐，但悬浮窗少一格」。
+    registry().value = []
+    const wrapper = mountHost('square', { fromRegistry: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.stub')).toHaveLength(0)
+
+    registry().value = [{ ...definitions[0], id: 'late', demand: () => 2 }]
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.findAll('.stub').map(item => item.text())).toEqual(['square:2'])
+    expect(lastCells(wrapper)).toBe(2)
+  })
+
+  it('格子用 Symbol.for 的那枚键上报悬停（组件包产物走的正是这一条）', async () => {
+    // 组件包的 JS 是另一份产物，拿不到宿主的 `floatingModuleKey` 变量本身，
+    // 只能按注册表名取键 —— 所以这里刻意不用 import 的那一枚，模拟「外来的」组件。
+    const ForeignCell = defineComponent({
+      name: 'ForeignCell',
+      setup: () => {
+        const api = inject(Symbol.for('ufo.floating.module')) as { reportHover: (key: string | null) => void } | null
+        return () =>
+          h('button', { class: 'foreign', onPointerenter: () => api?.reportHover('from-plugin') }, 'f')
+      },
+    })
+    registry().value = [{ ...definitions[0], id: 'foreign', component: ForeignCell, demand: () => 1 }]
+
+    const wrapper = mountHost('square', { fromRegistry: true })
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.foreign').trigger('pointerenter')
+
+    expect(wrapper.emitted('hover')?.at(-1)).toEqual([{ moduleId: 'foreign', key: 'from-plugin' }])
   })
 })

@@ -1,15 +1,17 @@
 /**
- * 合并注册表：台账里的包 → 外壳认识的 `FloatingModuleDefinition`。
+ * 合并注册表：安装记录里的包 → 外壳认识的 `FloatingModuleDefinition`。
  *
  * 三条规矩：
  * 1. **装载失败也要留下读数**：某一条挂不上只让它自己降级（记进 `pluginLoadErrors`），
  *    其余包照常挂 —— 一个坏包不能让悬浮窗整块空掉。
  * 2. **清单没声明的挂载点不去取**：作者没声明 `surfaces.cell` 就不会占格子，
  *    哪怕入口导出了 `cell` 也忽略（声明是承诺，导出是实现，外壳只按承诺分配空间）。
- * 3. **顺序 = 台账顺序**，与内置模块的先后由配置的 `order` 统一排（外壳负责）。
+ * 3. **顺序 = 安装记录顺序**，与内置模块的先后由配置的 `order` 统一排（外壳负责）。
  */
 
 import { defineComponent, h, provide, shallowRef, type Component } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   FLOATING_LAYOUTS,
   type FloatingModuleDefinition,
@@ -52,7 +54,7 @@ let devSyncSequence = 0
 export interface PluginLoaderDeps {
   /** 取并执行入口（`version` 是开发期热重载的缓存击穿串，正式包为 undefined）。 */
   importEntry?: (id: string, entry: string, version?: string) => Promise<PluginEntryResult>
-  /** 上报装载耗时（读台账用，不参与渲染）。 */
+  /** 上报装载耗时（读安装记录用，不参与渲染）。 */
   reportLoadMs?: (id: string, loadMs: number) => void
 }
 
@@ -92,7 +94,7 @@ function demandOf(cells: number) {
 }
 
 /**
- * 把「台账记录 + 入口导出」拼成一条外壳定义。
+ * 把「安装记录 + 入口导出」拼成一条外壳定义。
  *
  * 返回 `null` = 这个包一个可用挂载点都没有（不挂进任何窗口，原因写进 `pluginLoadErrors`）。
  *
@@ -234,6 +236,7 @@ export async function syncPluginDefinitions(
     const result = await importEntry(record.id, record.manifest!.entry, versionOf(record))
     if (!result.ok) {
       errors[record.id] = result.reason
+      reportLoadFailure(record.id, result.reason)
       deps.reportLoadMs?.(record.id, result.loadMs)
       continue
     }
@@ -265,4 +268,31 @@ export function clearPluginDefinitions() {
   pluginDefinitions.value = []
   pluginExtensions.value = []
   pluginLoadErrors.value = {}
+}
+
+/**
+ * 把装载失败写进这个包自己的日志通道。
+ *
+ * 为什么不能只留在 `pluginLoadErrors`：那份读数**活在出事的那个窗口里**，
+ * 而悬浮窗 / 提示窗一块插件界面都没有 —— 表现就是「装上了、徽标也齐，但格子凭空少一个」，
+ * 用户在管理区看到的还是上一次成功时的样子。日志是唯一跨窗口的落点（`log` 不需要权限）。
+ * 字段里带窗口 label：同一个包可能只在某一扇窗里挂不上（产物只有一份，装载却每窗各import一次）。
+ */
+function reportLoadFailure(id: string, reason: string) {
+  let label = 'unknown'
+  try {
+    label = getCurrentWindow().label
+  } catch {
+    // 测试进程与 IPC 不可用时没有窗对象：照常写，只是分不清出自哪扇窗。
+  }
+  try {
+    void invoke('plugin_log_write', {
+      id,
+      level: 'error',
+      msg: `装载失败：${reason}`,
+      fields: { window: label },
+    }).catch(() => {})
+  } catch {
+    // 命令层不可用（非 Tauri 环境）：装载链不该因为报不出错而中断。
+  }
 }

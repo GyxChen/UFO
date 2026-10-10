@@ -15,8 +15,14 @@ export interface FloatingModuleApi {
   reportHover: (key: string | null) => void
 }
 
-/** 宿主注入给单个模块的上下文 key。 */
-export const floatingModuleKey: InjectionKey<FloatingModuleApi> = Symbol('floating-module')
+/**
+ * 宿主注入给单个模块的上下文 key。
+ *
+ * ⚠️ 必须是 `Symbol.for` 而不是 `Symbol()`：组件包的产物是**另一份 JS**，拿不到宿主的模块作用域，
+ * 只有全局符号注册表能让它在 `inject()` 时对上同一枚键（`PLUGIN_HOST_KEY` 同一个手法）。
+ * 这一条不通，插件的格子就报不出「我正被悬停」—— 它自己那张信息卡永远不会弹。
+ */
+export const floatingModuleKey: InjectionKey<FloatingModuleApi> = Symbol.for('ufo.floating.module')
 
 /** 悬停目标：哪个模块的哪个对象（key 由模块自己定义与解释，外壳只当字符串转发）。 */
 export interface FloatingHoverTarget {
