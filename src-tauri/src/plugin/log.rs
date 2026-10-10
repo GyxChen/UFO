@@ -251,8 +251,9 @@ fn append_line(dir: &Path, line: &LogLine) {
     };
     match OpenOptions::new().create(true).append(true).open(&file) {
         Ok(mut handle) => {
-            // 写失败不影响环形缓冲里的读数，这里就只当没发生（日志不该反过来弄坏功能）。
-            let _ = handle.write_all(text.as_bytes()).and_then(|_| handle.write_all(b"\n"));
+            // ⚠️ 正文与换行必须**一次** `write_all`：分两次写时，几扇窗同一瞬间追加会交错成
+            // 「A 的正文 + B 的正文 + 一个换行」，那份 JSONL 从此按行解析不动（实测粘出过两条）。
+            let _ = handle.write_all(format!("{text}\n").as_bytes());
         }
         Err(_) => {}
     }
@@ -342,6 +343,37 @@ mod tests {
     /// 造一条日志。
     fn line(level: &str, msg: &str, ts: u64) -> LogLine {
         LogLine { ts, level: level.to_string(), msg: msg.to_string(), fields: None, trace_id: None }
+    }
+
+    #[test]
+    fn concurrent_appends_stay_line_oriented() {
+        // 三扇窗同时 `activate` 就是同时往同一个文件追加：交错一次，整份历史就按行读不出来了。
+        let root = temp_root("race");
+        let dir = paths::plugin_log_dir(&root, "racer");
+        let workers: Vec<_> = (0..8u32)
+            .map(|id| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    for index in 0..64u32 {
+                        append_line(&dir, &line("info", &format!("t{id}-{index}"), 1_700_000_000_000));
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            let _ = worker.join();
+        }
+
+        let mut seen = 0usize;
+        for file in list_day_files(&dir) {
+            let text = fs::read_to_string(file).expect("日志文件读不出来");
+            for raw in text.lines().filter(|row| !row.is_empty()) {
+                let parsed: LogLine = serde_json::from_str(raw).expect("有一行不是完整 JSON：追加被交错写坏了");
+                assert!(parsed.msg.starts_with('t'), "读出一行不像记录的：{raw}");
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 8 * 64, "行数对不上：有记录被粘在一起或写丢了");
     }
 
     #[test]
