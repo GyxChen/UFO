@@ -4,6 +4,10 @@
 `src/index.js` 的导出。宿主侧的完整约束与能力边界写在
 `reference/doc/guide/plugin-guide.md`（这份只讲怎么跑起来）。
 
+**这一版宿主到底提供什么**（清单 `permissions` 能写哪些名字、每个名字对应 `host` 上哪些方法、
+入口要导出哪些字段、上限是多少）全在 `CAPABILITIES.md` —— 那份是 `/create-plugin-template`
+从宿主源码整理出来的，别手改，宿主能力变了它自己的 spec 会红。
+
 ## 跑起来
 
 ```bash
@@ -21,6 +25,7 @@ yarn dev            # 监听构建：改一次 .vue 就重出 dist/my-plugin/
 
 ```
 public/plugin.json      清单（构建时整份拷进产物，宿主读的就是它）
+CAPABILITIES.md         这版宿主的能力与 API（生成物，见上面那段）
 src/index.js            入口：默认导出四个挂载点的组件 + activate(host)，样式也在这里挂
 src/Cell.vue            悬浮窗格子里的那一块
 src/TooltipCard.vue     悬停自己格子时的独立信息卡
@@ -41,8 +46,9 @@ vite.config.mjs         单文件产出 + 把 vue/pinia 换成宿主注入的那
    自检一句话：产物里要能 `grep` 到 `__UFO_VUE__`，且不能出现 `@vue/shared`。
 2. **把样式写在 `.vue` 的 `<style>` 里**。清单只有一个 `entry`（一个 JS 产物），
    构建额外产出的 `.css` 没人去取，表现是「组件挂上了但完全没样式」。样式集中在
-   `src/styles.css`，由入口以 `import styles from './styles.css?inline'` 带进来，
-   在 `activate()` 里挂一个带 id 的 `<style>`（每个窗口都会各调一次 activate，id 就是幂等键）。
+   `src/styles.css`，由入口以 `import styles from './styles.css?inline'` 带进来，在**模块顶层**
+   挂一个带 id 的 `<style>`（热重载只重新 import，不会重跑同一个包的 `activate()`，
+   挂在 `activate()` 里会表现为「类名对了、样子没变」）。
 3. **在模块顶层 `inject`**。顶层只有 `activate(host)` 拿到的那一份是准的；
    组件里要 host 就在 `<script setup>` 里 `useHost()`。
 4. **写死格子尺寸**。槽位高度随贴边形态变（方形未贴边时一格可能只有十几像素高），
