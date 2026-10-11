@@ -197,9 +197,6 @@ async function onPointerMove(event: PointerEvent) {
   dismissTooltip()
   try {
     await window.startDragging()
-    // startDragging() 走的是 Windows 标题栏移动循环（tao 发 WM_NCLBUTTONDOWN/HTCAPTION），
-    // 循环收尾时系统把窗口请出 topmost 带 —— 拖一次掉一次置顶，之后窗口就压在别的窗下面。
-    repinTopmost()
     // 原生拖拽循环会吞掉松手的 pointerup，改由轮询物理按键状态补做贴边。
     startDragReleasePolling()
   } catch (error) {
@@ -209,12 +206,13 @@ async function onPointerMove(event: PointerEvent) {
 }
 
 /**
- * 拖完补回置顶。
+ * 把置顶补回来，只能在**松手且贴边重算落定之后**调用（现在挂在 `scheduleSnap` 的防抖回调尾部）。
  *
- * ⚠️ 必须**先关再开**：系统只清了 `WS_EX_TOPMOST` 样式位，tao 内部的 `ALWAYS_ON_TOP` 标志仍是 true，
- * 而它改样式是按「标志有没有变」决定的（`WindowState::apply_diff` 里 diff 为空直接 return），
- * 所以单发「开」是个空操作，补不回置顶。
- * 单独一个函数（自带 catch）：补置顶失败不该连带把松手贴边的轮询也跳过。
+ * ⚠️ 不能跟在 `startDragging()` 后面：tao 的 `drag_window()` 只是 `PostMessageW(WM_NCLBUTTONDOWN)`
+ * 就返回，await 到结果时原生移动循环还没开始，而清掉 `WS_EX_TOPMOST` 的是循环收尾 —— 补早了等于没补。
+ * ⚠️ 必须先关再开：样式位被系统清了，tao 内部的 `ALWAYS_ON_TOP` 标志仍是 true，而它只在标志**变化**时
+ * 才下发样式（`WindowState::apply_diff` 里 diff 为空直接 return），所以单发「开」是空操作。
+ * 同一条理由也决定了**不许**拿 `isAlwaysOnTop()` 当门控：它读的就是那个恒为 true 的内部标志，一当门这里就成死代码。
  */
 function repinTopmost() {
   void window
@@ -349,9 +347,13 @@ function scheduleSnap() {
     if (dragging.value) {
       return
     }
-    void snapWindow().catch(error => {
-      console.error('failed to snap floating window', error)
-    })
+    // 贴边落定这一刻原生移动循环已经退出，顺手把置顶补回来（见 repinTopmost 的说明）。
+    // 排在 catch 之后：吸附成不成立与置顶是两件事，失败也要补。
+    void snapWindow()
+      .catch(error => {
+        console.error('failed to snap floating window', error)
+      })
+      .then(repinTopmost)
   }, 140)
 }
 

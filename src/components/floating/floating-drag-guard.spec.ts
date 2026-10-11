@@ -8,9 +8,9 @@
  *
  * ⚠️ `-webkit-user-drag` **不继承**：只写在 `.floating-launcher` 上等于没写，必须带上后代选择器。
  *
- * 第二件事：拖完必须把置顶补回来。`startDragging()` 走 Windows 的标题栏移动循环，循环收尾时系统
- * 会清掉 `WS_EX_TOPMOST`（实测拖一次掉一次），而补置顶要先 `false` 再 `true` 才有效（tao 按标志差异
- * 下发样式），并且这条 IPC 需要 capability 授权 —— 三处任一漏掉都是「静默不生效」。
+ * 第二件事：拖完要把置顶补回来，而且只能在**松手且贴边落定之后**补。为什么是这个时机、为什么必须先关
+ * 再开，唯一落点写在 `FloatingWindow.vue` 的 `repinTopmost()` 注释上，这里只锁调用点确实挂在那儿。
+ * 补置顶走的 IPC 还要 capability 授权，漏授权同样是静默不生效。
  */
 import { describe, expect, it } from 'vitest'
 import css from '../../assets/main.css?raw'
@@ -31,15 +31,37 @@ describe('悬浮外壳拖动手势护栏', () => {
 })
 
 describe('拖完补置顶的护栏', () => {
-  it('re-pins topmost after the drag loop, toggling off then on', () => {
-    const drag = shell.indexOf('startDragging()')
+  it('re-pins after the snap settles, not when the drag starts', () => {
+    const snap = shell.indexOf('void snapWindow()')
+    const repin = shell.indexOf('.then(repinTopmost)')
+
+    expect(snap, '贴边重算的调用点找不到了').toBeGreaterThan(-1)
+    expect(repin, '没有补置顶，或没挂在贴边重算之后').toBeGreaterThan(snap)
+    // 补置顶排在 catch 之后：吸附失败那一次也得补，否则那条路径又把置顶空出来。
+    expect(shell.slice(snap, repin), '补置顶被排进了只成功才走的分支').toContain('.catch(')
+
+    // `startDragging()` 到拉起松手轮询之间 = 原生移动循环还没开始的那一段。
+    const from = shell.indexOf('await window.startDragging()')
+    const to = shell.indexOf('startDragReleasePolling()')
+    expect(from, '拖拽启动点找不到了').toBeGreaterThan(-1)
+    expect(to, '松手轮询的接线变了').toBeGreaterThan(from)
+    expect(
+      shell.slice(from, to),
+      '补置顶跟在 startDragging() 后面 = 补在拖拽开始之前，是个空操作（b79fb65 就是这么漏的）'
+    ).not.toMatch(/repinTopmost/)
+  })
+
+  it('toggles off then on, because a bare set-true is a no-op against tao flag diff', () => {
     const off = shell.indexOf('setAlwaysOnTop(false)')
     const on = shell.indexOf('setAlwaysOnTop(true)')
 
-    expect(drag).toBeGreaterThan(-1)
-    expect(off, '拖完没有补置顶').toBeGreaterThan(drag)
+    expect(off, '拖完没有补置顶').toBeGreaterThan(-1)
     // ⚠️ 顺序不能反：tao 只在标志发生变化时才下发 SetWindowPos，先开后关等于没补。
     expect(on, '补置顶缺了 setAlwaysOnTop(true)').toBeGreaterThan(off)
+    // 函数体里不许加 isAlwaysOnTop() 门控：它读的是 tao 的内部标志（样式位被系统清掉时仍为 true），
+    // 一当门控这里就变回空操作。只查函数体，注释里那个警告名字不算。
+    const body = shell.match(/function repinTopmost\(\)\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(body, '补置顶被 isAlwaysOnTop() 门控了').not.toContain('isAlwaysOnTop')
   })
 
   it('keeps the capability that authorizes the re-pin IPC', () => {
