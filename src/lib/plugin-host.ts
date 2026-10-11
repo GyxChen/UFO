@@ -103,6 +103,46 @@ export interface PluginBleDevice {
   name: string
   /** 信号强度；平台没给就 null。 */
   rssi: number | null
+  /** 广播包里解析出来的字段，宿主一个不丢（值是合并后的最新快照，不是逐个包）。 */
+  advert: PluginBleAdvertisement
+}
+
+/** 一次广播里解析出来的字段。 */
+export interface PluginBleAdvertisement {
+  /** 平台给的广播名（Windows 侧来自 WinRT 的 LocalName()）。 */
+  advertisementName: string | null
+  /** AD 结构里的完整名 / 简短名：与上面是两个来源，可以不一样。 */
+  localName: string | null
+  /** GAP appearance（蓝牙规范给设备分类的 16 位数）。 */
+  appearance: number | null
+  /** 广播里的发射功率（dBm），和 rssi 一起用才能折算距离。 */
+  txPower: number | null
+  /** 地址类型：`public` / `random` / `unknown`；随机地址重启就变，别当设备身份用。 */
+  addressType: string | null
+  /** 经典蓝牙的设备类别。只有 BlueZ 会填，Windows 恒为 null。 */
+  deviceClass: number | null
+  /** 广播里声明的服务 UUID（升序、128 位写法）。 */
+  serviceUuids: string[]
+  /** 厂商自定义数据（AD 类型 0xFF），按 companyId 升序，值是原始字节。 */
+  manufacturerData: PluginBleManufacturerData[]
+  /** 按服务带的数据（AD 类型 0x16 / 0x20 / 0x21），按 UUID 升序。 */
+  serviceData: PluginBleServiceData[]
+}
+
+/** 一条厂商自定义数据。 */
+export interface PluginBleManufacturerData {
+  /** 公司编号（蓝牙联盟分配）。 */
+  companyId: number
+  /** 原始字节（宿主不解释内容，iBeacon 这类格式自己解）。 */
+  data: Uint8Array
+}
+
+/** 一条按服务带的数据。 */
+export interface PluginBleServiceData {
+  /** 服务 UUID。 */
+  uuid: string
+  /** 原始字节。 */
+  data: Uint8Array
 }
 
 /** GATT 特征一行。 */
@@ -143,6 +183,40 @@ interface BleNotificationJson {
   serviceUuid: string
   value: string
   queuedBefore: number
+}
+
+/** 命令层的一台外设（广播里的字节段是 base64）。 */
+interface BleDeviceJson {
+  handle: string
+  address: string
+  name: string
+  rssi: number | null
+  advert: BleAdvertisementJson
+}
+
+/** 命令层的广播字段。 */
+interface BleAdvertisementJson {
+  advertisementName: string | null
+  localName: string | null
+  appearance: number | null
+  txPower: number | null
+  addressType: string | null
+  deviceClass: number | null
+  serviceUuids: string[]
+  manufacturerData: { companyId: number; data: string }[]
+  serviceData: { uuid: string; data: string }[]
+}
+
+/** 广播的字节段只有命令层是 base64：作者侧一律拿到 Uint8Array。 */
+function decodeAdvertisement(json: BleAdvertisementJson): PluginBleAdvertisement {
+  return {
+    ...json,
+    manufacturerData: json.manufacturerData.map(row => ({
+      companyId: row.companyId,
+      data: decodeBase64(row.data),
+    })),
+    serviceData: json.serviceData.map(row => ({ uuid: row.uuid, data: decodeBase64(row.data) })),
+  }
 }
 
 /** 一个可打开的串口。 */
@@ -564,7 +638,8 @@ export function createPluginHost(record: PluginRecordJson): PluginHost {
     ble: {
       async scan(ms) {
         require('ble')
-        return await invoke<PluginBleDevice[]>('plugin_ble_scan', { id, ms: ms ?? null })
+        const rows = await invoke<BleDeviceJson[]>('plugin_ble_scan', { id, ms: ms ?? null })
+        return rows.map(row => ({ ...row, advert: decodeAdvertisement(row.advert) }))
       },
       async connect(scanHandle) {
         require('ble')

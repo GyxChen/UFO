@@ -126,6 +126,7 @@ await host.ble.held()
 ```
 
 - `scan(ms?: number): Promise<PluginBleDevice[]>` —— 扫一会儿（默认 6 秒，宿主夹在 1–20 秒），返回扫到的外设。
+- 每台结果里的 `advert` 是广播包解析出的全部字段，宿主不筛不截：`advertisementName`、`localName`、`appearance`、`txPower`、`addressType`、`deviceClass`（Windows 恒为 null）、`serviceUuids`、`manufacturerData[{companyId, data}]`、`serviceData[{uuid, data}]`；`data` 已是 `Uint8Array`，两个数组宿主已排好序（按 companyId / UUID 升序），按下标取不会漂。⚠️ 这是平台**合并后的最新快照**（同一台设备的多个包并成一份，不是逐个包给），并且**原样字节拿不到** —— btleplug 只翻译它认识的 AD 类型，其余段落在宿主能碰到的任何接口里都不存在。
 - `connect(scanHandle: string): Promise<PluginBleConnection>` —— 连上扫描结果里的某一台，顺手把 GATT 树读回来。
 - `write(handle: string, service: string, characteristic: string, data: Uint8Array | string, withResponse?: boolean): Promise<number>` —— 写一个特征（字符串按 utf8、字节按原样；单次上限 512 字节，长数据自己分包）。
 - `read(handle: string, service: string, characteristic: string): Promise<Uint8Array>`

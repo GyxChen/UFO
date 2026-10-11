@@ -24,8 +24,8 @@ use base64::Engine as _;
 use serde::Serialize;
 
 use btleplug::api::{
-    Central, Characteristic, Manager as ManagerApi, Peripheral as PeripheralApi, ScanFilter,
-    Service, ValueNotification, WriteType,
+    AddressType, Central, Characteristic, Manager as ManagerApi, Peripheral as PeripheralApi,
+    PeripheralProperties, ScanFilter, Service, ValueNotification, WriteType,
 };
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::StreamExt;
@@ -61,6 +61,108 @@ pub struct BleDevice {
     pub name: String,
     /// 信号强度；平台没给就回 null。
     pub rssi: Option<i16>,
+    /// 广播包里解析出来的字段，一个不丢（见 [`BleAdvertisement`]）。
+    pub advert: BleAdvertisement,
+}
+
+/// 一次扫描里从广播包解析出的字段。
+///
+/// 这些值是平台**累积合并**后的最新快照：同一台设备的多个包会合并成一份，不是逐个包给，
+/// 所以不同字段可能来自不同时刻的包。宿主不筛选也不截断 —— 组件要认设备种类、解厂商私有负载
+/// （iBeacon、米家这类）全靠这里，丢一个字段作者就得重扫或另起一条扫描路径。
+///
+/// ⚠️ 拿不到的仍是**原样字节**：btleplug 只翻译它认识的 AD 类型，其余段落丢掉，
+/// 公开 API 没有任何一处给 `[len][type][data]` 那一串。要真原始包得绕开 btleplug，
+/// 自己用 `windows` crate 起 `BluetoothLEAdvertisementWatcher` 逐段读 `DataSections`。
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BleAdvertisement {
+    /// 平台给的广播名（Windows 侧来自 WinRT 的 `LocalName()`）。
+    pub advertisement_name: Option<String>,
+    /// AD 结构里的完整名 / 简短名：与上面是两个来源，可以不一样。
+    pub local_name: Option<String>,
+    /// GAP appearance（蓝牙规范里给设备分类的 16 位数）。
+    pub appearance: Option<u16>,
+    /// 广播里的发射功率（dBm）：组件拿它和 rssi 一起折算距离。
+    pub tx_power: Option<i16>,
+    /// 地址类型：`public` / `random`。随机地址重启就变，别拿它当设备身份。
+    pub address_type: Option<String>,
+    /// 经典蓝牙的设备类别。只有 BlueZ 会填，Windows 恒为 null。
+    pub device_class: Option<u32>,
+    /// 广播里声明的服务 UUID（升序、小写、带连字符）。
+    pub service_uuids: Vec<String>,
+    /// 厂商自定义数据（AD 类型 0xFF），按 company id 升序。
+    pub manufacturer_data: Vec<BleManufacturerData>,
+    /// 按服务带的数据（AD 类型 0x16 / 0x20 / 0x21），按 UUID 升序。
+    pub service_data: Vec<BleServiceData>,
+}
+
+/// 一条厂商自定义数据。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BleManufacturerData {
+    /// 公司编号（蓝牙联盟分配）。
+    pub company_id: u16,
+    /// 原始字节（base64，与通知值同一套编码）。
+    pub data: String,
+}
+
+/// 一条按服务带的数据。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BleServiceData {
+    /// 服务 UUID（小写、带连字符的标准写法）。
+    pub uuid: String,
+    /// 原始字节（base64）。
+    pub data: String,
+}
+
+impl BleAdvertisement {
+    /// 把平台解析好的广播换成本模块的形状。
+    ///
+    /// 排序是**必须的**不是美观：`manufacturer_data` / `service_data` 是 HashMap、
+    /// Windows 侧的 `services` 来自 HashSet，迭代顺序每次都可能不同。不排序的话同一台设备
+    /// 两次扫描回来的数组下标会对不上，组件按「第 N 段负载」取值就会时好时坏。
+    fn of(properties: &PeripheralProperties) -> Self {
+        let mut manufacturer_data: Vec<BleManufacturerData> = properties
+            .manufacturer_data
+            .iter()
+            .map(|row| BleManufacturerData {
+                company_id: *row.0,
+                data: base64_of(row.1),
+            })
+            .collect();
+        manufacturer_data.sort_by_key(|row| row.company_id);
+
+        let mut service_data: Vec<BleServiceData> = properties
+            .service_data
+            .iter()
+            .map(|row| BleServiceData {
+                uuid: row.0.to_string(),
+                data: base64_of(row.1),
+            })
+            .collect();
+        service_data.sort_by(|a, b| a.uuid.cmp(&b.uuid));
+
+        let mut service_uuids: Vec<String> =
+            properties.services.iter().map(|uuid| uuid.to_string()).collect();
+        service_uuids.sort();
+
+        Self {
+            advertisement_name: properties.advertisement_name.clone(),
+            local_name: properties.local_name.clone(),
+            appearance: properties.appearance,
+            tx_power: properties.tx_power_level,
+            address_type: properties.address_type.map(|kind| match kind {
+                AddressType::Public => "public".to_string(),
+                AddressType::Random => "random".to_string(),
+            }),
+            device_class: properties.class,
+            service_uuids,
+            manufacturer_data,
+            service_data,
+        }
+    }
 }
 
 /// 一条通知（组件拉走的就是这个形状）。
@@ -193,10 +295,16 @@ impl BleState {
         for peripheral in peripherals.into_iter().take(DEVICES_MAX) {
             let address = peripheral.address().to_string();
             let properties = peripheral.properties().await.unwrap_or(None);
-            // 名字有两种来源：广播里的完整名优先，退化用本地名（两者都可能没有）。
-            let name = properties
+            // 广播里解析出来的字段整份带出：不筛选、不截断（平台没给就整份留默认值）。
+            let advert = properties
                 .as_ref()
-                .and_then(|value| value.advertisement_name.clone().or_else(|| value.local_name.clone()))
+                .map(BleAdvertisement::of)
+                .unwrap_or_default();
+            // 名字有两种来源：广播里的完整名优先，退化用本地名（两者都可能没有）。
+            let name = advert
+                .advertisement_name
+                .clone()
+                .or_else(|| advert.local_name.clone())
                 .unwrap_or_default();
             let rssi = properties.as_ref().and_then(|value| value.rssi);
             let issued = {
@@ -220,6 +328,7 @@ impl BleState {
                 address,
                 name,
                 rssi,
+                advert,
             });
         }
         let mut guard = lock(&self.inner);
@@ -690,6 +799,91 @@ mod tests {
     fn values_travel_as_base64() {
         assert_eq!(base64_of(&[0u8, 1, 250, 255]), "AAH6/w==");
         assert_eq!(base64_of(&[]), "");
+    }
+
+    /// 广播字段一个都不能漏，且顺序必须稳定（HashMap / HashSet 的迭代顺序会变）。
+    #[test]
+    fn advertisement_carries_every_parsed_field_in_a_stable_order() {
+        let mut props = PeripheralProperties::default();
+        props.advertisement_name = Some("广播名".to_string());
+        props.local_name = Some("本地名".to_string());
+        props.appearance = Some(0x0340);
+        props.tx_power_level = Some(-40);
+        props.address_type = Some(AddressType::Random);
+        props.class = Some(0x2a_0104);
+        // 故意按 company id 逆序塞，逼排序这一步真的执行。
+        props.manufacturer_data.insert(0x004c, vec![0x02, 0x15]);
+        props.manufacturer_data.insert(0x0001, vec![0xff]);
+        let heart = parse_uuid("0000180d-0000-1000-8000-00805f9b34fb").expect("服务 UUID");
+        props.services.push(heart);
+        props.services.push(parse_uuid(SERVICE).expect("服务 UUID"));
+        props.service_data.insert(heart, vec![1, 2, 3]);
+        let adv = BleAdvertisement::of(&props);
+        assert_eq!(adv.advertisement_name.as_deref(), Some("广播名"));
+        assert_eq!(adv.local_name.as_deref(), Some("本地名"));
+        assert_eq!(adv.appearance, Some(0x0340));
+        assert_eq!(adv.tx_power, Some(-40));
+        assert_eq!(adv.address_type.as_deref(), Some("random"));
+        assert_eq!(adv.device_class, Some(0x2a_0104));
+        assert_eq!(
+            adv.manufacturer_data.iter().map(|row| row.company_id).collect::<Vec<u16>>(),
+            vec![0x0001, 0x004c],
+            "厂商数据要按 company id 升序，作者按下标取值才不会时好时坏"
+        );
+        assert_eq!(adv.manufacturer_data[0].data, "/w==", "0x0001 那条的值是 ff");
+        assert_eq!(adv.service_uuids.len(), 2);
+        assert!(
+            adv.service_uuids.windows(2).all(|pair| pair[0] <= pair[1]),
+            "服务 UUID 必须升序：{:?}",
+            adv.service_uuids
+        );
+        assert_eq!(adv.service_data.len(), 1);
+        assert_eq!(adv.service_data[0].uuid, heart.to_string());
+        assert_eq!(adv.service_data[0].data, "AQID");
+    }
+
+    /// 平台一份广播都没给时不能报错，也不能编出假值。
+    #[test]
+    fn advertisement_stays_empty_when_the_platform_has_no_snapshot() {
+        let adv = BleAdvertisement::of(&PeripheralProperties::default());
+        assert!(adv.advertisement_name.is_none() && adv.local_name.is_none());
+        assert!(adv.appearance.is_none() && adv.tx_power.is_none());
+        assert!(adv.address_type.is_none() && adv.device_class.is_none());
+        assert!(adv.service_uuids.is_empty());
+        assert!(adv.manufacturer_data.is_empty() && adv.service_data.is_empty());
+    }
+
+    /// 键名是 Rust 与前端唯一的接口，两边没有 `?raw` 对撞，只能在这里钉住。
+    #[test]
+    fn advertisement_serializes_with_the_names_the_host_interface_reads() {
+        let mut props = PeripheralProperties::default();
+        props.manufacturer_data.insert(0x004c, vec![2]);
+        props.service_data.insert(parse_uuid(SERVICE).expect("服务 UUID"), vec![2]);
+        let value = serde_json::to_value(BleDevice {
+            handle: "probe-1-abc".to_string(),
+            address: "AA:BB".to_string(),
+            name: String::new(),
+            rssi: None,
+            advert: BleAdvertisement::of(&props),
+        })
+        .expect("可序列化");
+        let adv = &value["advert"];
+        for key in [
+            "advertisementName",
+            "localName",
+            "appearance",
+            "txPower",
+            "addressType",
+            "deviceClass",
+            "serviceUuids",
+            "manufacturerData",
+            "serviceData",
+        ] {
+            assert!(adv.get(key).is_some(), "JSON 里没有 {key}：前端读的是这个名");
+        }
+        assert_eq!(adv["manufacturerData"][0]["companyId"].as_u64(), Some(0x004c));
+        assert_eq!(adv["manufacturerData"][0]["data"], "Ag==");
+        assert_eq!(adv["serviceData"][0]["uuid"], SERVICE);
     }
 
     #[test]

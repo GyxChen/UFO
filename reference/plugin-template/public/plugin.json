@@ -3,7 +3,7 @@
   "apiVersion": 1,
   "id": "my-plugin",
   "name": "我的组件",
-  "version": "1.0.1",
+  "version": "0.0.1",
   "description": "模板：四种挂载点各占一处，改这份清单就能裁掉不要的那几处",
   "entry": "main.js",
   "surfaces": {

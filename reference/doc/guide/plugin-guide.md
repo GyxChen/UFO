@@ -83,7 +83,7 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
 | `secrets` | `host.secrets.get/set/remove/names` | 值只进出 OS 凭据管理器（service = `<App 标识>/plugin/<id>`，一格一包）。值不落盘、不进日志、界面不回显；盘上只记名字，卸载按名册删干净 |
 | `frame` | `host.frame.allow(url)` | 内嵌网页就是作者界面里的 `<iframe>`：宿主只回答「这个地址能不能嵌」，**不为组件建窗**；只放 https（与 CSP `frame-src` 同一判据 —— 一边放行一边拦死等于让作者猜）。多数站点禁止被嵌，显示不出来是正常现象 |
 | —— | `host.tooltip.setSize({ width, height })` | 改**自己那张独立信息卡**的尺寸（物理像素），返回实际生效的那一份（被夹过就如实报）。授权来自挂载点声明：清单没写 `surfaces.tooltip.own` 就抛，所以它**不占权限位、不加徽标**（那张卡本身就是披露）。也不走 IPC —— 卡就渲染在宿主窗口里，绕一圈只多出一条能被滥用的命令。区间与清单同一对常量，提示窗再按工作区夹一次 |
-| `ble` | `host.ble.scan/connect/write/read/subscribe/unsubscribe/notifications/disconnect/held` | 连接、GATT 树与通知环形**常驻宿主**（组件热重载 / 窗口重建都不会断连）。句柄不跨启动、卸载即断；单写 ≤ 512 字节（长数据自己分包）、环形 64 条溢出丢最旧的并有读数；UUID 只认 128 位写法（`2A37` 那种短 UUID 不翻译） |
+| `ble` | `host.ble.scan/connect/write/read/subscribe/unsubscribe/notifications/disconnect/held` | 连接、GATT 树与通知环形**常驻宿主**（组件热重载 / 窗口重建都不会断连）。句柄不跨启动、卸载即断；单写 ≤ 512 字节（长数据自己分包）、环形 64 条溢出丢最旧的并有读数；UUID 只认 128 位写法（`2A37` 那种短 UUID 不翻译）；`scan` 把广播包解析出的字段整份给组件（厂商数据、服务数据、appearance、txPower、地址类型），不筛不截，但**原样字节拿不到** |
 | `serial` | `host.serial.ports/open/write/read/setTimeout/close/held` | 端口名只认 `COM3` 与 `/dev/tty…` 两种形状，**不接受任意路径**；波特率与超时是夹取不是拒绝；每包最多 4 个端口；这一轮读不到回空数组，不算错误 |
 
 `host` 是冻结对象，且**只有这些字段**：不给 `invoke`、不给 `Channel`、不给任何 `@tauri-apps/*` 原物。

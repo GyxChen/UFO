@@ -10,6 +10,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPluginHost, PLUGIN_HOST_KEY } from '@/lib/plugin-host'
+import hostRaw from './plugin-host.ts?raw'
+import bleRaw from '../../src-tauri/src/plugin/ble.rs?raw'
 import type { PluginAgentEvent, PluginHost } from '@/lib/plugin-host'
 import { PLUGIN_ORIGIN } from '@/lib/plugin-runtime'
 import { PLUGIN_LIMITS } from '@/lib/plugin-limits'
@@ -422,6 +424,43 @@ describe('外设的字节与参数形状', () => {
     expect(rows[0].serviceUuid).toBe('s1')
   })
 
+  /**
+   * 广播包解析出的字段必须整份透出，且字节段在宿主这一层就换成 Uint8Array：
+   * 作者若还得自己 atob，就等于把命令层的编码格式漏给了组件包。
+   */
+  it('scan 把广播的字节段解成 Uint8Array，其余字段原样给', async () => {
+    invokeMock.mockResolvedValue([
+      {
+        handle: 'probe-1-abc',
+        address: 'AA:BB:CC:DD:EE:FF',
+        name: '手环',
+        rssi: -60,
+        advert: {
+          advertisementName: '手环',
+          localName: 'Band',
+          appearance: 832,
+          txPower: -40,
+          addressType: 'random',
+          deviceClass: null,
+          serviceUuids: ['0000180d-0000-1000-8000-00805f9b34fb'],
+          manufacturerData: [{ companyId: 76, data: 'AQUF' }],
+          serviceData: [{ uuid: '6e400001-b5a3-f393-e0a9-e50e24dcca9e', data: 'AAH6/w==' }],
+        },
+      },
+    ])
+    const rows = await fullHost().ble.scan(2000)
+    expect(callArg('plugin_ble_scan')).toEqual({ id: 'balance-board', ms: 2000 })
+    expect(rows[0].advert.advertisementName).toBe('手环')
+    expect(rows[0].advert.localName).toBe('Band')
+    expect(rows[0].advert.appearance).toBe(832)
+    expect(rows[0].advert.txPower).toBe(-40)
+    expect(rows[0].advert.addressType).toBe('random')
+    expect(rows[0].advert.deviceClass).toBeNull()
+    expect(rows[0].advert.serviceUuids).toEqual(['0000180d-0000-1000-8000-00805f9b34fb'])
+    expect(Array.from(rows[0].advert.manufacturerData[0].data)).toEqual([1, 5, 5])
+    expect(Array.from(rows[0].advert.serviceData[0].data)).toEqual([0, 1, 250, 255])
+  })
+
   it('蓝牙写把字符串按 utf8 编 base64，回执开关默认要（与多数设备的期望一致）', async () => {
     invokeMock.mockResolvedValue(2)
     const host = fullHost()
@@ -500,4 +539,59 @@ describe('host.tooltip.setSize', () => {
     expect(pluginTooltipSizeOf('balance-board')).toEqual({ width: 360, height: 500 })
     expect(pluginTooltipSizeOf('clock24')).toEqual({ width: 260, height: 200 })
   })
+})
+
+/**
+ * 广播字段的跨语言同源护栏。
+ *
+ * `host.ble.scan` 的返回体在 Rust 是 serde 的 camelCase、在前端是手抄的 interface，两边没有
+ * 任何编译期联系：Rust 改一个字段名，前端只会读到 undefined，表现是「这台设备就是不带厂商数据」
+ * —— 不上真机永远看不见。所以两边的字段集合必须按名字对撞，少一边、多一边都算红。
+ */
+describe('广播字段两边同名', () => {
+  const rust = bleRaw.replace(/\r\n/g, '\n')
+  const ts = hostRaw.replace(/\r\n/g, '\n')
+
+  /** Rust 结构体里的 `pub` 字段名（snake_case）。 */
+  function rustFields(structName: string): string[] {
+    const start = rust.indexOf(`pub struct ${structName} {`)
+    if (start < 0) throw new Error(`ble.rs 里找不到 ${structName}`)
+    const names = [...rust.slice(start, rust.indexOf('\n}', start)).matchAll(/^ {4}pub (\w+):/gm)].map(
+      match => match[1]
+    )
+    // 解析出 0 条必须抛：静默的空集合会让下面每条断言都假绿。
+    if (names.length === 0) throw new Error(`${structName} 抠到 0 个字段：写法或正则变了`)
+    return names
+  }
+
+  /** 前端 interface 的键名。 */
+  function tsFields(interfaceName: string): string[] {
+    const start = ts.indexOf(`interface ${interfaceName} {`)
+    if (start < 0) throw new Error(`plugin-host.ts 里找不到 ${interfaceName}`)
+    const names = [...ts.slice(start, ts.indexOf('\n}', start)).matchAll(/^ {2}(\w+):/gm)].map(
+      match => match[1]
+    )
+    if (names.length === 0) throw new Error(`${interfaceName} 抠到 0 个字段`)
+    return names
+  }
+
+  /** snake_case → serde `rename_all = "camelCase"` 的结果。 */
+  const toCamel = (name: string) => name.replace(/_([a-z0-9])/g, (_all, ch: string) => ch.toUpperCase())
+
+  /** 每个 Rust 结构体都要对上的前端形状：作者侧接口 + 命令层镜像。 */
+  const pairs: Array<[string, string]> = [
+    ['BleDevice', 'PluginBleDevice'],
+    ['BleAdvertisement', 'PluginBleAdvertisement'],
+    ['BleAdvertisement', 'BleAdvertisementJson'],
+    ['BleManufacturerData', 'PluginBleManufacturerData'],
+    ['BleServiceData', 'PluginBleServiceData'],
+  ]
+
+  for (const [structName, interfaceName] of pairs) {
+    it(`${structName} 的每个字段在 ${interfaceName} 里都叫同一个名字`, () => {
+      expect(tsFields(interfaceName).sort(), `${interfaceName} 与 Rust ${structName} 的键名不一致`).toEqual(
+        rustFields(structName).map(toCamel).sort()
+      )
+    })
+  }
 })
