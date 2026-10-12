@@ -358,7 +358,7 @@ async function onDevReload(record: PluginRecordJson, event: Event) {
             <p class="plugin-manager__status" :class="{ 'plugin-manager__status--ok': selected.devReload }" role="status">
               {{
                 selected.devReload
-                  ? '热重载已开：改包里的文件后点「重新加载」，或等下次启动自动重扫'
+                  ? '已开：入口文件改动 2 秒内自动生效，清单改动要「重新加载」'
                   : '关着：不监听文件、不留日志'
               }}
             </p>
