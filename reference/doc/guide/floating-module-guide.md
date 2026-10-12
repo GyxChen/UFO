@@ -280,7 +280,7 @@ const moduleApi = inject(floatingModuleKey, null)
 | `horizontal` | 贴上下边 | 横条，宽 = cells × 1 格 | **高度只有 1 格**，纵向极其紧张 |
 | `vertical` | 贴左右边 | 竖条，高 = cells × 1 格 | **宽度只有 1 格**，横向极其紧张 |
 
-> **四角的多模块堆叠**（写 `demand` / 适配 `corner` 前必读）：四角里宿主把各模块**上下堆叠**，每个模块占满一整行，**窗宽由最宽的模块决定**，其余模块哪怕只要 1 格也会被拉到同一宽度。举例：agent 在四角是 1×2、todo / weather 也各是 1×2，三模块整窗就是 **3 行 × 2 列（3×2）** —— 而不是把「需求之和 6」归档成 2×3 的方格。因此：
+> **四角的多模块堆叠**（写 `demand` / 适配 `corner` 前必读）：四角里宿主把各模块**上下堆叠**，每个模块占满一整行，**窗宽由最宽的模块决定**，其余模块哪怕只要 1 格也会被拉到同一宽度。举例：agent 在四角是 1×2、另两个各申请 2 格的模块也各是 1×2，三模块整窗就是 **3 行 × 2 列（3×2）** —— 而不是把「需求之和 6」归档成 2×3 的方格。因此：
 > - 你的模块在四角**横向会和最宽的同伴一样宽**（可能比你 `demand` 需要的更宽）→ 横向用 grid `1fr` / 省略号铺满，别写死宽度；
 > - 每个模块**至少占一整行**（行高 = 一格）；`demand` 想要 2×2 / 3×3 的多行块也支持（占满连续的几行）；
 > - 窗口形状**不是**「总数开平方」→ 算自己那块的行列一律用 `cellsGrid(layout, cellBudget)`，别自己推整窗。
@@ -359,7 +359,7 @@ const partitioned = computed(() => partitionIndicatorSessions(store.sessions, pr
 - ❌ 不要因为「槽位看起来很小」就把内容整块藏掉 —— 用户什么都看不到，比看得少更糟。
 - 🧪 护栏：`src/components/floating/floating-module-scaling.spec.ts` 会用 `?raw` 读所有模块样式，**`clamp()` 的上限只要是 px 设计值就必须引用 `--floating-cell-scale`**（上限是 cq 单位的不管）；`src/modules/agent-status/agent-status-css.spec.ts` 另外锁住「一行百分比之和 < 100%」与「竖条按行宽取百分比 + 窄槽降级盖得住它」。
 
-参考实现：`src/modules/weather/weather.css`（正常排版按 cqh 缩放 + 矮槽位兜底成一行）、`src/modules/agent-status/agent-status.css`（竖条换成按行宽取百分比；槽位过矮 / 过窄时藏掉平台图标、把灯点吃满一格）。
+参考实现：`src/modules/agent-status/agent-status.css`（正常排版按 cqh 缩放、矮槽位兜底成一行；竖条换成按行宽取百分比，槽位过矮 / 过窄时藏掉平台图标、把灯点吃满一格）。
 
 ---
 
@@ -569,7 +569,7 @@ activate: () => {
 ### 9.1 挂模块视图的三个窗口都会激活：数据源只能有一个 owner
 
 - `activate` 会被**那三个窗口各调一次**（`floating` / `main` / `tooltip`，各自独立的前端实例与 Pinia），别假设「只调用一次」。
-- ⚠️ 主窗派出去的独立面板窗（`script-editor` / `status-log`）**不激活**：它们一块模块格子都没有，跟着激活就是白跑几路轮询（天气 / 待办这类定时出网的数据源会变成双份）。所以「我的 `activate` 在每扇窗都跑过」不是可以依赖的前提，`App.vue` 那一句 `if (!panelWindowView)` 就是这条的落点。
+- ⚠️ 主窗派出去的独立面板窗（`script-editor` / `status-log`）**不激活**：它们一块模块格子都没有，跟着激活就是白跑几路轮询（组件包里那种定时出网的数据源会变成双份）。所以「我的 `activate` 在每扇窗都跑过」不是可以依赖的前提，`App.vue` 那一句 `if (!panelWindowView)` 就是这条的落点。
 - 同一份外部数据（轮询 / 定时请求 / 外部事件订阅）**只允许一个窗口当 owner**。UFO 里选 `floating`：它常驻、总是存在；`main` 与 `tooltip` 可能一直隐藏。
 - owner 判定用 `getCurrentWindow().label`，**不要**用「谁先启动谁负责」或 `setTimeout` 猜窗口。
 - owner 必须同时满足「组件已启用」+「我是 owner 窗口」；组件被禁用后**必须停掉定时器**，其它窗口不得偷偷接管轮询。

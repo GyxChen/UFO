@@ -28,9 +28,6 @@
     "allow-plugin-events",
     "allow-plugin-capability-calls",
     "allow-light-sounds",
-    "allow-is-left-mouse-pressed",
-    "allow-get-weather-snapshot",
-    "allow-get-todo-snapshot",
-    "allow-complete-todo-task"
+    "allow-is-left-mouse-pressed"
   ]
 }

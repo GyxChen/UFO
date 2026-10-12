@@ -50,16 +50,6 @@ use modules::agent_status::{
         set_tooltip_interactive, spawn_monitor, LogConfig, LogState, StatusState,
     },
 };
-use modules::weather::settings::adopt_legacy_fields as adopt_weather_legacy_fields;
-use modules::weather::{
-    delete_weather_secret, get_weather_secret_status, get_weather_snapshot, search_weather_city,
-    set_weather_secret, test_weather_connection, WeatherState,
-};
-use modules::todo::{
-    complete_todo_task, create_todo_task, delete_todo_task, delete_todo_token,
-    get_todo_secret_status, get_todo_snapshot, list_todo_projects, postpone_todo_tasks,
-    reopen_todo_task, set_todo_token, test_todo_connection, TodoState,
-};
 use mouse::is_left_mouse_pressed;
 use plugin::commands::{
     clear_plugin_logs, close_plugin_events, get_plugin_ble_held, get_plugin_dev_digest,
@@ -125,11 +115,8 @@ pub fn run() {
             let status_dir = app_data.join("status");
             let module_config_path = app_data.join("floating-modules.json");
             // 组件配置：外壳只负责存盘 + 转发，旧版字段由各组件自己认领
-            // （见 modules/agent_status/settings.rs 与 modules/weather/settings.rs）。
-            let module_state = ModuleState::load(
-                module_config_path,
-                &[adopt_legacy_fields, adopt_weather_legacy_fields],
-            );
+            // （见 modules/agent_status/settings.rs；组件包不在这条链上，它读写自己的存储分区）。
+            let module_state = ModuleState::load(module_config_path, &[adopt_legacy_fields]);
             // 组件配置联动：外壳不认识任何组件字段，各自在组合根登记「配置变了要做什么」。
             module_state.on_config_change(config_hook());
             // 已落盘的组件配置在启动时先取一次（此刻 StatusState 还没建好，钩子会空转）。
@@ -139,11 +126,9 @@ pub fn run() {
             proxy_state.set_selected(&agent_status_settings.proxy_resolver);
             // endpoint 档案登记表（主窗口「信息卡拓展」的数据源），与 StatusState 共享同一份。
             let profile_state = EndpointProfileState::load(app_data.join("endpoint-profiles.json"));
-            // 凭据不在数据目录里（按 service 名前缀寻址，而前缀就是 App 标识），各组件搬自己那几条：
-            // flow 的条目名从刚加载的档案 `secret_names` 反推，todo / weather 用的是固定名。
+            // 凭据不在数据目录里（按 service 名前缀寻址，而前缀就是 App 标识）：
+            // flow 的条目名从刚加载的档案 `secret_names` 反推。
             modules::agent_status::flow::migrate_secrets_from_legacy(&profile_state);
-            modules::todo::secrets::migrate_from_legacy();
-            modules::weather::secrets::migrate_from_legacy();
             // 会话存档（SQLite）：跨重启续档。load 打开库、回填缓存并做一次过期清理。
             // 与 profiles 同样处理：clone 进 StatusState（monitor 线程写），再 manage 一份（命令读）。
             let session_store =
@@ -188,8 +173,6 @@ pub fn run() {
             app.manage(module_state);
             app.manage(flow_state.clone());
             app.manage(push_state.clone());
-            app.manage(WeatherState::default());
-            app.manage(TodoState::default());
             app.manage(plugin_store);
             // 插件日志运行态：环形缓冲 + 按包的 JSONL 落点（落点基准与安装记录同一个 `plugins/`）。
             app.manage(plugin::log::LogState::new(app_data.clone()));
@@ -376,23 +359,6 @@ pub fn run() {
             is_left_mouse_pressed,
             get_floating_module_config,
             set_floating_module_config,
-            get_weather_snapshot,
-            search_weather_city,
-            test_weather_connection,
-            set_weather_secret,
-            delete_weather_secret,
-            get_weather_secret_status,
-            get_todo_snapshot,
-            create_todo_task,
-            complete_todo_task,
-            postpone_todo_tasks,
-            delete_todo_task,
-            reopen_todo_task,
-            test_todo_connection,
-            list_todo_projects,
-            set_todo_token,
-            delete_todo_token,
-            get_todo_secret_status,
             get_plugins,
             get_plugin_registry,
             report_plugin_load_ms,

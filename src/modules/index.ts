@@ -2,19 +2,13 @@ import { computed } from 'vue'
 import type { FloatingModuleDefinition } from '@/lib/floating-modules'
 import { pluginDefinitions } from '@/lib/plugin-loader'
 import { agentStatusModule } from './agent-status'
-import { todoModule } from './todo'
-import { weatherModule } from './weather'
 
 /**
  * 内置模块的定义：这里只是内置那半边的登记处。
  *
  * ⚠️ 顺序 = 主窗口列表的展示顺序；悬浮窗里的先后按配置里的 `order`（外壳负责排）。
  */
-export const BUILTIN_MODULE_DEFINITIONS: FloatingModuleDefinition[] = [
-  agentStatusModule,
-  todoModule,
-  weatherModule,
-]
+export const BUILTIN_MODULE_DEFINITIONS: FloatingModuleDefinition[] = [agentStatusModule]
 
 /**
  * 悬浮窗模块注册表：内置在前、组件包在后。

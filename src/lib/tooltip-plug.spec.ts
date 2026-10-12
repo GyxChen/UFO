@@ -59,7 +59,7 @@ describe('插入块的高度预算', () => {
 
 describe('插入块的筛选', () => {
   it('只挂到它声明的那个宿主卡上', () => {
-    const slots = [slot(), slot({ pluginId: 'ci', hostId: 'weather' })]
+    const slots = [slot(), slot({ pluginId: 'ci', hostId: 'other-module' })]
     expect(resolveTooltipExtensions(slots, target, () => true).map(item => item.pluginId)).toEqual([
       'balance-board',
     ])

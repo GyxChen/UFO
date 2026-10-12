@@ -59,11 +59,11 @@ describe('SettingsField', () => {
     const wrapper = mount(SettingsField, {
       props: {
         label: 'API Key',
-        labelFor: 'weather-api-key',
+        labelFor: 'sample-api-key',
         state: '已保存至凭据管理器',
         hint: '输入新值后点保存即可替换',
       },
-      slots: { default: '<input id="weather-api-key" />' },
+      slots: { default: '<input id="sample-api-key" />' },
       attachTo: document.body,
     })
     await flushPromises()
@@ -91,8 +91,8 @@ describe('SettingsField', () => {
     expect(control.get('input').attributes('id')).toBe('retention-days-box')
 
     const stacked = mount(SettingsField, {
-      props: { label: 'API Token', labelFor: 'todo-api-token', stacked: true },
-      slots: { default: '<input id="todo-api-token" />' },
+      props: { label: 'API Token', labelFor: 'sample-api-token', stacked: true },
+      slots: { default: '<input id="sample-api-token" />' },
       attachTo: document.body,
     })
     await flushPromises()

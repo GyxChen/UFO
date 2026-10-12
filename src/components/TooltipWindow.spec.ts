@@ -217,7 +217,7 @@ describe('信息卡的插入块（组件包往别人的卡尾部追加）', () =
   })
 
   it('挂在别人卡上的块不会串到这里', async () => {
-    pluginExtensions.value = [plug({ hostId: 'weather' })]
+    pluginExtensions.value = [plug({ hostId: 'other-module' })]
     const wrapper = await mountTooltip()
     emitHover(hoverPayload(1, true))
     await flushPromises()

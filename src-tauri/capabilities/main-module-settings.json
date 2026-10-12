@@ -15,17 +15,6 @@
     "dialog:allow-save",
     "allow-manage-plugins",
     "allow-manage-plugin-logs",
-    "dialog:allow-open",
-    "allow-search-weather-city",
-    "allow-test-weather-connection",
-    "allow-manage-weather-secret",
-    "allow-list-todo-projects",
-    "allow-test-todo-connection",
-    "allow-manage-todo-secret",
-    "allow-create-todo-task",
-    "allow-complete-todo-task",
-    "allow-postpone-todo-task",
-    "allow-delete-todo-task",
-    "allow-reopen-todo-task"
+    "dialog:allow-open"
   ]
 }

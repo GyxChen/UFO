@@ -114,7 +114,7 @@ describe('window grid from per-module demands', () => {
   })
 
   it('stacks corner modules as full-width rows, not a packed square', () => {
-    // 三个 1×2 模块（agent / todo / weather 在四角各占一整行）：3 行 × 2 列，而不是把总和 6 归档成 2×3。
+    // 三个各申请 2 格的模块（在四角各占一整行）：3 行 × 2 列，而不是把总和 6 归档成 2×3。
     expect(windowGrid('corner', [2, 2, 2])).toEqual({ rows: 3, cols: 2 })
     // 单个 2×2 模块（agent 4 会话）仍是它自己的 2×2。
     expect(windowGrid('corner', [4])).toEqual({ rows: 2, cols: 2 })
