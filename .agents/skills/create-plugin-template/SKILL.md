@@ -93,6 +93,10 @@ npx vitest run src/lib/plugin-template-doc.spec.ts src/lib/plugin-template.spec.
    第一列必须是反引号包住的能力名；第四列只写 `是` / `否`（那条 spec 拿它与清单的 `permissions` 对撞）。
 3. `## 各能力的 API` —— 每档一节，标题 `### \`host.<命名空间>\` —— 需要 \`<权限名>\``；节内先一段 ```js 调用形状，
    再逐成员一行 `- \`签名原文\` —— 源码注释的第一句`。
+   **返回值类型里会改变判据的字段也要带出来**（例：`PluginHttpResult.status` 那句「非 2xx 也照样 resolve，
+   自己判状态码」）—— 拷出仓库的作者手边只有这一份，`plugin-guide.md` 不在他手里。
+   做法是去 `plugin-host.ts` 给对应成员写一句注释，让这条规则把它抄出来，**不要在文档里手加一段散文**：
+   下一个跑这条命令的人会把它洗掉。doc spec 只比名字与结构，这类语义行没有护栏，靠人守。
 4. `## 不占权限位的入口` —— `host.plugin`（这个包自己的身份，只读）、`host.tooltip.setSize`
    （授权来自清单的 `surfaces.tooltip.own`，所以不出徽标）、`host.log`（需求点名的特例，不声明也能打）。
 5. `## 装前给用户看的披露原文` —— 每条 `- **\`id\`** label：disclosure`，原文照 `capability.rs`，一个字都不许改写。

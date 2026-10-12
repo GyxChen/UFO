@@ -77,7 +77,7 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
 | --- | --- | --- |
 | —— | `host.log(level, msg, fields?)` | 需求点名的特例：**不需要声明**。行只进内存环形 + 按包 JSONL；调试开关关着就整条丢弃。日志窗：齿轮 → 详情卡 → 拓展 |
 | `events:agent` | `host.event.open/close/subscribe` | 转灯事件（含 `endpoint` / `prompt` / `sessionId` / 时间）。**按包拉增量、不广播**；环形 256 条，拉得慢会丢最旧的并有读数 |
-| `http` | `host.http.request/get/post` | 宿主代发，只到清单 `hosts` 里的**整名**；过 `validate_http_url`（本机 / 私有 / 元数据地址一律拒）；响应上限 4 MiB，截断会如实标 |
+| `http` | `host.http.request/get/post` | 宿主代发，只到清单 `hosts` 里的**整名**；过 `validate_http_url`（本机 / 私有 / 元数据地址一律拒）；**非 2xx 不抛、照样 resolve**，作者判 `result.status`（401 / 403 常表意「凭据失效」，抛错会把它吞成「没网」；与内置流程脚本 `flow/api.rs` 同一口径）；响应上限 4 MiB，截断会如实标 |
 | `storage` | `host.storage.get/set/remove/keys/usage` | 按包 id 隔离的 JSON 分区：8 MiB/包、256 KiB/值、1024 键；**卸载即删** |
 | `fs` | `host.fs.*`（§5） | 用户亲手选中的文件 + 组件私有目录 |
 | `secrets` | `host.secrets.get/set/remove/names` | 值只进出 OS 凭据管理器（service = `<App 标识>/plugin/<id>`，一格一包）。值不落盘、不进日志、界面不回显；盘上只记名字，卸载按名册删干净 |
@@ -169,6 +169,12 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
   反馈一律走行内 `role="status"`，破坏性动作走两步确认。
 - 指示灯一类的小元素不加 `title`（Windows 原生提示会与自绘 tooltip 重复），无障碍信息走 `aria-label`。
 - 「当前是什么状态」的读数必须常驻，不许藏进 hover。
+- **样式只保证一套东西：`--ufo-*` 那批 CSS 变量**（`:root` 上的 token，见 `reference/doc/rule/visual-style.md`）
+  —— 包的产物注入的就是宿主文档，变量本来就继承得到。宿主的**类名不在契约里**：
+  `.ufo-card` / `.base-*` / `.tooltip-row` 这些是宿主 UI kit 的内部实现，重命名一次就静默变形，
+  而宿主一侧没有任何 spec 会为此变红。现状是**没有明文规定**，样本包已经借了一枚
+  `.ufo-mono`（`ble-console` 的 SettingsPanel 八处），`weather` / `todo` 两个包一处不借、
+  自带按钮与输入框的样式。要在 guide 里定死之前，先决定这两条路只留一条。
 - 明文落盘是这套系统的已知代价：`prompt` 会长期留在事件环形与日志里，
   所以 `events:agent` 的披露是红档（danger），装前要逐条摊给用户看。
 
@@ -183,6 +189,17 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
 - **装载是同步的**：安装记录一变就把每个包的入口 `import()` 一遍。有格子的包开机就要挂进可见槽位，
   所以「懒装载」必须先有「哪个槽位真的可见」的回调，不是清单里补一个字段能解决的事。
   这条风险的兜底是 §6 那道 8 MiB 入口体积帽（超了装之前就被拒）。
+- **宿主按注册表全量激活**：装了但**没启用**的包同样会收到一次 `activate` —— `App.vue` 的
+  `syncActivations` 读的是 `FLOATING_MODULE_DEFINITIONS.value`（全量），挂载那一侧才按
+  `enabledModuleDefinitions` 过滤，而 `floating-modules.spec.ts` 里那条
+  「activates every module in registry order」钉的就是这个行为，不是 bug。内置用
+  `isModuleEnabled` 挡掉后台工作，**包读不到外壳的启用状态**：带轮询 / 定时出网的包只能把
+  后台任务挂在格子的 `onMounted` / `onBeforeUnmount` 上（格子被挂出来才等于「这一路要工作」）。
+- **包没有跨窗口通道**：`PluginHost` 的九个命名空间里没有窗口 label，也没有窗口间事件
+  （`host.event` 只是 `events:agent` 的按包拉取）。宿主自己那两处 `app.emit`
+  （安装记录变更、日志清空）订阅方是宿主前端，包碰不到。所以内置那套「owner 窗口轮询 +
+  广播给三窗」在包侧只能换成 `host.storage` 共享缓存 + 取数锁 + 一格定时回读 ——
+  `weather` / `todo` 两个包就是这么做的，代价是最坏同一周期打两次接口（两窗同毫秒抢锁）。
 - 从 npm 直接装包没做：那是 §0 里 chosen 的取舍，不是遗漏。
 - CSP 的 `script-src` 不含 `'unsafe-inline'`，Tauri 的 IPC 引导脚本吃不吃这条只有真窗知道
   （`pnpm tauri dev` 待验）。`frame-src` 已放行组件产物源与 `https:`。
@@ -209,3 +226,24 @@ Vue / Pinia 例外 —— 必须用宿主注入的那一份（§6）。
   `plugin-host.spec.ts`，「运行时那份优先于清单初值 + 只重排正显示的那张卡」在 `TooltipWindow.spec.ts`，
   数值本身（420×620）在 `plugin-limits.spec.ts` 手写字面量 —— 前两处只断言「被夹到常量」，
   真被抬帽是第三条红。
+
+## 11. 把内置模块迁成组件包（`weather` / `todo` 是第一条走通的路）
+
+内置模块与组件包共用同一张注册表，但**内置有四个东西包没有**：Rust 半边、宿主的
+`module_settings`、跨窗口事件、宿主 UI kit。迁移不是搬文件，是把这四样换成宿主侧的等价物 ——
+下面每行右边那一栏是**已经付掉的代价**，不是待办。
+
+| 内置的做法 | 组件包的做法 | 代价 |
+| --- | --- | --- |
+| `demand(layout)` 恒返回一个数 | 清单 `surfaces.cell: N` | 无损（`plugin-loader.ts` 的 `demandOf(cells)` 本来就是常数函数）；`demand` 随形态变的模块要先解掉这条 |
+| Rust 客户端直连（自带 256 / 512 KB 上限） | `host.http` + 清单 `hosts` 整名表 | 响应 4 MiB 帽、**只搬 UTF-8 文本**（二进制得自己在包里解码）；用户自填代理域名做不了 —— `hosts` 是装前逐条给他看过的静态表 |
+| `modules/<id>/secrets.rs`（固定 service 名） | `host.secrets`（service = `<App 标识>/plugin/<id>`） | 两格互读不到 ⇒ **凭据必须重填**，旧条目成孤儿；外壳里不许出现包 id，所以连迁移钩子都写不了 |
+| `module_settings[<id>]`（宿主配置文件，跨卸载） | `host.storage`（按包 id 隔离） | **卸载即删**，设置不再进用户配置文件 |
+| owner 窗口轮询 + `app.emit` 广播给三窗 | 共享缓存 + 取数锁 + 定时回读（§9） | 最坏同一周期打两次接口；改设置要等下一轮取数才落到格子 |
+| Pinia store | 一份 `reactive`（`src/state.js`） | 包根本不必带 Pinia；真要用就 `npm i -D pinia` 让 shim 转发到宿主那一份 |
+| 宿主 UI kit（`BaseSelect` / `SettingsField` / `BaseContextMenu` …） | 包里自带 markup + CSS | 设置页那种表单页是**重写不是搬**：todo 那 883 行 `GeneralSection.vue` 的全部工作量都在这一行 |
+| 模块自带的 spec（`demand.spec.ts` / `todo-css.spec.ts` …） | 随目录一起删 | 行为等价性另找证据：**把 Rust `#[test]` 的原输入喂给移植后的 JS** 逐条对撞。这一轮跑下来抓到 `parseDueDateMs` 少一个捕获组 —— 带时刻的截止全成 NaN，任务照列但逾期分档与排序静默塌掉 |
+
+迁完的收尾只有真窗能给结论：`pnpm tauri dev` → 装 `dist/<id>` → 四形态看排版与悬停
+（**忘了报 `reportHover` 的话格子画得出来、卡永远不弹**）→ 日志窗（齿轮 → 详情卡 → 拓展）
+看有没有一句「装载失败：」。

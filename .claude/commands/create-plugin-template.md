@@ -40,3 +40,6 @@ allowed-tools: Bash(npx vitest run *), Bash(rg *), Bash(git diff *)
 不许出现宿主没有的名字，也不许用「等等 / 之类」省略 —— `plugin-template-doc.spec.ts` 是双向集合断言，
 少写一项和多写一项都会红。披露原文照 `capability.rs` 一个字都不改；上限表按名字后缀换算可读单位
 （`_BYTES` → KiB/MiB/GiB、`_MS` → `N ms`、`_CHARS` → `N 字符`，其余是个数）。
+返回值类型里**会改变判据**的字段（如 `PluginHttpResult.status` 的「非 2xx 也照样 resolve」）要跟着那一档的
+成员行带出来：取材点是 `plugin-host.ts` 的成员注释，**别在文档里手加散文**（下次重生成会被洗掉）。
+这类语义行没有 spec 盯着 —— doc spec 只比名字与结构，靠人守。

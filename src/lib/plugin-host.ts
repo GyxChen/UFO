@@ -33,6 +33,10 @@ export interface PluginHttpOptions {
 
 /** 出网的返回。 */
 export interface PluginHttpResult {
+  /**
+   * HTTP 状态码。**非 2xx 也照样 resolve**（与内置流程脚本同口径）：「key 失效」这类
+   * 表意就写在 401 / 403 上，抛错会把状态码吞掉 —— 判成没网。
+   */
   status: number
   body: string
   headers: Record<string, string>
@@ -316,8 +320,11 @@ export interface PluginHost {
   }
   /** 出网（只走宿主，且只到清单 `hosts` 里的域名）。 */
   http: {
+    /** 发一次宿主代发的请求：非 2xx **也照样 resolve**，判 `result.status`（401 / 403 常表意「凭据失效」，抛错会把它吞成「没网」）。 */
     request(method: string, url: string, body?: string, options?: PluginHttpOptions): Promise<PluginHttpResult>
+    /** GET 的便捷写法：与 `request` 同一判据，非 2xx 也 resolve。 */
     get(url: string, options?: PluginHttpOptions): Promise<PluginHttpResult>
+    /** POST 一段文本体：与 `request` 同一判据，非 2xx 也 resolve。 */
     post(url: string, body: string, options?: PluginHttpOptions): Promise<PluginHttpResult>
   }
   /**

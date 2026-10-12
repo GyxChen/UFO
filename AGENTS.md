@@ -23,7 +23,7 @@ UFO 是一块**可拼装的悬浮窗**：显示 Claude / Codex / Qoder 等 agent
 | 会话数据链：token / base_url / prompt 采集、会话存档 | `reference/doc/rule/agent-status-session-data.md` |
 | Endpoint 档案、代理解析器、QuickJS 流程脚本沙盒 | `reference/doc/rule/agent-status-endpoint-flow.md` |
 | 接入一个新平台（改动清单与验收） | `reference/doc/guide/agent-status-platform-onboarding-guide.md` |
-| 组件包（插件）：清单契约 / 宿主能力边界 / 作者侧构建与热重载 | `reference/doc/guide/plugin-guide.md` |
+| 组件包（插件）：清单契约 / 宿主能力边界 / 作者侧构建与热重载 / 内置组件怎么迁成包 | `reference/doc/guide/plugin-guide.md` |
 | 转灯日志 | `reference/doc/guide/agent-status-log-guide.md` |
 | 消息推送 | `reference/doc/guide/agent-status-push-guide.md` |
 | 状态机全景图（`/draw` 生成） | `reference/doc/agent-status-state-machine.html` |

@@ -44,7 +44,19 @@ function ufoHostGlobals() {
     // 配置阶段就把名单算好：`load` 是同步钩子，拿不到 await 的结果。
     async buildStart() {
       for (const [name, globalKey] of Object.entries(modules)) {
-        const namespace = await import(name)
+        let namespace
+        try {
+          namespace = await import(name)
+        } catch (error) {
+          // ⚠️ 这一档必须能缺席：名单是**现取**的，而这个包未必装了它。模板坐在宿主仓库里
+          // 时 `import('pinia')` 会向上摸到宿主的 node_modules 而侥幸通过，拷到独立目录
+          // 起包就整个构建炸在「Cannot find package」—— 那不是配置错，是没装依赖。
+          // 缺席就从 shim 表里摘掉：作者真 `import 'pinia'` 时会得到一句「module not found」，
+          // 比在这里崩一个插件栈更可查。
+          delete modules[name]
+          console.warn(`[ufo-host-globals] 没装 ${name}，这一档不转发到宿主注入的 ${globalKey}：要用就 npm i -D ${name}`)
+          continue
+        }
         const names = Object.keys(namespace).filter(key => key !== 'default' && isIdentifier(key))
         const body = names.map(key => `export const ${key} = host.${key}`).join('\n')
         generated[name] = `const host = globalThis.${globalKey}

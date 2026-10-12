@@ -104,6 +104,10 @@ pub fn fetch(request: &FetchRequest, hosts: &[String]) -> Result<FetchResponse, 
     let timeout = request.timeout_ms.clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS);
     let mut agent_builder = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_millis(timeout)))
+        // ⚠️ 4xx / 5xx 不当错误抛出：组件要看 `status` 自己判断（与内置流程脚本同一口径，
+        // 见 `flow/api.rs` 的 `http_status_as_error(false)`）。默认 `true` 的坏法是「key 失效」
+        // 这类最该给用户看清楚的响应被折成一句 `请求失败：…`，`PluginHttpResult.status` 永远读不到。
+        .http_status_as_error(false)
         .max_redirects(5);
     // 代理：与内置流程脚本同一份系统代理设置？这里刻意不接 —— 组件要的是「直连白名单域名」，
     // 而用户选的代理解析器是给 CLI 会话用的，两套语义不该混。
@@ -146,7 +150,8 @@ pub fn fetch(request: &FetchRequest, hosts: &[String]) -> Result<FetchResponse, 
     };
     let response = match response {
         Ok(response) => response,
-        // ureq 把连接失败 / TLS / 超时都算 Err；组件要的是「为什么没成」这一句，不是 panic。
+        // 只剩连接失败 / TLS / 超时会走到这里（4xx / 5xx 已按上面的开关交回 `status`）；
+        // 组件要的是「为什么没成」这一句，不是 panic。
         Err(error) => return Err(format!("请求失败：{error}")),
     };
     let status = response.status().as_u16();

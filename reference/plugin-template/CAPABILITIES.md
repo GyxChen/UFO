@@ -55,9 +55,9 @@ await host.http.get(url, options)
 await host.http.post(url, body, options)
 ```
 
-- `request(method: string, url: string, body?: string, options?: PluginHttpOptions): Promise<PluginHttpResult>`
-- `get(url: string, options?: PluginHttpOptions): Promise<PluginHttpResult>`
-- `post(url: string, body: string, options?: PluginHttpOptions): Promise<PluginHttpResult>`
+- `request(method: string, url: string, body?: string, options?: PluginHttpOptions): Promise<PluginHttpResult>` —— 发一次宿主代发的请求：非 2xx **也照样 resolve**，判 `result.status`（401 / 403 常表意「凭据失效」，抛错会把它吞成「没网」）。
+- `get(url: string, options?: PluginHttpOptions): Promise<PluginHttpResult>` —— GET 的便捷写法：与 `request` 同一判据，非 2xx 也 resolve。
+- `post(url: string, body: string, options?: PluginHttpOptions): Promise<PluginHttpResult>` —— POST 一段文本体：与 `request` 同一判据，非 2xx 也 resolve。
 
 ### `host.fs` —— 需要 `fs`
 
