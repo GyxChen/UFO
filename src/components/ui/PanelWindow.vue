@@ -27,7 +27,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  /** 点了 ×：调用方负责收尾（隐藏自己 + 回报发起方）。 */
+  /** 点了 ×：调用方负责收尾（停掉自己的订阅，再销毁这扇窗）。 */
   close: []
 }>()
 

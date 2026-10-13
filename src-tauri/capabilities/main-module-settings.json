@@ -15,6 +15,7 @@
     "dialog:allow-save",
     "allow-manage-plugins",
     "allow-manage-plugin-logs",
+    "allow-open-panel-window",
     "dialog:allow-open"
   ]
 }

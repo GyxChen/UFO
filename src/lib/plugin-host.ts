@@ -379,7 +379,7 @@ export interface PluginHost {
    * 内嵌网页（清单要声明 `frame`）。
    *
    * 宿主只回答「这个地址能不能嵌」，真正的嵌入动作是作者界面里的 `<iframe src>` ——
-   * 刻意不为组件开新窗口：那样会绕开「声明 + 隐藏 + 按需显示」的窗口规矩，也把
+   * 刻意不为组件开新窗口：那样会绕开面板窗那套规矩（label 要进 capability、视图要在 `src/windows/index.ts` 登记），也把
    * 一个能显示任意网页、又能拿 host 的独立上下文留在屏幕外。
    */
   frame: {

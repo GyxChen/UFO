@@ -242,9 +242,9 @@ status monitor 每轮（约 500ms）调一次 `FlowState::tick(&snapshot, &profi
 | `get_endpoint_profiles` / `get_flow_results` / `get_flow_snapshot` | 所有窗口（`capabilities/default.json` 的 `allow-get-flow-results` 等） |
 | `save_endpoint_flow` / `run_flow_test` / `set_flow_secret` / `delete_flow_secret` / `add_endpoint_profile` / `delete_endpoint_profile` | **只设置侧**（`capabilities/main-module-settings.json`） |
 
-⚠️ `script-editor` 那扇独立窗口**一条命令都不拿**：它只通过 `lib/panel-window.ts` 的 open 事件收下这份草稿，
+⚠️ `script-editor` 那扇独立窗口**只拿一条 `take_panel_payload`**（新建那次自取暂存的草稿，读不到也改不了任何配置）：
 每次输入把整份正文回传给主窗，保存 / 运行测试仍然只在主窗发生 —— 于是「脚本正文能改到哪个 endpoint」这件事
-始终只有一个入口，权限面没有因为开窗而扩大。
+始终只有一个入口，权限面没有因为开窗而扩大（按需建窗那条 `open_panel_window` 只给设置侧，见 floating-module-guide §12.5）。
 
 事件：`endpoint-profiles`（档案变化）、`flow-results`（脚本结果）。配置写回仍走外壳的 `updateModuleSettings('agent-status', …)`，不新增保存命令。
 

@@ -108,7 +108,7 @@ src/
 │  ├─ floating-modules.ts         #   定义类型 + 需求汇总 + runtimeSnapshot + activateModules
 │  ├─ floating-module-context.ts  #   floatingModuleKey（宿主 ↔ 组件的注入契约）
 │  ├─ floating-bridge.ts          #   悬浮窗 ↔ 主窗的跨窗口事件常量与载荷
-│  ├─ panel-window.ts             #   独立面板窗的跨窗协议（open / closed 事件、隐藏兜底）
+│  ├─ panel-window.ts             #   独立面板窗的跨窗协议（按需建窗 / 两段载荷 / 宿主回报销毁）
 │  ├─ tooltip.ts                  #   提示窗分派与定位（resolveTooltipDefinition / placeTooltip）
 │  └─ snap.ts / window.ts / js-*  #   吸附、窗口动作、脚本编辑器公共件
 ├─ windows/index.ts               # ★ 独立面板窗视图登记（label → 组件；窗口侧的组合根）
@@ -121,7 +121,7 @@ src/
 - 会 → 放公共层（`src/components/ui/`、`src/components/floating/tooltip/`、`src/lib/`）。
 - 不会 → 放组件目录。
 
-⚠️ `src/App.vue` 是**唯一**按窗口 label 分派窗口的地方，但五窗里它只亲手认 `floating` / `main` / `tooltip` 三个外壳组件；主窗派出去的两扇独立面板窗（`script-editor` 整窗编辑脚本 / `status-log` 转灯日志完整链路）由它查 `src/windows/index.ts` 的 `PANEL_WINDOW_VIEWS` 拿到视图 —— 于是外壳依旧不点名任何模块。同一处还拉起两份窗口级 store（`useFloatingModulesStore().start()` 与 `useThemeStore().start()`）再调 `activateModules`。两份 store **五个窗口都各起一次**，漏起某个窗口，那个窗口就会永远停在 `fallbackConfig` 的默认值上（历史坑：提示窗不起配置 store → token 单位永远不跟随主窗切换）；`activateModules` 只在**挂模块视图**的那三个窗口调用，独立面板窗不激活（见 9.1）。加组件**不要**改这个文件。
+⚠️ `src/App.vue` 是**唯一**按窗口 label 分派窗口的地方，但六扇窗里它只亲手认 `floating` / `main` / `tooltip` 三个外壳组件；主窗派出去的独立面板窗（`script-editor` 整窗编辑脚本 / `status-log` 转灯日志完整链路 / `plugin-log` 某个包的调用流水）由它查 `src/windows/index.ts` 的 `PANEL_WINDOW_VIEWS` 拿到视图 —— 于是外壳依旧不点名任何模块。同一处还拉起两份窗口级 store（`useFloatingModulesStore().start()` 与 `useThemeStore().start()`）再调 `activateModules`。两份 store **每扇窗都各起一次**（面板窗是运行时才建的，同样走这一个入口），漏起某个窗口，那个窗口就会永远停在 `fallbackConfig` 的默认值上（历史坑：提示窗不起配置 store → token 单位永远不跟随主窗切换）；`activateModules` 只在**挂模块视图**的那三个窗口调用，独立面板窗不激活（见 9.1）。加组件**不要**改这个文件。
 
 ### 2.2 Rust
 
@@ -130,6 +130,7 @@ src-tauri/src/
 ├─ lib.rs                         # ★ 组合根：唯一点名组件的地方（窗口 / 托盘 / 命令注册 / 状态装配 / 钩子登记）
 ├─ main.rs                        # 入口：`--status-hook` 快进快出，其余全交给 Tauri
 ├─ devtools.rs / mouse.rs         # 外壳：调试开关 / 鼠标按键状态
+├─ panel_window.rs                # 独立面板窗的宿主侧：按需建窗 + 两段载荷 + 销毁回报（不认识任何具体窗口）
 ├─ floating/                      # 悬浮窗外壳（对应前端 `src/lib/floating-*` + `stores/floatingModules.ts`）
 │  ├─ mod.rs
 │  └─ module_config.rs            # 配置存取 / 迁移钩子 / 变更钩子：module_settings 整块透传，不认字段名
@@ -569,11 +570,11 @@ activate: () => {
 ### 9.1 挂模块视图的三个窗口都会激活：数据源只能有一个 owner
 
 - `activate` 会被**那三个窗口各调一次**（`floating` / `main` / `tooltip`，各自独立的前端实例与 Pinia），别假设「只调用一次」。
-- ⚠️ 主窗派出去的独立面板窗（`script-editor` / `status-log`）**不激活**：它们一块模块格子都没有，跟着激活就是白跑几路轮询（组件包里那种定时出网的数据源会变成双份）。所以「我的 `activate` 在每扇窗都跑过」不是可以依赖的前提，`App.vue` 那一句 `if (!panelWindowView)` 就是这条的落点。
+- ⚠️ 主窗派出去的独立面板窗（`script-editor` / `status-log` / `plugin-log`）**不激活**：它们一块模块格子都没有，跟着激活就是白跑几路轮询（组件包里那种定时出网的数据源会变成双份）。所以「我的 `activate` 在每扇窗都跑过」不是可以依赖的前提，`App.vue` 那一句 `if (!panelWindowView)` 就是这条的落点。
 - 同一份外部数据（轮询 / 定时请求 / 外部事件订阅）**只允许一个窗口当 owner**。UFO 里选 `floating`：它常驻、总是存在；`main` 与 `tooltip` 可能一直隐藏。
 - owner 判定用 `getCurrentWindow().label`，**不要**用「谁先启动谁负责」或 `setTimeout` 猜窗口。
 - owner 必须同时满足「组件已启用」+「我是 owner 窗口」；组件被禁用后**必须停掉定时器**，其它窗口不得偷偷接管轮询。
-- `activate` 可能在配置异步加载完成**之前**被调用：需要配置才能开跑的组件，先 `await useFloatingModulesStore().start()`（或订阅配置变化）再启动请求，别拿 `fallbackConfig` 直接打网。外壳已经在 `App.vue` 里为**五个窗口各起一次**这份窗口级 store（见 2.1，幂等；只有 `activateModules` 那一步按窗口类型跳过），组件的 `await start()` 只是自保；真正要记住的是反例 —— 若外壳漏起某个窗口的配置 store，那个窗口会永远停在 `fallbackConfig` 的默认值上（历史坑：提示窗不读配置 → 主窗改了 token 单位也不跟随）。
+- `activate` 可能在配置异步加载完成**之前**被调用：需要配置才能开跑的组件，先 `await useFloatingModulesStore().start()`（或订阅配置变化）再启动请求，别拿 `fallbackConfig` 直接打网。外壳已经在 `App.vue` 里为**每扇窗各起一次**这份窗口级 store（见 2.1，幂等；面板窗是运行时才建的，走同一个入口，也只有 `activateModules` 那一步按窗口类型跳过），组件的 `await start()` 只是自保；真正要记住的是反例 —— 若外壳漏起某个窗口的配置 store，那个窗口会永远停在 `fallbackConfig` 的默认值上（历史坑：提示窗不读配置 → 主窗改了 token 单位也不跟随）。
 - `start()` / `stop()` 必须幂等：重复调用不得产生第二个监听器、第二个定时器或第二条广播链路。
 
 ---
@@ -671,7 +672,7 @@ Tauri 的窗口尺寸是**物理像素**，CSS 是逻辑像素。高分屏（sca
   → revision = 当前 revision + 1
   → validate()：校验 schema_version / 模块 id（≤64 字符、不含 / 与 \）/ clamp 格子上限与一格边长（cell_px）
   → persist()：先写 floating-modules.tmp 再 rename（原子，不留半截文件）
-  → emit('floating-module-config')                 [五个窗口都收，前端 applyConfig]
+  → emit('floating-module-config')                 [每扇窗都收，前端 applyConfig]
   → notify()：按登记顺序调用各组件的 config_hook  [组件据此刷新运行时状态，改完即时生效]
 ```
 
@@ -794,8 +795,8 @@ pub fn config_hook() -> ModuleConfigHook { Box::new(|app, config| { … }) }
 
 **权限拆分策略**：
 
-- **只读命令** → `capabilities/default.json`（`windows: ["main","floating","tooltip","script-editor","status-log"]`）：凡是可能显示数据的窗口都要能读。
-- **写命令**（改配置、删记录、存脚本）→ `capabilities/main-module-settings.json`（`windows: ["main","status-log"]`）：只有**设置侧**有写权限 —— 主窗，以及主窗自己派出去、承担写动作的那扇面板窗（`status-log` 带清空 / 导出 / 计数 / attach，故连 `dialog:allow-save` 一起给）。`script-editor` **没有**任何写命令：它只把正文回传主窗，落盘仍由主窗那条 `save_endpoint_flow` 做。
+- **只读命令** → `capabilities/default.json`（`windows: ["main","floating","tooltip","script-editor","status-log","plugin-log"]`）：凡是可能显示数据的窗口都要能读。面板窗是运行时才建出来的，它的 label 同样要预先写进这份名单 —— 不在名单里的窗口**零 IPC 权限**，连 `listen` 都收不到。
+- **写命令**（改配置、删记录、存脚本）→ `capabilities/main-module-settings.json`（`windows: ["main","status-log","plugin-log"]`）：只有**设置侧**有写权限 —— 主窗，以及主窗自己派出去、承担写动作的那两扇面板窗（`status-log` 带清空 / 导出 / 计数 / attach，`plugin-log` 带清空 / 翻页 / 挂跟随，故连 `dialog:allow-save` 一起给）。`script-editor` **没有**任何写命令：它只把正文回传主窗，落盘仍由主窗那条 `save_endpoint_flow` 做。按需建窗那条 `allow-open-panel-window` 也只给这一份 capability（只有设置侧能派窗）。
 - 新增窗口时**必须**把 label 加进某份 capability 的 `windows` 数组，否则该窗口**完全没有 IPC 权限**（连 `listen` 都收不到；细节见 13.1）。
 
 ### 12.6 新增源 / 平台
@@ -806,22 +807,26 @@ pub fn config_hook() -> ModuleConfigHook { Box::new(|app, config| { … }) }
 
 ## 13. 跨窗口通信与 capability
 
-### 13.1 五个窗口
+### 13.1 六扇窗口，两种生命周期
 
-| label | 用途 | 关键配置 |
+| label | 用途 | 生命周期与关键配置 |
 |---|---|---|
-| `floating` | 悬浮窗 | 初始 45×45（= 默认一格；读到配置后按 `cell_px` 重算）、transparent、alwaysOnTop、不可缩放 |
-| `main` | 设置主窗 | 1000×750、`visible: false`、自绘标题栏、关闭 = 隐藏到托盘 |
-| `tooltip` | 悬停信息卡 | 300×260、`visible: false`、`focusable: false`、点击穿透 |
-| `script-editor` | 整窗编辑流程脚本（主窗派出的独立面板窗） | 900×640（最小 560×340）、`visible: false`、`decorations: false`、自绘标题栏 |
-| `status-log` | 转灯日志完整链路（同一套面板窗） | 1160×720（最小 760×420）、`visible: false`、`decorations: false`、自绘标题栏 |
+| `floating` | 悬浮窗 | 在 conf 声明；初始 45×45（= 默认一格；读到配置后按 `cell_px` 重算）、transparent、alwaysOnTop、不可缩放 |
+| `main` | 设置主窗 | 在 conf 声明；1000×750、`visible: false`、自绘标题栏、关闭 = 隐藏到托盘 |
+| `tooltip` | 悬停信息卡 | 在 conf 声明；300×260、`visible: false`、`focusable: false`、点击穿透 |
+| `script-editor` | 整窗编辑流程脚本 | **按需建、关窗即销毁**；900×640（最小 560×340）、`decorations: false`、自绘标题栏 |
+| `status-log` | 转灯日志完整链路 | 同上；1160×720（最小 760×420） |
+| `plugin-log` | 某个组件包的完整调用流水 | 同上；1160×720（最小 760×420） |
 
-窗口都在 `src-tauri/tauri.conf.json` 声明；`src/App.vue` 按 label 分派组件（面板窗那两格取 `src/windows/index.ts` 的 `PANEL_WINDOW_VIEWS`）。**没有运行时建窗**：
+`src/App.vue` 按 label 分派组件（三扇常驻窗点名各自的外壳组件，面板窗那几格取 `src/windows/index.ts` 的 `PANEL_WINDOW_VIEWS`）。
 
-- `tooltip` 走「**声明 + 隐藏 + 按需显示**」，因此**不需要** `core:webview:allow-create-webview-window` 这类建窗权限。加新窗口照着做（在 conf 里声明成 `visible: false`，用时 `show()`），不要改成运行时创建 —— 那会连带引入建窗权限与窗口生命周期管理。
-- 两扇面板窗走的是**同一口径**（声明 + 隐藏 + 按需显示），协议在 `src/lib/panel-window.ts`：主窗 `openPanelWindow(label, data)` 先 `show()` 再 `emitTo` 事件 `ufo-panel-window-open`，窗口收起时发 `ufo-panel-window-closed` 回报发起方。⚠️ **关窗 = 隐藏而不是销毁**（Rust 侧把 `CloseRequested` 统一改成隐藏），所以**每次 open 都必须把这一次的数据重新递进去**，窗口侧不许留着上一次的真相自己往下跑；数据形状由各功能自己的契约文件解释（`src/lib/script-editor-window.ts`、`src/modules/agent-status/lib/status-log-window.ts`），通用层不认识。
-- 点击穿透在 Rust 侧 `setup` 里设（`window.set_ignore_cursor_events(true)`）。⚠️ **Rust 调用不经过 capability 校验**，所以穿透不需要额外权限；但同一件事若改用前端 `invoke` 就要授权，别绕。
-- ⚠️ **新增窗口必须把 label 加进 `src-tauri/capabilities/default.json` 的 `windows` 数组**，否则该窗口**完全没有 IPC 权限**（连 `listen` 事件都不行，表现为「窗口开了但什么都收不到」）。写命令另放 `main-module-settings.json`（见 12.5）。这条「label / conf 声明 / capability / 前端常量」四处同源由 `src/windows/panel-windows.spec.ts` 锁住 —— 它同时要求面板窗是 `visible: false` + `decorations: false`（标题栏必须由 `PanelWindow.vue` 自绘，系统给一套就成两套）。
+- **常驻三窗**在 `src-tauri/tauri.conf.json` 里声明，走「**声明 + 隐藏 + 按需显示**」：`tooltip` 平时 `visible: false` 按需 `show()`，关窗 = 隐藏（Rust 侧 `CloseRequested` 对这三扇 `prevent_close()` + `hide()`），因此**不需要** `core:webview:allow-create-webview-window`。
+- **面板窗一律不在 conf 里声明**：声明即建窗，而 WebView2 是**每扇窗一个 renderer 进程**（实测每个 85~105 MB），三扇隐藏窗就是 ~270 MB 白占的常驻内存。它们由 `src-tauri/src/panel_window.rs` 的 `open_panel_window` 现建、关窗**真的销毁**（`Destroyed` 里按 label 清掉那份「谁在看」的账），同时在开的数量有配额上限（`MAX_LIVE_PANEL_WINDOWS`，与登记数由 `panel-windows.spec.ts` 对撞）。建窗在 Rust 侧完成，所以照样不需要给前端建窗权限。
+- 每扇面板窗的**身份与几何只写在它自己的契约文件里**（`lib/script-editor-window.ts`、`modules/agent-status/lib/status-log-window.ts`、`lib/plugin-log-window.ts` 里各一份 `*_WINDOW: PanelWindowSpec`）；通用层 `src/lib/panel-window.ts` 不认识任何具体窗口的数据形状。
+- 协议在 `src/lib/panel-window.ts`：主窗 `openPanelWindow(spec, data)` → 宿主 `open_panel_window`。窗口不预先存在，所以**数据走两段** —— 建窗时把载荷暂存、窗口挂载后调 `take_panel_payload` 自取一次；窗口已经活着时直接 emit `ufo-panel-window-open`。`usePanelWindowOpen()` 把两条一起接上（⚠️ 顺序硬要求：**先 listen 再取自取**，写反就丢掉两步之间那一次 open）。⚠️ **同一 label 复用**：二次 open 只唤到前台并换数据，所以每次 open 必须整份换掉窗口自己的状态，不许留着上一次的真相往下跑。
+- **「我关了」由宿主回报**：销毁中的 webview 来不及自己发消息，Alt+F4 更没有出口，所以发起方 label 记在宿主侧（取的是**调用方窗口**的身份，不信请求里写的字段），`WindowEvent::Destroyed` 时补发 `ufo-panel-window-closed` —— 主窗据此解锁内嵌编辑框，不靠前端自觉。
+- 点击穿透在 Rust 侧 `setup` 里设（`window.set_ignore_cursor_events(true)`）。⚠️ **Rust 调用不经过 capability 校验**，所以穿透与建窗都不需要额外权限；但同一件事若改用前端 `invoke` 就要授权，别绕。
+- ⚠️ **新增窗口必须把 label 加进 `src-tauri/capabilities/default.json` 的 `windows` 数组**（面板窗还要在 `main-module-settings.json` 里拿它需要的写命令），否则该窗口**完全没有 IPC 权限**（连 `listen` 事件都不行，表现为「窗口开了但什么都收不到」）。这条「label / 契约几何 / capability / `PANEL_WINDOW_VIEWS` 登记 / Rust 配额与夹取边界」同源由 `src/windows/panel-windows.spec.ts` 锁住 —— 它同时反向断言**面板窗不许出现在 `tauri.conf.json` 里**（写回去就等于把那份常驻内存重新请回来），并要求标题栏由 `PanelWindow.vue` 自绘（系统给一套就成两套）。
 - 跨窗口控制别的窗口（悬浮窗指挥 `tooltip`）是允许的：ACL 校验的是**调用方**的权限，目标 label 只是参数。
 
 ### 13.2 事件契约
@@ -970,7 +975,7 @@ npm run check                      # cargo check（快速编译闸门）
 | 外壳里写 `if (id === 'agent-status')` | 第二个组件出现时外壳变成 if 地狱；结构验收 grep 破线 |
 | 外壳注释举例写真实组件名 / 字段名 | 一样是泄漏（grep 只查代码字符串查不到注释），并且诱导下一个人去点名组件；见 1.2 |
 | 新组件 / 新窗口没进 `capabilities/*.json` 的 `windows` 数组 | 该窗口**零 IPC 权限**：能显示但收不到任何事件，排查半天像广播丢了（见 13.1） |
-| 运行时 `WebviewWindow.create` 建窗 | 白白引入 `core:webview:allow-create-webview-window` 与窗口生命周期管理；本项目一律「声明 + 隐藏 + 按需显示」（见 13.1） |
+| 面板窗回写进 `tauri.conf.json`、或前端自己 `WebviewWindow.create` | 前者把三扇隐藏窗那 ~270 MB 常驻内存重新请回来（声明即建窗，每扇一个 renderer）；后者要额外给前端建窗权限。面板窗一律走 `open_panel_window`（Rust 侧建窗，不需要前端建窗权限），常驻三窗才在 conf 里声明（见 13.1） |
 | 组件 `demand` 返回 0 想「这个形态不占地方」 | 0 照样按 1 格算，窗口还是那么大；该用开关或 `supportedLayouts`（见 6.2） |
 | 组件在槽位里再加 `padding` | 外壳已经只留 1px 描边 + `p-0.5`，槽位 `overflow: hidden`，多出来的内边距直接把内容挤被裁（见 5.5） |
 | 信息卡内容外面套一层 `<div>` | `.tooltip-shell` 的行级 flex 与 `mt-auto` 失效，间距散掉、提问不再贴底（见 8.2） |
@@ -1013,8 +1018,8 @@ npm run check                      # cargo check（快速编译闸门）
 | 提示窗默认尺寸 | 300×260（`tauri.conf.json`） | 组件用 `tooltip.size` 覆盖（可给按目标算的函数）；外壳 `resolveTooltipSize` + `clampTooltipSize` 夹进工作区，`present()` 里先 `setSize` 再定位 |
 | 提示窗内容分派 | `resolveTooltipDefinition(moduleId, …)`（`src/lib/tooltip.ts`） | 提示窗不认识组件语义；加信息卡不用改提示窗 |
 | 事件名 | `ufo-floating-runtime` / `-request` / `ufo-open-module-settings` / `tooltip-hover` / `tooltip-interaction` / `floating-module-config` | `src/lib/floating-bridge.ts`、`src/lib/tooltip.ts`；窗口级事件走 `ufo-` 前缀（`tooltip-*` / `floating-module-config` 是历史命名，照用即可） |
-| 窗口 label | `floating` / `main` / `tooltip` / `script-editor` / `status-log` | 后两个是主窗派出的独立面板窗，视图登记在 `src/windows/index.ts`；新窗口必须同时进 `src-tauri/capabilities/default.json` 的 `windows` 数组，否则**零 IPC 权限** |
-| 权限分工 | 只读命令 → `default.json`（所有窗口）；写命令 → `main-module-settings.json`（设置侧：`main` 与它派出的 `status-log`） | 见 12.5 的「三处注册」 |
+| 窗口 label | 常驻：`floating` / `main` / `tooltip`（在 `tauri.conf.json` 声明）；面板窗：`script-editor` / `status-log` / `plugin-log`（**不声明**，按需建、关窗即销毁） | 面板窗的 label 与几何只在它自己的契约文件里写一份（`*_WINDOW`），视图登记在 `src/windows/index.ts`；**两种窗口都必须**进 `src-tauri/capabilities/default.json` 的 `windows` 数组，否则**零 IPC 权限**（见 13.1） |
+| 权限分工 | 只读命令 → `default.json`（所有窗口）；写命令 → `main-module-settings.json`（设置侧：`main` 与它派出的 `status-log` / `plugin-log`，按需建窗那条也只给这一份） | 见 12.5 的「三处注册」 |
 | 配置键 | `modules[].enabled|order`、`cell_px`、`module_settings[<id>]` | 外壳只解释这三类；其余字段全在各组件自己的块里 |
 | 组件可用契约 | `FloatingModuleApi`（`allocatedCells` / `reportHover`）+ `@/lib/floating-*` + `useFloatingModulesStore` | 就这三处，见 1.2 |
 | 注释要求 | 每个方法写功能；接口 / type 描述字段；关键代码写清在干什么 | 属稳定规则，落点在 `../rule/` 的代码规范那节；本文不重复 |

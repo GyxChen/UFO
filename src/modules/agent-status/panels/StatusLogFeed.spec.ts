@@ -13,8 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import StatusLogFeed from './StatusLogFeed.vue'
 import { useFloatingModulesStore } from '@/stores/floatingModules'
 import { AGENT_STATUS_MODULE_ID } from '../settings'
-import { PANEL_WINDOW_OPEN_EVENT } from '@/lib/panel-window'
-import { STATUS_LOG_WINDOW_LABEL } from '../lib/status-log-window'
+import { STATUS_LOG_WINDOW } from '../lib/status-log-window'
 import type { FloatingModuleConfig } from '@/lib/floating-modules'
 import type { StatusLogEntry, StatusLogPage } from '../lib/status-log'
 import { emptyLogUsage } from '../lib/status-log'
@@ -26,15 +25,6 @@ const { invokeMock, listenMock, saveMock, emitToMock, getAllWindowsMock } = vi.h
   emitToMock: vi.fn(),
   getAllWindowsMock: vi.fn(),
 }))
-
-/** 假的独立日志窗：只关心「有没有被叫起来」。放在 hoisted **外面**，才能用真的 label 常量。 */
-const logWindow = {
-  label: STATUS_LOG_WINDOW_LABEL,
-  show: vi.fn(),
-  unminimize: vi.fn(),
-  setFocus: vi.fn(),
-  hide: vi.fn(),
-}
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock, emitTo: emitToMock, default: {} }))
@@ -116,9 +106,7 @@ beforeEach(() => {
   emitToMock.mockReset()
   emitToMock.mockResolvedValue(undefined)
   getAllWindowsMock.mockReset()
-  getAllWindowsMock.mockResolvedValue([logWindow])
-  logWindow.show.mockReset()
-  logWindow.setFocus.mockReset()
+  getAllWindowsMock.mockResolvedValue([])
 })
 
 describe('StatusLogFeed', () => {
@@ -153,18 +141,35 @@ describe('StatusLogFeed', () => {
     expect(colored).toEqual(['绿', '黄'])
   })
 
-  it('把选中的那条会话交给独立窗口，条目本身不再画两栏', async () => {
+  it('把选中的那条会话交给宿主现建的独立窗口，条目本身不再画两栏', async () => {
+    invokeMock.mockClear()
     const wrapper = await mountFeed(true)
+    invokeMock.mockClear()
     await wrapper.find('.lg-inline__expand').trigger('click')
     await flushPromises()
 
-    expect(logWindow.show, '要把那一扇窗叫起来').toHaveBeenCalledTimes(1)
-    expect(logWindow.setFocus, '开完要聚焦，否则用户看不见它开在哪').toHaveBeenCalledTimes(1)
-    const call = emitToMock.mock.calls.find(item => item[1] === PANEL_WINDOW_OPEN_EVENT)
-    expect(call?.[0], 'open 载荷只发给那一扇窗').toBe(STATUS_LOG_WINDOW_LABEL)
-    expect(call?.[2]).toMatchObject({ requester: 'main', data: { sessionKey: 'codex:s1' } })
+    const call = invokeMock.mock.calls.find(([name]) => name === 'open_panel_window')
+    expect(call, '要把那一扇窗开起来：走宿主的按需建窗命令').toBeTruthy()
+    const request = call?.[1] as { request: Record<string, unknown> }
+    // 身份与几何取自这扇窗自己的契约（主窗不在这里抄一份尺寸）。
+    expect(request.request).toMatchObject(STATUS_LOG_WINDOW)
+    expect(request.request.data, '只递「看哪一条」，过滤条件是那一扇窗自己的事').toEqual({ sessionKey: 'codex:s1' })
+    // 发起方由宿主按调用方窗口取，前端不写：写了也不作数，留着只会误导。
+    expect(request.request).not.toHaveProperty('requester')
     // 两栏正文已经搬进独立窗口：条目里再画一层，就是当年「浮层盖住两级标签页」的复发。
     expect(document.querySelector('.lg-split')).toBeNull()
+  })
+
+  it('建窗失败把原因写在条目里，不是静默什么都不发生', async () => {
+    const wrapper = await mountFeed(true)
+    invokeMock.mockImplementation((command: string) =>
+      command === 'open_panel_window'
+        ? Promise.reject('同时打开的独立窗口已达上限（3 扇），先关掉一个')
+        : Promise.resolve(undefined)
+    )
+    await wrapper.find('.lg-inline__expand').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已达上限')
   })
 
   it('does not fire an export when the save dialog is cancelled', async () => {

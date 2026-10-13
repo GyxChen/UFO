@@ -17,6 +17,8 @@ mod migrate;
 /// 悬浮窗组件在 Rust 侧的家：一个组件一个目录（与前端 `src/modules/` 一一对应）。
 mod modules;
 mod mouse;
+/// 独立面板窗（脚本编辑 / 各类日志）的宿主侧：按需建窗、载荷交接、销毁回报。
+mod panel_window;
 /// 插件（组件包）：清单契约、能力注册表、装载协议与安装记录。
 mod plugin;
 
@@ -67,6 +69,11 @@ use plugin::commands::{
     report_plugin_load_ms, set_plugin_dev_reload, set_plugin_log_view,
     uninstall_plugin,
 };
+use panel_window::{open_panel_window, take_panel_payload, PanelWindowState};
+
+/// 常驻三窗：关掉只是隐藏（进程与窗口都要留着，随时再叫出来）。
+/// **不在这份名单里的窗口 = 按需建的面板窗**，关窗即销毁，于是它的 renderer 进程跟着释放。
+const PERSISTENT_WINDOWS: [&str; 3] = [MAIN_WINDOW, "floating", TOOLTIP_WINDOW];
 
 const MAIN_WINDOW: &str = "main";
 /// 信息提示窗 label：点击穿透与 devtools 例外都要点名它，故留在非调试构建里。
@@ -168,6 +175,8 @@ pub fn run() {
                 log_state,
             );
             app.manage(status_state.clone());
+            // 面板窗宿主状态：待取载荷与归属表（谁开的这扇窗，销毁就回报给谁）。
+            app.manage(PanelWindowState::default());
             app.manage(profile_state);
             app.manage(session_store);
             app.manage(module_state);
@@ -241,6 +250,9 @@ pub fn run() {
             // 也避免清单漏项导致新窗口永远开不出 devtools。
             #[cfg(debug_assertions)]
             let devtools_targets = devtools::DevtoolsTargets::from_env();
+            // 存一份给按需建窗的那条路用：面板窗是运行时才建的，下面这一轮遍历不到它。
+            #[cfg(debug_assertions)]
+            app.manage(devtools_targets.clone());
             #[cfg(debug_assertions)]
             for (label, window) in app.webview_windows() {
                 if devtools_targets.wants(&label) {
@@ -303,13 +315,36 @@ pub fn run() {
             }
             _ => {}
         })
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                if let Err(error) = window.hide() {
-                    eprintln!("failed to hide {} window: {error}", window.label());
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
+                // 常驻三窗关窗 = 隐藏（进程与窗口都留着，随时再叫）。
+                // 面板窗**不拦**：让它真的关掉，它那个 renderer 进程才会被释放（这是改按需建窗的全部意义）。
+                if PERSISTENT_WINDOWS.contains(&window.label()) {
+                    api.prevent_close();
+                    if let Err(error) = window.hide() {
+                        eprintln!("failed to hide {} window: {error}", window.label());
+                    }
                 }
             }
+            WindowEvent::Destroyed => {
+                let label = window.label();
+                if PERSISTENT_WINDOWS.contains(&label) {
+                    return;
+                }
+                // 前端在被销毁时来不及自己收尾，两份「谁在看」的账必须由这里摘掉：
+                // 转灯日志按窗口 label 记账，插件日志按「包 + 窗口」记账。
+                if let Some(state) = window.try_state::<StatusState>() {
+                    state.log.set_viewer(label, false);
+                }
+                if let Some(state) = window.try_state::<plugin::log::LogState>() {
+                    state.drop_window_viewers(label);
+                }
+                // 最后清宿主账并回报发起方（主窗据此解锁内嵌编辑框）。
+                if let Some(state) = window.try_state::<PanelWindowState>() {
+                    state.note_destroyed(window.app_handle(), label);
+                }
+            }
+            _ => {}
         })
         .plugin(tauri_plugin_shell::init())
         // 「导出转灯日志」要用原生另存为对话框拿目标路径：它走 IPC → RFD 自己弹窗，
@@ -335,6 +370,8 @@ pub fn run() {
             get_status_snapshot,
             dismiss_status_session,
             set_tooltip_interactive,
+            open_panel_window,
+            take_panel_payload,
             get_proxy_resolvers,
             get_endpoint_profiles,
             add_endpoint_profile,

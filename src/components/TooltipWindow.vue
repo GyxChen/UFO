@@ -50,6 +50,16 @@ let transitionTail: Promise<void> = Promise.resolve()
 let lastRequest: PresentRequest | null = null
 
 /**
+ * 该不该有一张卡在屏幕上（present 一登记就置真，hide 一收就置假）。
+ *
+ * ⚠️ 这是打断「悬浮窗 ↔ 提示窗互相点着空转」的那道闸：`hide()` 会向悬浮窗回报「指针不在卡上了」，
+ * 悬浮窗收到后又报一次「离开了灯」，于是收起 → 回报 → 再收起……实测约 8 Hz 跑一整晚，
+ * 每轮两趟跨窗事件 + 一次 `window.hide()` + 一条 Rust 命令（实测占掉约 20% 单核）。
+ * 本来就没有卡要收的时候，就别再说话。
+ */
+let shown = false
+
+/**
  * 此刻该展示哪个模块的信息卡：有悬停目标 + 该模块声明了 `tooltip` + 模块认为内容已就绪。
  * 内容未就绪时返回 null（不弹窗），避免先在旧位置闪一个空框。
  */
@@ -177,6 +187,8 @@ watch(
 /** 定位并显示提示窗；先 setPosition 再 show，避免在旧位置闪一下。 */
 async function present(request: PresentRequest) {
   if (!isPresentRequestCurrent(request)) return
+  // 一登记这次展示就算「该有卡」：中途被更新的请求顶掉时，收起那一路照样要把窗口与穿透状态复位。
+  shown = true
 
   const { payload, definition, target } = request
   const centerX = Math.round(payload.anchor.x + payload.anchor.width / 2)
@@ -215,6 +227,9 @@ async function hide(generation?: number) {
   if (generation !== undefined && generation !== transitionGeneration) return
   // 卡已经不在了：运行时改尺寸的回调不该再拿旧请求去量窗。
   lastRequest = null
+  // 见 `shown` 那条：没在显示就不必再回报交互，否则两头会互相触发着空转下去。
+  if (!shown) return
+  shown = false
   try {
     notifyTooltipInteraction(false)
     await window.hide()

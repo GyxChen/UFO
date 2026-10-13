@@ -252,7 +252,7 @@
   ⚠️ 把读数藏进 hover 等于没写 —— 用户必须不悬浮就知道现状。
 - **浮层纪律**：角标面板 `Teleport` 到 body，用纯函数 `placeContextMenu` 定位（贴着锚点摆、越界夹回视口），几何不重写。⚠️ 主窗里**任何**浮层（角标面板 / 下拉 / 右键菜单）都必须 `Teleport`：从 `.main-shell` 到 `.main-window--wide` 有多层 `overflow: hidden`，各分区面板又各自内滚，留在原地的绝对定位一定被裁掉。
 - **z-index 阶梯**：`BaseSelect` `40` → 右键菜单 `60` → **说明角标 `70`**（同一套黑投影，浮层看着是同一层东西，角标必须盖住右键菜单）。⚠️ `../guide/floating-module-guide.md` §7.4 写的「modal 50」在代码里没有对应值（只有 40 / 60 / 70），以代码为准。
-- **搬出主窗的那两个整窗阅读面不参与这套阶梯**：脚本编辑与转灯日志从前是 `Teleport` 进 `#main-content` 的两层 `z-40` 大浮层，现在是 `script-editor` / `status-log` 两扇独立窗口（§5、`../guide/agent-status-log-guide.md` §7）—— 谁盖住谁是桌面窗口的次序，不是层叠上下文，所以这里没有它们的档位，外壳一律走公共的 `.panel-*`。留在主窗里需要这套纪律的只剩**角标面板 / 下拉 / 右键菜单**。
+- **搬出主窗的那几个整窗阅读面不参与这套阶梯**：脚本编辑与转灯日志从前是 `Teleport` 进 `#main-content` 的两层 `z-40` 大浮层，现在是 `script-editor` / `status-log` / `plugin-log` 几扇独立窗口（§5、`../guide/agent-status-log-guide.md` §7）—— 谁盖住谁是桌面窗口的次序，不是层叠上下文，所以这里没有它们的档位，外壳一律走公共的 `.panel-*`。留在主窗里需要这套纪律的只剩**角标面板 / 下拉 / 右键菜单**。
 - ⚠️ 勾选项**自身**的一句话说明与风险告知（如「提问可能含私有代码」）继续用原生 `title` 附着在选项上：每项文案不同，且风险必须落在勾选处 —— 挪到别处就等于没告知。（只对设置页成立；悬浮窗指示灯与信息卡**禁** `title`，见 `../guide/floating-module-guide.md` §8.2。）
 - ⚠️ 反馈类文字不是 tip：不要用 `SettingsHint` 装状态提示，行内反馈走 `role="status"` 那套。
 

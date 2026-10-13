@@ -88,6 +88,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   log.stop()
+  // 存档列表的订阅同样要退：start/stop 成对，否则切走这一页之后每条 session-records
+  // 广播还会打进来重算一遍整份列表（store 有 started 守卫，不会叠加监听，但不会自己停）。
+  records.stop()
 })
 
 /**

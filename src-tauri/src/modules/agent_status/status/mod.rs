@@ -229,7 +229,7 @@ pub fn dismiss_status_session(
     );
 
     let snapshot = state.snapshot_with_upstream();
-    let _ = app.emit("agent-status", &snapshot);
+    emit_status_snapshot(&app, &snapshot);
     Ok(snapshot)
 }
 
@@ -268,6 +268,9 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
     // 上一轮快照的「上游签名」：会话 key → 解析出的 upstream_url。
     // 用于在 cc-switch 里手动切了 provider（无新 hook 事件）时，也能把新上游推到前端。
     let mut last_upstream_sig: Vec<(String, Option<String>)> = Vec::new();
+    // 上一轮主窗的可见性：主窗隐藏期间收不到快照（见 `emit_status_snapshot`），
+    // 所以「刚变成可见」的那一轮要补发一次，否则托盘 / 前端两条显示路径下它都会停在隐藏前的旧值上。
+    let mut main_was_visible: Option<bool> = None;
 
     loop {
         let mut changed = false;
@@ -464,7 +467,20 @@ fn monitor_loop<R: Runtime + 'static>(app: AppHandle<R>, state: StatusState) {
             }
         }
 
-        if changed {
+        // 主窗这一轮有没有从「不可见」翻成「可见」：它隐藏期间被跳过了广播（见
+        // `emit_status_snapshot`），所以翻转的那一轮按「变了」处理，补发一份当前值。
+        // 只查主窗一个句柄，不必遍历全部窗口 —— 这个判断每 500ms 跑一次。
+        let became_visible = app
+            .get_webview_window(MAIN_WINDOW)
+            .map(|window| {
+                let visible = window.is_visible().unwrap_or(true);
+                let flipped = visible && main_was_visible == Some(false);
+                main_was_visible = Some(visible);
+                flipped
+            })
+            .unwrap_or(false);
+
+        if changed || became_visible {
             emit_snapshot(&app, &state);
         }
         // 转灯日志：占用读数按自己的节流刷（日志关着也要刷 —— 盘上已有的文件仍在被回收），
@@ -850,7 +866,33 @@ fn apply_status_event<R: Runtime>(
 
 fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, state: &StatusState) {
     // 走带上游信息的快照，与 get_status_snapshot 同一口径。
-    let _ = app.emit("agent-status", state.snapshot_with_upstream());
+    emit_status_snapshot(app, &state.snapshot_with_upstream());
+}
+
+/// 主窗 label（与组合根 `lib.rs::MAIN_WINDOW` 同值）：只有它会被可见性过滤。
+const MAIN_WINDOW: &str = "main";
+
+/// 把状态快照投给该收的窗口。
+///
+/// 不再用 `app.emit` 全窗广播：WebView2 在窗口 `hide()` 之后并不会把页面标成不可见
+/// （tauri 从不调用 webview 级 `set_visible`），于是隐藏中的主窗照样为每条广播跑一遍
+/// DOM 更新与样式 / 布局重算。实测主窗被显示过一次之后，静置 CPU 从 0.005 核涨到 0.04 核、
+/// 事件压力下 0.037 → 0.158 核，且不会自行回落（证据见 `reference/doc/perf-report-2026-09-28.md` §4）。
+///
+/// ⚠️ 只过滤主窗，提示窗照旧全量投：提示窗的 `tooltip.hasContent` 要在弹窗**之前**就答得上来，
+/// 漏掉一条广播就会整块弹不出来。主窗漏掉的会在它重新显示时由 monitor 补发一份，
+/// 见 [`monitor_loop`] 里的 `became_visible`。
+pub fn emit_status_snapshot<R: Runtime, S>(app: &AppHandle<R>, snapshot: &S)
+where
+    S: serde::Serialize + Clone,
+{
+    for (label, window) in app.webview_windows() {
+        // 读不到可见性就按可见处理：宁可多发一条，也不能让灯停在旧状态。
+        let hidden_main = label == MAIN_WINDOW && !window.is_visible().unwrap_or(true);
+        if !hidden_main {
+            let _ = app.emit_to(label, "agent-status", snapshot);
+        }
+    }
 }
 
 fn process_alive(session: &SessionSnapshot) -> Option<bool> {

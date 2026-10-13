@@ -671,12 +671,15 @@ html.is-tooltip-window #app {
 }
 
 /* 一格 45px：外壳只留「1px 描边 + p-0.5 内边距」当呼吸位 —— 组件内容不贴边，也不会被四角圆角切到；
-   余量全给组件（本项目的 --spacing 是 3.5px，p-0.5 ≈ 1.75px，可用内容 ≈ 39.5px）。 */
+   余量全给组件（本项目的 --spacing 是 3.5px，p-0.5 ≈ 1.75px，可用内容 ≈ 39.5px）。
+   ⚠️ 这里**不要**再写 backdrop-filter：悬浮窗是透明 OS 窗口，桌面像素由 DWM 合成，
+   CSS 的 backdrop 只包含「本页面画在该元素之下的内容」，而它自己是根元素、之下什么都没有。
+   实测开与关的窗口区域逐像素相同（meanAbs=0），糊出来的观感全部来自 --ufo-bg 的 alpha。
+   要真糊桌面只能走原生（Win11 DWMWA_SYSTEMBACKDROP_TYPE），详见
+   reference/doc/perf-report-2026-09-28.md §3。 */
 .floating-shell {
   @apply relative h-screen w-screen overflow-hidden rounded-2xl p-0.5;
   background-color: var(--ufo-bg);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--ufo-shell-border);
   box-shadow: var(--ufo-floating-shadow);
   -webkit-box-shadow: var(--ufo-floating-shadow);
@@ -712,14 +715,14 @@ html.is-tooltip-window #app {
  * 信息提示窗（hover tooltip）。
  * 注意：它是独立于悬浮窗的第三个窗口，不参与悬浮窗的方形 / 横条 / 竖条形态适配；
  * 窗口尺寸由 tauri.conf.json 的 tooltip 定义给出，内容在此尺寸内用 flex + 省略号自适应，
- * 因此这里不写死像素宽高，只有「与悬浮窗同款毛玻璃」的视觉 token 复用。
+ * 因此这里不写死像素宽高，只复用悬浮窗那套半透明外壳 token。
+ * ⚠️ 同 .floating-shell：提示窗也是透明窗口的根元素，backdrop-filter 在这里采不到任何东西，
+ * 实测开关的像素差为 0，故不再写 blur。
  */
 .tooltip-shell {
   @apply flex h-full w-full min-h-0 flex-col gap-1.5 overflow-hidden p-2.5;
   box-sizing: border-box;
   background-color: var(--ufo-bg);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--ufo-shell-border);
   border-radius: var(--ufo-radius);
   box-shadow: var(--ufo-floating-shadow);

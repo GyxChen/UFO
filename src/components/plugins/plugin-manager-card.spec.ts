@@ -221,7 +221,7 @@ describe('启用与热重载', () => {
  * 需求 5 的那一下：详情卡上的「拓展」要真的把独立日志窗开起来。
  *
  * 锁三件事：按**当前选中的包**开、没开热重载时这颗钮不该能点（关着就不留流水）、
- * 窗口没声明时把原因写进行内提示而不是静默。这些都是「用户以为自己点中了」的形状。
+ * 开不起来时把原因写进行内提示而不是静默。这些都是「用户以为自己点中了」的形状。
  */
 describe('日志展开', () => {
   /** 按文案找那颗钮：不依赖 BaseButton 把属性挂在哪一层。 */
@@ -256,14 +256,15 @@ describe('日志展开', () => {
     wrapper.unmount()
   })
 
-  it('窗口没声明时把原因写在行内，不是静默什么都不发生', async () => {
-    openLogMock.mockResolvedValueOnce(false)
+  it('开不起来时把原因写在行内，不是静默什么都不发生', async () => {
+    // 按需建窗：失败是宿主抛回来的（配额已满 / label 非法），不再靠「配置里没声明」这条判据。
+    openLogMock.mockRejectedValueOnce('同时打开的独立窗口已达上限（3 扇），先关掉一个')
     const { plugins } = seed([record({ devReload: true })])
     const wrapper = mountCard()
     await flushPromises()
     await expandButton(wrapper)?.trigger('click')
     await flushPromises()
-    expect(plugins.actionError, '开不出来要在行内说清').toContain('没在 tauri.conf.json 里声明')
+    expect(plugins.actionError, '开不出来要在行内说清').toContain('已达上限')
     wrapper.unmount()
   })
 })

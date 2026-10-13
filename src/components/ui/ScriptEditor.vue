@@ -5,13 +5,13 @@
  * 独立窗口开着时内嵌框转**只读**：同一份草稿不能有两个写入方（两个窗口会互相顶掉光标与选区），
  * 所以写只在窗口那一侧，窗口每输入一次把整份正文回传，主窗的保存 / 运行测试因此一直拿到最新文本。
  *
- * 窗口是隐藏而非销毁的，于是每次打开都新造一枚 `token`：回传只认当前这枚 ——
+ * 窗口是**按需创建、关窗即销毁**的，于是每次打开都新造一枚 `token`：回传只认当前这枚 ——
  * 调用方换了草稿（`scope` 一变）或切走那一页，窗口就此失联，迟到的正文不会被写进新草稿。
  * 本组件不认识 `scope` 是什么，调用方用它表达「这段脚本属于谁」，这里只做字符串比较。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { hidePanelWindow, listenPanelWindowClosed } from '@/lib/panel-window'
+import { closePanelWindow, listenPanelWindowClosed } from '@/lib/panel-window'
 import {
   SCRIPT_EDITOR_WINDOW_LABEL,
   listenScriptEditorSync,
@@ -47,8 +47,8 @@ const inlineFrame = ref<InstanceType<typeof ScriptEditorFrame> | null>(null)
 /**
  * 当前这次编辑的令牌；空串 = 窗口没开着。
  *
- * ⚠️ 只在这里比一次「是不是这一次的编辑」，别把它当成窗口是否真的存在的判据：
- * Alt+F4 那条路只能靠窗口自己回报，回报没来之前这里仍是非空（所以按钮还能再点一次把窗叫回来）。
+ * 窗口的「没了」由宿主在销毁时回报（× / Esc / Alt+F4 三条路都算），所以这里跟着回报清空，
+ * 它就是可靠的判据；`token` 非空时重复点按钮只会把已有的那扇窗唤到前台并换上这一份草稿。
  */
 const token = ref('')
 /** 编辑框下面那行常驻说明：正在窗口里编辑 / 开窗失败，都写这里（本项目禁止 alert/confirm）。 */
@@ -65,7 +65,7 @@ function collapse() {
   note.value = ''
 }
 
-/** 打开（或重新聚焦）独立窗口，并把当前草稿与光标递进去。 */
+/** 打开（或唤起）独立窗口，并把当前草稿与光标递进去。 */
 async function open() {
   openSeq += 1
   const next = `${props.scope || 'script'}#${openSeq}`
@@ -86,11 +86,9 @@ async function open() {
   token.value = next
   note.value = '正在独立窗口中编辑，这里先转只读；改完点窗口右上角的 × 回来保存。'
   try {
-    // 窗口没在 `tauri.conf.json` 里声明时返回 false：界面要说清，不能安静地什么都不发生。
-    if (!(await openScriptEditorWindow(session))) {
-      collapse()
-      note.value = '打不开独立窗口：配置里没有声明这个窗口。'
-    }
+    // 建窗失败一律抛出（label 非法、同时在开的面板窗超额）：界面要说清，不能安静地什么都不发生。
+    // 返回 false 只是「窗口已经开着，唤到前台」，那算成功。
+    await openScriptEditorWindow(session)
   } catch (error) {
     collapse()
     note.value = `打不开独立窗口：${error}`
@@ -118,8 +116,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   unlistenSync?.()
   unlistenClosed?.()
-  // 这一页要没了，没人再接收同步：把窗口一起收起，别留一块写着草稿的窗在桌面上。
-  if (token.value) void hidePanelWindow(SCRIPT_EDITOR_WINDOW_LABEL)
+  // 这一页要没了，没人再接收同步：把窗口一起关掉（销毁，连带释放它那个 renderer），
+  // 别留一块写着草稿的窗在桌面上。
+  if (token.value) void closePanelWindow(SCRIPT_EDITOR_WINDOW_LABEL)
 })
 
 // 换草稿（`scope` 一变）：窗口对应的是上一份，收起 + 作废令牌。
@@ -128,7 +127,7 @@ watch(
   () => {
     if (!token.value) return
     collapse()
-    void hidePanelWindow(SCRIPT_EDITOR_WINDOW_LABEL)
+    void closePanelWindow(SCRIPT_EDITOR_WINDOW_LABEL)
   }
 )
 </script>

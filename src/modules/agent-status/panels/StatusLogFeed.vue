@@ -87,15 +87,14 @@ watch(
  * 把这一条会话交给独立窗口：实时订阅由那一扇窗自己按它的 label attach / detach，
  * 本条目这边只决定「看哪一条」。
  *
- * 开窗失败只有这一处能看见，因此必须说清：返回 `false` = `tauri.conf.json` 里没声明那个窗口。
+ * 开窗失败只有这一处能看见，因此必须说清：建窗失败会抛出（label 非法、同时在开的面板窗超额）。
  */
 async function expand() {
   if (!props.sessionKey) return
   feedback.value = ''
   try {
-    if (!(await openStatusLogWindow({ sessionKey: props.sessionKey }))) {
-      feedback.value = '打不开转灯日志窗口：配置里没有声明这个窗口。'
-    }
+    // 返回 false = 那一扇窗已经开着，唤到前台并换看这一条 —— 算成功。
+    await openStatusLogWindow({ sessionKey: props.sessionKey })
   } catch (error) {
     feedback.value = `打不开转灯日志窗口：${error}`
     console.warn('failed to open the status log window', error)

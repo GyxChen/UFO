@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-open-panel-window"
+description = "Allows a settings window to create or raise a detached panel window (label and geometry come from the caller, validated and quota-limited host-side)."
+commands.allow = ["open_panel_window"]
+
+[[permission]]
+identifier = "allow-take-panel-payload"
+description = "Allows a freshly created panel window to take the payload staged for it by the window that opened it."
+commands.allow = ["take_panel_payload"]

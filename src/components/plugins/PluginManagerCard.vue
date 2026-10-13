@@ -170,12 +170,15 @@ onMounted(async () => {
 async function openLogWindow() {
   const record = selected.value
   if (!record) return
-  const opened = await openPluginLogWindow({
-    pluginId: record.id,
-    pluginName: record.name || record.id,
-  })
-  if (!opened) {
-    plugins.actionError = '插件日志窗没在 tauri.conf.json 里声明，开不出来'
+  try {
+    // 返回 false 只是「那一扇窗已经开着」，唤到前台并换看这个包 —— 算成功。
+    await openPluginLogWindow({
+      pluginId: record.id,
+      pluginName: record.name || record.id,
+    })
+  } catch (error) {
+    // 建窗失败（同时在开的面板窗超额等）只有这一处能看见，必须写在行内而不是静默。
+    plugins.actionError = `打不开插件日志窗：${error}`
   }
 }
 

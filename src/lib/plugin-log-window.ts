@@ -1,5 +1,10 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { closeSelfPanelWindow, listenPanelWindowOpen, openPanelWindow } from '@/lib/panel-window'
+import {
+  closeSelfPanelWindow,
+  openPanelWindow,
+  usePanelWindowOpen,
+  type PanelWindowSpec
+} from '@/lib/panel-window'
 import { PLUGIN_ID_MAX_CHARS, PLUGIN_ID_PATTERN } from '@/lib/plugin-limits'
 
 /**
@@ -9,8 +14,18 @@ import { PLUGIN_ID_MAX_CHARS, PLUGIN_ID_PATTERN } from '@/lib/plugin-limits'
  * 不由主窗传 —— 传过来就变成「两处各记一套过滤」，用户看到的不是同一份历史。
  */
 
-/** 窗口 label；⚠️ 与 `tauri.conf.json` 里声明的那一份同源，由 `panel-windows.spec.ts` 锁住。 */
+/** 窗口 label；⚠️ 与 `capabilities/default.json` 的 windows 名单、`src/windows/index.ts` 的登记键同源，由 `panel-windows.spec.ts` 锁住。 */
 export const PLUGIN_LOG_WINDOW_LABEL = 'plugin-log'
+
+/** 这扇窗的身份与几何；窗口不在 `tauri.conf.json` 里声明，这里就是尺寸的唯一真相。 */
+export const PLUGIN_LOG_WINDOW: PanelWindowSpec = {
+  label: PLUGIN_LOG_WINDOW_LABEL,
+  title: 'UFO · 插件日志',
+  width: 1160,
+  height: 720,
+  minWidth: 760,
+  minHeight: 420
+}
 
 /** 主窗递进来的那一次查看。 */
 export interface PluginLogWindowView {
@@ -20,21 +35,21 @@ export interface PluginLogWindowView {
   pluginName: string
 }
 
-/** 主窗侧：打开（或重新聚焦）日志窗并告诉它看哪个包。窗口没声明时返回 false。 */
+/** 主窗侧：打开（或唤起）日志窗并告诉它看哪个包。返回 true = 这次真的新建了一扇。 */
 export function openPluginLogWindow(view: PluginLogWindowView): Promise<boolean> {
-  return openPanelWindow(PLUGIN_LOG_WINDOW_LABEL, view)
+  return openPanelWindow(PLUGIN_LOG_WINDOW, view)
 }
 
-/** 窗口侧：收起自己并回报发起方。 */
-export function closePluginLogWindow(requester: string): Promise<void> {
-  return closeSelfPanelWindow(requester)
+/** 窗口侧：关掉自己（「我关了」由宿主代为回报发起方）。 */
+export function closePluginLogWindow(): Promise<void> {
+  return closeSelfPanelWindow()
 }
 
-/** 窗口侧：订阅「要看哪个包」，载荷形状不对由 `listenPanelWindowOpen` 整份丢掉。 */
-export function listenPluginLogOpen(
+/** 窗口侧：接上「新建时暂存的载荷」与「后续 open 事件」两条路。 */
+export function usePluginLogOpen(
   handler: (view: PluginLogWindowView, requester: string) => void
 ): Promise<UnlistenFn> {
-  return listenPanelWindowOpen<PluginLogWindowView>(isPluginLogWindowView, handler)
+  return usePanelWindowOpen<PluginLogWindowView>(isPluginLogWindowView, handler)
 }
 
 /**

@@ -13,7 +13,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import PanelWindow from '@/components/ui/PanelWindow.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import { closePluginLogWindow, listenPluginLogOpen, type PluginLogWindowView } from '@/lib/plugin-log-window'
+import { closePluginLogWindow, usePluginLogOpen, type PluginLogWindowView } from '@/lib/plugin-log-window'
 import { PLUGIN_LOG_EVENT } from '@/lib/plugin-events'
 import type { PluginLogLineJson } from '@/lib/plugin-types'
 
@@ -156,13 +156,10 @@ function asText(error: unknown): string {
 
 let unlistenOpen: UnlistenFn | undefined
 let unlistenLog: UnlistenFn | undefined
-/** 发起方窗口 label：收起时要回报给它。 */
-let requester = 'main'
 
 onMounted(async () => {
   try {
-    unlistenOpen = await listenPluginLogOpen(async (next, from) => {
-      requester = from
+    unlistenOpen = await usePluginLogOpen(async next => {
       view.value = next
       paused.value = false
       pending.value = 0
@@ -189,13 +186,13 @@ onBeforeUnmount(() => {
   unlistenLog?.()
 })
 
-/** × 与「完成」同一条路：先摘跟随，再收起自己并回报发起方。 */
+/** × 与 Esc 同一条路：先摘跟随，再销毁自己（「我关了」由宿主代为回报发起方）。 */
 async function dismiss() {
   const current = view.value
   if (current) {
     await invoke('set_plugin_log_view', { id: current.pluginId, attached: false }).catch(() => {})
   }
-  await closePluginLogWindow(requester)
+  await closePluginLogWindow()
 }
 </script>
 

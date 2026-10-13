@@ -56,48 +56,6 @@
         "shadow": false,
         "focus": false,
         "focusable": false
-      },
-      {
-        "label": "script-editor",
-        "title": "UFO · 编辑脚本",
-        "width": 900,
-        "height": 640,
-        "minWidth": 560,
-        "minHeight": 340,
-        "center": true,
-        "visible": false,
-        "decorations": false,
-        "transparent": true,
-        "shadow": false,
-        "skipTaskbar": false
-      },
-      {
-        "label": "status-log",
-        "title": "UFO · 转灯日志",
-        "width": 1160,
-        "height": 720,
-        "minWidth": 760,
-        "minHeight": 420,
-        "center": true,
-        "visible": false,
-        "decorations": false,
-        "transparent": true,
-        "shadow": false,
-        "skipTaskbar": false
-      },
-      {
-        "label": "plugin-log",
-        "title": "UFO · 插件日志",
-        "width": 1160,
-        "height": 720,
-        "minWidth": 760,
-        "minHeight": 420,
-        "center": true,
-        "visible": false,
-        "decorations": false,
-        "transparent": true,
-        "shadow": false,
-        "skipTaskbar": false
       }
     ],
     "trayIcon": {

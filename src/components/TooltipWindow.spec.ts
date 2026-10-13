@@ -303,6 +303,39 @@ describe('TooltipWindow transitions', () => {
     expect(showOrder).toBeGreaterThan(positionOrder)
   })
 
+  /**
+   * 收起之后不能再跟着每一次「离开」重复收起。
+   *
+   * 这条拦的是一个自激回路：`hide()` 会向悬浮窗回报「指针不在卡上了」，悬浮窗收到后又报一次
+   * 「离开了灯」→ 又收起 → 又回报……实测约 8 Hz 空转一整晚（每轮两趟跨窗事件 + 一次
+   * `window.hide()` + 一条 Rust 命令，占掉约 20% 单核）。卡本来就在收着，就不该再说话。
+   */
+  it('does not re-hide (and re-notify) when the card is already away', async () => {
+    await mountTooltip()
+
+    emitHover(hoverPayload(1, true))
+    await flushPromises()
+    emitHover(hoverPayload(2, false))
+    await flushPromises()
+    expect(tauri.currentWindow.hide).toHaveBeenCalledTimes(1)
+    const notified = tauri.emitTo.mock.calls.length
+    expect(notified, '第一次收起要回报交互，悬浮窗据此不再把卡留着').toBeGreaterThan(0)
+
+    emitHover(hoverPayload(3, false))
+    await flushPromises()
+    expect(tauri.currentWindow.hide, '已经收着的卡不该再 hide 一次').toHaveBeenCalledTimes(1)
+    expect(tauri.emitTo.mock.calls, '重复收起再回报一次，两头就此互相点着空转').toHaveLength(notified)
+  })
+
+  it('never-showed card ignores a hide without touching the window', async () => {
+    await mountTooltip()
+
+    emitHover(hoverPayload(1, false))
+    await flushPromises()
+    expect(tauri.currentWindow.hide).not.toHaveBeenCalled()
+    expect(tauri.emitTo).not.toHaveBeenCalled()
+  })
+
   it('ignores late hover events whose sequence is not newer', async () => {
     await mountTooltip()
 

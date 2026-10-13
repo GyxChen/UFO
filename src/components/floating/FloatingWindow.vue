@@ -73,21 +73,35 @@ let unlistenRuntimeRequest: UnlistenFn | undefined
 
 /**
  * 宿主算出各形态的运行时快照 → 广播给主窗口（组件徽标 + 三形态预览）。
- * 主窗口没开也没关系，事件没人收而已。
  */
 function onModuleRuntime(snapshot: FloatingRuntimeSnapshot) {
   lastRuntime = snapshot
   void broadcastRuntime()
 }
 
-/** 把缓存的运行时快照发给主窗口；主窗口刚挂载时会主动来要一次。 */
+/** 上一次真正发出去的快照内容，用来判断这次值不值得发。 */
+let lastBroadcastRuntimeJson = ''
+
+/**
+ * 把缓存的运行时快照发给主窗口；主窗口刚挂载时会主动来要一次。
+ *
+ * ⚠️ 必须去重：宿主每轮 agent 状态变化都可能重算快照，而格子分配很少真的变。
+ * 实测 26 秒里向主窗推了 56 条内容几乎相同的事件，主窗每条都要重算一遍预览。
+ */
 async function broadcastRuntime() {
   if (!lastRuntime) {
     return
   }
+  const payload = JSON.stringify(lastRuntime)
+  if (payload === lastBroadcastRuntimeJson) {
+    return
+  }
+  lastBroadcastRuntimeJson = payload
   try {
     await emitTo('main', FLOATING_RUNTIME_EVENT, lastRuntime)
   } catch (error) {
+    // 发失败要把「已发过」的记号擦掉：否则这条快照再也不会重发，主窗停在旧值上。
+    lastBroadcastRuntimeJson = ''
     console.warn('failed to broadcast floating runtime', error)
   }
 }
@@ -143,7 +157,18 @@ function onTooltipInteraction(hovered: boolean) {
   }
 }
 
+/**
+ * 上一次真的报给提示窗的状态。
+ *
+ * ⚠️ 只用来吃掉**连续的**「已经离开」：提示窗收起时会回报「指针不在卡上」，这里收到又会
+ * 走一遍 `onModuleHover(null)` → 120ms 后再报一次「离开」，两头就这样互相点着空转
+ * （每轮两趟跨窗事件 + 一次 `window.hide()` + 一条 Rust 命令）。报「显示」永远不跳过。
+ */
+let lastHoverEmitted = false
+
 async function emitHover(visible: boolean) {
+  if (!visible && !lastHoverEmitted) return
+  lastHoverEmitted = visible
   const payload: TooltipHoverPayload = {
     sequence: ++tooltipHoverSequence,
     visible,

@@ -6,7 +6,7 @@
 //!
 //! 取值（逗号或空格分隔，不区分大小写）：
 //! - 空 / `0` / `false` / `off` / `none` → 一个都不开（默认）
-//! - `all` / `1` / `true` / `on`        → 三个窗口全开
+//! - `all` / `1` / `true` / `on`        → 所有窗口全开（含运行时才建出来的独立面板窗）
 //! - 其它按窗口 label 处理，如 `floating,tooltip` → 只开这两个
 //!
 //! 注意这里管的是 **webview 的 devtools**；前端的 Vue devtools 是另一套开关（`VITE_DEVTOOLS`）。

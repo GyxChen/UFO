@@ -178,6 +178,17 @@ impl LogState {
         }
     }
 
+    /// 摘掉某个窗口在**所有包**上的跟随：面板窗是被销毁的（前端来不及自己 detach），
+    /// 由组合根在 `WindowEvent::Destroyed` 上调这里，否则「没人看还每轮 emit」会一直挂着。
+    pub fn drop_window_viewers(&self, window: &str) {
+        let mut guard = lock(&self.0);
+        for viewers in guard.viewers.values_mut() {
+            viewers.remove(window);
+        }
+        // 空集合留着只会让 `has_viewer` 多绕一次，顺手收掉。
+        guard.viewers.retain(|_, viewers| !viewers.is_empty());
+    }
+
     /// 卸载 / 停用时收干净：连环带跟随一起丢，别让残留行在下次装同名包时冒出来。
     pub fn forget(&self, id: &str) {
         let mut guard = lock(&self.0);
@@ -499,6 +510,13 @@ mod tests {
         state.set_view("p", "plugin-log", false);
         assert!(!state.has_viewer("p"));
         state.set_view("p", "plugin-log", true);
+        // 面板窗是被销毁的（前端来不及自己 detach）：宿主在 Destroyed 里按窗口一次性摘掉它在
+        // **所有包**上的跟随，别留下「没人看还每轮 emit」，也不许顺手关掉主窗那一份。
+        state.set_view("q", "plugin-log", true);
+        state.set_view("q", "main", true);
+        state.drop_window_viewers("plugin-log");
+        assert!(!state.has_viewer("p"), "窗口销毁后 p 包不再有人跟");
+        assert!(state.has_viewer("q"), "但 q 包上主窗那份跟随要留着");
         state.forget("p");
         assert!(!state.has_viewer("p"), "卸载 / 停用后要连跟随一起收");
         let _ = fs::remove_dir_all(&root);

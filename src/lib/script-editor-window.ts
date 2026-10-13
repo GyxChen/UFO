@@ -1,5 +1,10 @@
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { closeSelfPanelWindow, listenPanelWindowOpen, openPanelWindow } from './panel-window'
+import {
+  closeSelfPanelWindow,
+  openPanelWindow,
+  usePanelWindowOpen,
+  type PanelWindowSpec
+} from './panel-window'
 import type { EditorCaret } from './js-editor'
 
 /**
@@ -9,8 +14,23 @@ import type { EditorCaret } from './js-editor'
  * 草稿归属由调用方用一个不透明的 `token` 表达（见 `ScriptEditorSession.token`）。
  */
 
-/** 窗口 label；⚠️ 与 `src-tauri/tauri.conf.json` 里声明的那一份同源，由 `panel-windows.spec.ts` 锁住。 */
+/** 窗口 label；⚠️ 与 `capabilities/default.json` 的 windows 名单、`src/windows/index.ts` 的登记键同源，由 `panel-windows.spec.ts` 锁住。 */
 export const SCRIPT_EDITOR_WINDOW_LABEL = 'script-editor'
+
+/**
+ * 这扇窗的身份与几何。
+ *
+ * 窗口**不在 `tauri.conf.json` 里声明** —— 声明即建窗，隐藏着的 WebView2 也占一整个 renderer
+ * 进程。这里就是唯一的一份尺寸真相，宿主照它现建。
+ */
+export const SCRIPT_EDITOR_WINDOW: PanelWindowSpec = {
+  label: SCRIPT_EDITOR_WINDOW_LABEL,
+  title: 'UFO · 编辑脚本',
+  width: 900,
+  height: 640,
+  minWidth: 560,
+  minHeight: 340
+}
 
 /** 窗口 → 发起方：正文每变一次同步一条（发起方因此随时能拿最新文本去保存 / 运行测试）。 */
 export const SCRIPT_EDITOR_SYNC_EVENT = 'ufo-script-editor-sync'
@@ -44,14 +64,26 @@ export interface ScriptEditorSync {
   script: string
 }
 
-/** 主窗侧：打开（或重新聚焦）脚本窗并递进这一次的草稿。窗口没声明时返回 false。 */
+/** 主窗侧：打开（或唤起）脚本窗并递进这一次的草稿。返回 true = 这次真的新建了一扇。 */
 export function openScriptEditorWindow(session: ScriptEditorSession): Promise<boolean> {
-  return openPanelWindow(SCRIPT_EDITOR_WINDOW_LABEL, session)
+  return openPanelWindow(SCRIPT_EDITOR_WINDOW, session)
 }
 
-/** 窗口侧：收起自己并回报发起方（完成 / Esc / 被系统关窗改成隐藏）。 */
-export function closeScriptEditorWindow(requester: string): Promise<void> {
-  return closeSelfPanelWindow(requester)
+/** 窗口侧：关掉自己（销毁并释放那个 renderer；「我关了」由宿主代为回报发起方）。 */
+export function closeScriptEditorWindow(): Promise<void> {
+  return closeSelfPanelWindow()
+}
+
+/**
+ * 窗口侧：接上「新建时暂存的会话」与「后续 open 事件」两条路。
+ *
+ * ⚠️ 载荷一到就整份换掉窗口自己的会话：这扇窗是复用的（同一 label 二次 open 只唤起不重建），
+ * 残留的上一份正文会顶掉这一次的草稿。
+ */
+export function useScriptEditorOpen(
+  handler: (session: ScriptEditorSession, requester: string) => void
+): Promise<UnlistenFn> {
+  return usePanelWindowOpen<ScriptEditorSession>(isScriptEditorSession, handler)
 }
 
 /** 窗口侧：把当前正文同步给发起方。 */
