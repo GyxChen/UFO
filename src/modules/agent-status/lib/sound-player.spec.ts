@@ -99,3 +99,31 @@ describe('playLightSound', () => {
     warn.mockRestore()
   })
 })
+
+/**
+ * CSP 必须放行 `blob:` 媒体。
+ *
+ * 提示音的地址是 `URL.createObjectURL(...)` 造的 `blob:`，而 CSP 没写 `media-src` 时会
+ * 回落到 `default-src` —— 那里只有 `'self' customprotocol: asset:`，**不含 `blob:`**，
+ * 于是打包态（CSP 由 `tauri://` 协议加响应头，dev 走 Vite 所以不受管）媒体加载被拦，
+ * 表现就是「灯在跳、就是没声」，而且 `play()` 的失败被静默吞掉，界面上毫无痕迹。
+ *
+ * ⚠️ 这条断言是**单向**的护栏（它查配置，不查浏览器行为）：删掉 `media-src` 必须变红。
+ */
+describe('CSP 与 blob: 音效同源', () => {
+  it('media-src 允许 blob:（否则装机版提示音会被拦）', async () => {
+    const confRaw = (await import('../../../../src-tauri/tauri.conf.json?raw')).default
+    const conf = JSON.parse(confRaw.replace(/\r\n/g, '\n').replace(/^/, '')) as {
+      app: { security: { csp?: Record<string, string> } }
+    }
+    const csp = conf.app.security.csp
+    expect(csp, 'tauri.conf.json 里必须有 app.security.csp').toBeTruthy()
+
+    const mediaSrc = csp['media-src']
+    expect(mediaSrc, '缺 media-src 时会回落到 default-src，而它不含 blob:').toBeTruthy()
+    expect(mediaSrc.split(/\s+/), `media-src 里没有 blob:：${mediaSrc}`).toContain('blob:')
+
+    // default-src 单独看一眼：它确实不带 blob:，所以上面那条不是冗余断言。
+    expect(csp['default-src'].split(/\s+/)).not.toContain('blob:')
+  })
+})

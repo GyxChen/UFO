@@ -72,6 +72,7 @@
         "connect-src": "ipc: http://ipc.localhost http://ufo-plugin.localhost",
         "font-src": "'self' http://ufo-plugin.localhost",
         "img-src": "'self' asset: http://asset.localhost blob: data: http://ufo-plugin.localhost",
+      "media-src": "'self' blob:",
         "style-src": "'unsafe-inline' 'self' http://ufo-plugin.localhost",
         "frame-src": "'self' http://ufo-plugin.localhost ufo-plugin: https:"
       }
