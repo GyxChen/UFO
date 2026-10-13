@@ -631,6 +631,36 @@ fn report_verdict(
     }
 }
 
+/// `.tmp` 要老到什么程度才当残骸删（毫秒）。
+///
+/// hook 的节奏是「写 `.tmp` → `sync_all` → rename 成 `.json`」，实测存活期 0.1–0.3 毫秒。
+/// 没有年龄判据时，monitor 每 500 毫秒一轮的扫描会把**刚写下、还没来得及 rename** 的那份
+/// 当残骸删掉，hook 的 rename 随即失败（os error 2、日志 `publish_rename_failed`），
+/// **这一条事件就静默丢了** —— 装机版实测 2703 次落盘里 23 次失败（0.85%），
+/// 每次失败都能配上一行时间相差 1–3 毫秒的 `stale_temp_swept`。
+///
+/// 5 秒一头远大于存活期（关掉竞态窗口），另一头远小于「残骸永久滞留」的可接受时间
+/// （原来加这个扫描就是为了这个），两边都保住。丢 `Stop` / `SessionEnd` 的代价是灯停在
+/// 错误状态直到 30 分钟 failsafe，所以这里宁可让残骸多留一轮也不能误删在发布中的文件。
+const STALE_TEMP_MIN_AGE_MS: i64 = 5_000;
+
+/// 一个 `.tmp` 是否已经老到可以删；拿不到修改时间就判「不删」。
+///
+/// 只有「确实读到了 mtime 且够老」才动手 —— 元数据出错、文件刚好消失这些情况一律留着，
+/// 下一轮还会再判。
+fn temp_file_is_stale(path: &Path, now_ms: i64) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    let Ok(since_epoch) = modified.duration_since(std::time::UNIX_EPOCH) else {
+        return false;
+    };
+    now_ms.saturating_sub(since_epoch.as_millis() as i64) >= STALE_TEMP_MIN_AGE_MS
+}
+
 fn consume_inbox<R: Runtime>(
     app: &AppHandle<R>,
     inbox: &Path,
@@ -652,6 +682,8 @@ fn consume_inbox<R: Runtime>(
         );
         return false;
     };
+    // 扫残骸的年龄基准：整批共用一个时刻，别在循环里逐个取（一轮之内判据要一致）。
+    let sweep_now = now_ms();
     // 先把一批整体读出来，按**接收顺序**排好再逐条消费 —— `read_dir` 的顺序由文件系统
     // 决定，与写入顺序无关。批内不排序会让迟到的「子代理收尾」先于更早的「开工」生效，
     // 把一个仍在后台跑的执行者从活跃集合里抹掉。
@@ -666,7 +698,13 @@ fn consume_inbox<R: Runtime>(
         if extension != "json" {
             // 认不出的文件分两类，都不放过：
             // - `.tmp` 是 hook 写一半就崩了留下的残骸，以前**永久滞留**在 inbox 里没人扫；
+            //   但只有老到 [`STALE_TEMP_MIN_AGE_MS`] 才算残骸 —— 年轻的正是「hook 刚写完、
+            //   下一秒就要 rename」的那一份，删掉它会让那条事件静默丢失。
             // - 其它扩展名可能是用户手放的东西，只报一行、不动它。
+            if extension == "tmp" && !temp_file_is_stale(&path, sweep_now) {
+                // 不记日志行：每个事件都会有一瞬处于这个状态，记下来就是把有用的行淹掉。
+                continue;
+            }
             let reason = if extension == "tmp" {
                 if fs::remove_file(&path).is_ok() {
                     LogReason::StaleTempSwept
@@ -925,6 +963,7 @@ fn process_alive(session: &SessionSnapshot) -> Option<bool> {
 mod tests {
     use super::*;
     use crate::modules::agent_status::status::model::{AgentEventKind, SCHEMA_VERSION};
+    use crate::modules::agent_status::status::test_support::TempDir;
 
     fn event(id: &str, received_at_ms: i64) -> AgentEvent {
         AgentEvent {
@@ -990,5 +1029,49 @@ mod tests {
         let ordered = order_inbox_batch(batch);
         assert!(ordered[0].1.is_some(), "可解析的排前面");
         assert!(ordered[1].1.is_none());
+    }
+
+    /// 竞态回归：刚写下的 `.tmp` 正是「hook 写完、下一秒要 rename」的那一份。
+    ///
+    /// 扫掉它的后果不是少一行日志，而是 rename 拿到 os error 2 → 这条事件**静默丢失**
+    /// （丢在 `Stop` / `SessionEnd` 上就是灯停在错误态）。装机版实测 0.85% 的落盘是这么
+    /// 丢的（2703 次里 23 次，每次都能配上一行时间相差 1–3 毫秒的 `stale_temp_swept`），
+    /// 所以这条判据必须钉住。
+    #[test]
+    fn a_fresh_temp_file_is_not_stale_and_must_survive_the_sweep() {
+        let dir = TempDir::new("inbox-temp-sweep");
+        let path = dir.path().join(".17000-1234.tmp");
+        fs::write(&path, b"half published").expect("write tmp");
+
+        assert!(
+            !temp_file_is_stale(&path, now_ms()),
+            "年轻的 .tmp 不能当残骸 —— 它可能正要被 rename"
+        );
+    }
+
+    /// 反面：真老的残骸仍然要扫得走（这个扫描存在的原意就是别让 `.tmp` 永久滞留）。
+    #[test]
+    fn an_old_temp_file_is_stale_and_gets_swept() {
+        let dir = TempDir::new("inbox-temp-sweep");
+        let path = dir.path().join(".17000-5678.tmp");
+        let file = fs::File::create(&path).expect("create tmp");
+        let long_ago = std::time::SystemTime::now()
+            - Duration::from_secs(STALE_TEMP_MIN_AGE_MS as u64 + 60);
+        file.set_modified(long_ago).expect("set mtime");
+
+        assert!(
+            temp_file_is_stale(&path, now_ms()),
+            "超过阈值的 .tmp 仍应被判成残骸"
+        );
+    }
+
+    /// 判据只能建立在「确实读到了 mtime」上：文件消失或元数据出错时一律留着，
+    /// 下一轮还会再判 —— 少扫一轮可接受，误删不可挽回。
+    #[test]
+    fn a_temp_file_without_readable_metadata_is_not_swept() {
+        let dir = TempDir::new("inbox-temp-sweep");
+        let missing = dir.path().join(".17000-9999.tmp");
+
+        assert!(!temp_file_is_stale(&missing, now_ms()), "读不到元数据就不能删");
     }
 }
