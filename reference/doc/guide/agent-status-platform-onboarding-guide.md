@@ -29,7 +29,7 @@
 
 ## 1. hook 命令怎么配
 
-UFO 的可执行文件在安装语境里叫 `ufo`，仓库里构建产物是 `tauri-app.exe`（`src-tauri/target/debug|release/`）。任何支持「事件触发时跑一条命令、把 JSON 喂进 stdin」的 CLI 都能接：
+UFO 的可执行文件在安装语境里叫 `ufo`：`pnpm tauri build` 按 `tauri.conf.json` 根级 `mainBinaryName` 把 cargo 产物改名成 `UFO.exe`，安装器再把安装目录追加进**当前用户**的 PATH（MSI 与 NSIS 两条通道各有一份实现，见 `../rule/agent-status-hooks.md` 的「安装前提」）。⚠️ `pnpm tauri dev` / `cargo build` **不改名**，产物仍是 `src-tauri/target/debug|release/tauri-app.exe`，所以本地自测只能写绝对路径（见下文自测脚本）；而装过安装包之后，PATH 里那一条要等 agent 宿主进程重启才被读到。任何支持「事件触发时跑一条命令、把 JSON 喂进 stdin」的 CLI 都能接：
 
 ```json
 {
@@ -145,6 +145,8 @@ UFO 内核只认 8 种语义（`AgentEventKind`，`status/model.rs`）。平台�
 
 平台侧只需要一条命令：手动喂 payload，看灯。GUI 必须在运行（消费事件的是常驻 monitor）。
 
+下面这条路径是 **debug 产物**，仍叫 `tauri-app.exe`（`tauri build` 才会按 `mainBinaryName` 改名成 `UFO.exe`，`tauri dev` 不改名），所以自测一律写绝对路径。
+
 ```powershell
 $exe = "E:\workspace\AIProjects\ufo\src-tauri\target\debug\tauri-app.exe"
 
@@ -155,6 +157,14 @@ $exe = "E:\workspace\AIProjects\ufo\src-tauri\target\debug\tauri-app.exe"
 '{"session_id":"e2e-1","hook_event_name":"SessionEnd"}'   | & $exe --status-hook --provider claude
 # → 绿闪后这盏灯消失
 ```
+
+装过安装包（MSI 或 setup.exe）之后，同一条命令可以直接用裸名字，这也是文档里 hook 配置的正式写法：
+
+```powershell
+'{"session_id":"e2e-1","hook_event_name":"SessionStart"}' | ufo --status-hook --provider claude
+```
+
+⚠️ 裸 `ufo` 只在**新开的**宿主进程里存在 —— PATH 是安装器写进 `HKCU\Environment` 的，已经在跑的 agent 进程读不到（见 `../rule/agent-status-hooks.md`「安装前提」）。
 
 想不污染真实状态目录，加 `--status-dir <临时目录>`；⚠️ 但 `hook-debug.log` 仍写在**默认**目录（见 §1 的 📌）。
 

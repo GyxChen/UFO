@@ -9,6 +9,16 @@ UFO 从两条链路获取 agent 的生命周期事件：
 - **Claude Code / Qoder**：本地 CLI hook（本文档同名两节）。hook 进程必须快速返回，只写入一个小事件文件，不能等待 GUI。
 - **Codex**：**读 rollout**，不用 hook（见文末「Codex」节）。
 
+## 安装前提：`ufo` 这个命令名从哪来
+
+下面所有示例写的都是裸命令 `ufo --status-hook …`，它能被 spawn 靠的是 PATH 里能找到 `UFO.exe`。这条 PATH 记录**由安装器写、由安装器删**（MSI 走 `src-tauri/windows/wix/path-fragment.wxs` 的 WiX `Environment` 组件，NSIS 走 `src-tauri/windows/nsis/path-hooks.nsh` 的 installer hooks），App 运行期完全不碰环境变量与注册表里的环境变量。因此：
+
+- **只有装过 UFO（MSI 或 setup.exe）之后，裸 `ufo` 才存在**；从源码跑没有这一步。
+- ⚠️ **装完必须重启 agent 宿主进程**，hook 才会开始生效。原因：hook 是 agent 进程 spawn 的子进程，子进程的环境块在 `CreateProcess` 那一刻从父进程**复制**一份、此后不再刷新；安装器改的是注册表里的环境变量，改不到一个已经在跑的 node 进程内存里。**只新开终端不管用**，要看的是那个 agent 进程本身有没有重启。
+- **开发期没有 `ufo`**：`pnpm tauri build` 会按 `tauri.conf.json` 根级 `mainBinaryName` 把 cargo 产物改名成 `UFO.exe`，但 `pnpm tauri dev` / `cargo build` 不改名，产物仍是 `src-tauri/target/debug|release/tauri-app.exe`。本地验 hook 只能写绝对路径，见 `../guide/agent-status-platform-onboarding-guide.md`。
+- 两条通道都装过会得到**两条** PATH 记录（MSI 装在 Program Files，NSIS 装在 `$LOCALAPPDATA\UFO`），`ufo` 命中哪一条由 PATH 顺序决定；卸载只摘自己那一条，不会互删。
+- 用户 PATH 只写到**装它的那个账户**名下：MSI 是机器级安装，但 PATH 落 `HKCU\Environment`，同机其他账户仍然没有 `ufo`。
+
 ## Claude Code
 
 将 Claude Code 的 hook 命令配置为传入 `--status-hook --provider claude`，并将 hook JSON 通过管道传给 UFO 可执行文件。保留已有 hook，合并此命令而非覆盖用户配置。

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  UFO —— MSI 通道的「装时把安装目录追加进用户 PATH、卸载时撤销」。
+  与 ../nsis/path-hooks.nsh 同语义（NSIS 那条通道）。
+  由 tauri.conf.json 的 bundle.windows.wix.fragmentPaths + componentRefs 挂进包；
+  componentRefs 注入的位置是模板里那个 Absent="disallow" 的 External feature，
+  所以本组件必然被装上（Tauri 自带的 "PATH Environment Variable" feature 其实是个空坑：
+  它只引用了主 exe 的文件组件，整个模板里 <Environment> 元素出现 0 次）。
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- $(sys.BUILDARCH) 是 WiX 的系统变量，每个 .wxs 都有；main.wxs 顶部 <?define Win64?>
+       那份是文件级作用域，fragment 里取不到 —— 写成 $(var.Win64) 会在 candle.exe 阶段
+       直接报未定义变量。 -->
+  <?if $(sys.BUILDARCH)="x86"?>
+    <?define UfoFragWin64 = "no" ?>
+  <?elseif $(sys.BUILDARCH)="x64"?>
+    <?define UfoFragWin64 = "yes" ?>
+  <?elseif $(sys.BUILDARCH)="arm64"?>
+    <?define UfoFragWin64 = "yes" ?>
+  <?else?>
+    <?error Unsupported value of sys.BUILDARCH=$(sys.BUILDARCH)?>
+  <?endif?>
+
+  <Fragment>
+    <!-- 目录 id 必须是 INSTALLDIR（main.wxs 里定义的那个）。写成 INSTALLFOLDER 时
+         candle 不报错，错要等到 light 阶段的引用完整性校验（外键指向不存在的行）。 -->
+    <DirectoryRef Id="INSTALLDIR">
+      <!-- Guid 写死而不是 "*"："*" 由父目录 + key path 派生，用户换安装目录就会换 GUID，
+           新旧两个组件在 Windows Installer 眼里互不相干，旧那条 PATH 记账就摘不干净。
+           代价是这个 GUID 从此不许改。 -->
+      <Component Id="UfoPathEnvironment"
+                 Guid="c1e0d6a4-7b2f-5a63-9f4d-2c8b1e57a0d3"
+                 Win64="$(var.UfoFragWin64)">
+
+        <!-- Windows Installer 认的 key path 位置只有 Component/File/ODBCDataSource/Registry
+             四处，<Environment> 不在列 —— 只含 Environment 的组件会卡在「没有显式 key path」。
+             这行同时是「本组件装过」的记账，与 Tauri 自己在 main.wxs 里那四处
+             HKCU RegistryValue keypath 同一个套路、同一个键、不同值名。 -->
+        <RegistryValue Root="HKCU" Key="Software\ufo\UFO"
+                       Name="PathEnvironmentEntry" Type="integer" Value="1"
+                       KeyPath="yes" />
+
+        <Environment Id="UfoPathEnv"
+                     Name="PATH"
+                     Value="[INSTALLDIR]"
+                     Action="set"
+                     Part="last"
+                     Permanent="no"
+                     System="no" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>
+
+<!--
+  四个取值的理由，三个默认值是三个坑：
+  - Part="last"：默认是 all，等于整串替换 = 抹掉用户 PATH。这是本文件最危险的一个默认值。
+    Separator 默认是 ";"，所以 Value 里不自己加分号（装完在 main.wixobj 的 Environment 表里
+    核对到底补没补，见仓库里的验收记录）。
+  - Permanent="no"：卸载时撤销。XSD 只写了 "should not be removed on uninstall"，没标默认值，
+    所以显式写死，不赌默认。
+  - System="no"：写 HKCU\Environment（用户 PATH）。NSIS 那条通道是 currentUser +
+    RequestExecutionLevel user，根本没提权，只有 HKCU 写得动；而且系统 PATH 里既有
+    %SystemRoot% 这类间接引用又有三十来条第三方目录，破坏面大一个数量级。
+  - Action="set"：变量不存在就创建、存在就写。create 的语义是「已存在就不动」，
+    那样换个安装目录重装就不会更新 PATH。
+-->

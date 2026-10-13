@@ -68,4 +68,5 @@ UFO 是一块**可拼装的悬浮窗**：显示 Claude / Codex / Qoder 等 agent
 - **不阻塞 UI 线程**：非 `async` 命令跑在主线程；`window.alert` / `confirm` 会被 `tauri-plugin-prevent-default` 拦掉，反馈一律走行内 `role="status"` + 两步确认。
 - **指示灯不加 `title`**：Windows 原生文字提示会与自绘 tooltip 重复，无障碍信息只走 `aria-label`。
 - `src/assets/bgm/` 的三段 mp3 用 `include_bytes!` 编进二进制，删掉直接编译失败；`additionalBrowserArgs` 会覆盖 wry 的默认值，改它必须把原来的 `--disable-features=...` 一起写回。
+- **用户 PATH 只由安装器写、只由安装器删**：MSI 侧是 `src-tauri/windows/wix/path-fragment.wxs` 的 WiX `Environment` 组件（`Part` 缺省是 `all` = 整串替换 = 抹掉用户 PATH），NSIS 侧是 `src-tauri/windows/nsis/path-hooks.nsh` 的两个 installer hook（严禁 `setx`，它把 PATH 截到 1024 字符）；App 运行期不碰注册表与环境变量，hook 进程继续保持零特权。这两条加上「文档里的 hook 命令名必须等于根级 `mainBinaryName`」由 `src/modules/agent-status/hook-command-doc.spec.ts` 卡住 —— 分叉的后果是**用户照文档配完灯不亮**，CI 别处抓不到。
 - 不 push、不 amend、不 force、不 `reset --hard`；不动用户的本地数据文件（要清理就先移到 `%TEMP%` 备份）。
