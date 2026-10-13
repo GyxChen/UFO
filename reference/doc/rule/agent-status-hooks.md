@@ -19,6 +19,10 @@ UFO 从两条链路获取 agent 的生命周期事件：
 - 两条通道都装过会得到**两条** PATH 记录（MSI 装在 Program Files，NSIS 装在 `$LOCALAPPDATA\UFO`），`ufo` 命中哪一条由 PATH 顺序决定；卸载只摘自己那一条，不会互删。
 - 用户 PATH 只写到**装它的那个账户**名下：MSI 是机器级安装，但 PATH 落 `HKCU\Environment`，同机其他账户仍然没有 `ufo`。
 
+`--provider` 的取值大小写不敏感，且每家都认一个 `-cli` / `-code` 别名：`claude` / `claude-code`、`codex` / `codex-cli`、`qoder` / `qoder-cli`（`status/model.rs` 的 `Provider::parse`）。传不认识的值 → exit 1 并把原值回显成 `unknown --provider "…"`，报错**不**列举平台清单（那份清单每接一个平台就会失真一次）。
+
+`async` / `timeout` 这两个键是**平台侧**行为（决定它等不等这个 hook），UFO 不消费。本文只在 Qoder 与 Codex 那两节标上它们（本机实测可用）；Claude 那节的示例刻意不带 —— 本机那份 `~/.claude/settings.json` 里没用过，没实测过的东西不抄进示例。
+
 ## Claude Code
 
 将 Claude Code 的 hook 命令配置为传入 `--status-hook --provider claude`，并将 hook JSON 通过管道传给 UFO 可执行文件。保留已有 hook，合并此命令而非覆盖用户配置。
@@ -276,7 +280,7 @@ Codex 确实有一套 hook（12 个事件，`HOOK_EVENT_NAMES` 实测自 `codex.
 | **中断路径也不触发** | 从 Desktop 停止按钮取消一轮（app-server 的 `turn/interrupt`），rollout 里 `turn_aborted` 已落盘，hook 侧仍是一次都没有 |
 | **会静默失效** | hooks 要在设置页逐条信任、且按**内容哈希**记账（改一次要重新信任）。实测出现过「一段时间一次都不触发、四处日志无任何报错」 |
 
-**所以 Codex 侧 `hooks.json` 只配一个事件**（`PermissionRequest`）—— rollout 覆盖不到的只有它：
+**所以 Codex 侧的 `~/.codex/hooks.json` 只配一个事件**（`PermissionRequest`）—— rollout 覆盖不到的只有它：
 
 ```json
 { "hooks": { "PermissionRequest": [
@@ -415,8 +419,12 @@ ufo --status-hook --provider qoder
 2. **拿不到真实 endpoint**。`~/.qoder/settings.json` 没有 `env` 块，模型目录（`~/.qoder/.models/*/catalog-v6`）是加密的，BYOK 走 `/model` 向导且不落明文配置；环境变量里也没有 endpoint 类变量。实测模型流量发往 `api3.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation`，但那个 host 由服务端按区域下发（`center.qoder.sh/api/*/service/region/endpoints`），换区域 / 换版本就会变，不适合当档案键。因此 UFO 给 Qoder 会话送一个**稳定身份常量** `compat::qoder::QODER_ENDPOINT`：它不可请求、不代表任何用户配置，只为让「信息卡拓展」的 endpoint 档案有键可用。⚠️ 代价是 tooltip 的 Endpoint 行显示的就是这个常量本身。
 3. **transcript 的 token 数值恒为 0**。记录结构与 Claude 同构（`type` = assistant、`message.usage` 的 `input_tokens` / `cache_creation_input_tokens` / `cache_read_input_tokens` / `output_tokens` 四个键名都在，实测 326 个 usage 块），但网关不回填数值（只有 `credits` / `original_credits` / `context_usage_ratio` 非 0）。所以 Qoder 与 Claude 共用同一个 transcript 解析器（`status/tokens.rs` 的 `TokenTracker`）：解析出 0，前端 `tokenCount > 0` 自然不渲染那一行；哪天网关开始回填，这里就自动出数。
 
-## 状态目录
+## 状态目录与排查
 
-GUI 负责选择 app-local 状态目录。如需在不打包的情况下测试 hook，可设置 `UFO_STATUS_DIR` 指向一个受控目录。每个事件通过临时文件加原子 rename 写入 `inbox/*.json`；格式错误的事件会被移入隔离目录。
+- **目录优先级**：`--status-dir <dir>` > 环境变量 `UFO_STATUS_DIR` > 默认 `%APPDATA%\com.ufo.app\status`（macOS/Linux 走各自 AppSupport / XDG 口径）。GUI 负责选这个目录。
+- **事件落盘**：每个事件先写成临时文件再原子 rename 进 `inbox/<trace_id>.json`，monitor 约 500ms 内消费并删除；**解析不了的坏文件不动内容，只移进同级 `quarantine/`**（日志里只记文件名与判定 —— 坏文件很可能是写了一半的提问，那正是不能落盘的东西）。
+- **hook 自己那一行**写在同级 `log/`，即「转灯日志」，**跟着 `--status-dir` 一起走**。⚠️ 两个开关默认都是关的：记录级别（`log.level`，`off` = 整块不记）与 hook 侧那一行（`log.hook_enabled`）。开着才有「hook 到底有没有被调用过」这个证据；关着就一次磁盘往返都不做，此时唯一剩下的证据是 hook 的 stderr `UFO status hook failed: <原因>` 与退出码 1（**没有重试与兜底队列**，失败就是丢了这一个事件）。设置文件本身仍从默认 AppData 位置读，不跟 `--status-dir`。
+- **配完自查（顺序即排查顺序）**：① 在**新起的宿主进程**里 `where ufo` 有结果 —— PATH 是安装器写的，已经在跑的 agent 读不到（见「安装前提」）；② 手动喂一条假 payload，期望 exit 0 且悬浮窗约 500ms 出灯；③ 不出灯就按上面两条取证（转灯日志有没有 hook 那行、inbox/quarantine 里有没有过文件）。命令形状与逐条示例见 `../guide/agent-status-platform-onboarding-guide.md` §6。
+- **想撤掉**：hook 条目只存在于你自己的平台配置里（`~/.claude/settings.json`、`~/.qoder/settings.json`、`~/.codex/hooks.json`）—— UFO 从不写这些文件，卸载 UFO 也不会替你删。摘掉那些带 `--status-hook` 的条目即可；PATH 里那一条由安装器在卸载时自己摘。
 
 监测器按 `provider:session_id` 维护唯一的会话记录，在可选的悬浮窗模块中最多渲染 8 盏独立状态灯。

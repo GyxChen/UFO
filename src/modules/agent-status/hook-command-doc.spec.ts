@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import confRaw from '../../../src-tauri/tauri.conf.json?raw'
 import hooksDocRaw from '../../../reference/doc/rule/agent-status-hooks.md?raw'
 import onboardRaw from '../../../reference/doc/guide/agent-status-platform-onboarding-guide.md?raw'
+import readmeRaw from '../../../README.md?raw'
 import wxsRaw from '../../../src-tauri/windows/wix/path-fragment.wxs?raw'
 import nshRaw from '../../../src-tauri/windows/nsis/path-hooks.nsh?raw'
 
@@ -67,6 +68,18 @@ function hookCommands(text: string, label: string): string[] {
   return all.filter((command) => command.includes('--status-hook'))
 }
 
+/**
+ * 抽出**散文式**提及（README 与文档正文里的 `ufo --status-hook …`，不是 JSON 键值）。
+ *
+ * 前置断言里排掉 `$`：自测脚本写的是 `$exe --status-hook`（开发期绝对路径变量），
+ * 那个 token 本来就不该等于安装名，混进来会变成假红。解析出 0 条同样抛。
+ */
+function proseHookCommands(text: string, label: string): string[] {
+  const found = [...text.matchAll(/(?<![$\w.-])([A-Za-z0-9_.-]+)\s+--status-hook/g)].map((m) => m[1])
+  if (found.length === 0) throw new Error(`${label} 里一条 --status-hook 都没解析出来，写法漂了`)
+  return found
+}
+
 /** 命令的第一个 token 就是要被 PATH 解析的可执行文件名。 */
 const commandName = (command: string) => command.trim().split(/\s+/)[0].toLowerCase()
 
@@ -74,14 +87,19 @@ const commandName = (command: string) => command.trim().split(/\s+/)[0].toLowerC
 const binary = (conf.mainBinaryName ?? '').toLowerCase()
 
 describe('hook 命令名与 mainBinaryName 同源', () => {
-  it('两份文档里每条 hook 命令用的都是构建产物那个名字', () => {
-    const fromDocs = [...hookCommands(norm(hooksDocRaw), 'agent-status-hooks.md'),
+  it('三份材料里每条 hook 命令用的都是构建产物那个名字', () => {
+    // README 只给散文式的提醒（不给配置样例，免得又多一处会漂的抄本），所以只过散文扫描器。
+    const fromJson = [...hookCommands(norm(hooksDocRaw), 'agent-status-hooks.md'),
       ...hookCommands(norm(onboardRaw), 'agent-status-platform-onboarding-guide.md')]
-    // 命令名一旦与 mainBinaryName 分叉，文档配出来的 hook 就 spawn 不到东西。
-    const names = [...new Set(fromDocs.map(commandName))].sort()
-    expect(names, '文档里的 hook 命令名集合与 mainBinaryName 不一致').toEqual([binary])
+    const fromProse = [...proseHookCommands(norm(hooksDocRaw), 'agent-status-hooks.md'),
+      ...proseHookCommands(norm(onboardRaw), 'agent-status-platform-onboarding-guide.md'),
+      ...proseHookCommands(norm(readmeRaw), 'README.md')]
+    // 命令名一旦与 mainBinaryName 分叉，照抄的人配出来的就是「装了但灯不亮」。
+    const names = [...new Set([...fromJson, ...fromProse].map(commandName))].sort()
+    expect(names, '文档 / README 里的 hook 命令名集合与 mainBinaryName 不一致').toEqual([binary])
     // 至少各留一条：整节被删光时上面的集合会变成空数组，不该被当成「一致」。
-    expect(fromDocs.length, '两份文档里带 --status-hook 的命令少于 3 条，八成是正文被整段删了').toBeGreaterThanOrEqual(3)
+    expect(fromJson.length, '带 --status-hook 的 "command" 少于 3 条，八成是正文被整段删了').toBeGreaterThanOrEqual(3)
+    expect(fromProse.length, '散文式的 --status-hook 提及为 0，README 那条提醒可能被改写了').toBeGreaterThanOrEqual(1)
   })
 
   it('mainBinaryName 存在且不带扩展名（schema 规定由 CLI 自己补 .exe）', () => {

@@ -53,7 +53,7 @@ UFO 的可执行文件在安装语境里叫 `ufo`：`pnpm tauri build` 按 `taur
 
 ✅ **合并而不是覆盖**：往平台的 hook 配置里加条目时不要整份覆写用户已有配置。
 
-📌 调试日志恒写**默认**状态目录下的 `hook-debug.log`，不跟 `--status-dir`（`hook.rs` 里 `default_status_dir()` 那一步）。用 `--status-dir` 做实验时别以为日志也在临时目录里。
+📌 hook 那一侧的排查记录就是**转灯日志**：写在与 inbox 同级的 `log/` 目录里，**跟着 `--status-dir` 一起走**。旧版那条硬写默认目录的 `hook-debug.log` 已经废掉 —— 正是因为它与 inbox 分家，才出现过「日志说有事件、目录里却没有」这种排查黑洞。⚠️ 两个开关默认都是关的：设置里的记录级别（`log.level`，`off` = 整块不记）与 hook 侧那一行（`log.hook_enabled`）。都开着才有「hook 到底有没有被调用过」这个证据；关着就什么都不落盘，唯一剩下的证据是 stderr 那行 `UFO status hook failed: …` 与退出码 1。另：开关本身从默认 AppData 位置的设置文件读，**不**跟 `--status-dir`。
 
 ## 2. payload 最少要给什么
 
@@ -151,7 +151,7 @@ UFO 内核只认 8 种语义（`AgentEventKind`，`status/model.rs`）。平台�
 $exe = "E:\workspace\AIProjects\ufo\src-tauri\target\debug\tauri-app.exe"
 
 '{"session_id":"e2e-1","hook_event_name":"SessionStart"}' | & $exe --status-hook --provider claude
-# → 悬浮窗约 500ms 内出绿灯（黄 = 事件没进 inbox，看 hook-debug.log 的 FAILED 行）
+# → 悬浮窗约 500ms 内出绿灯（不出灯就按 §1 末尾那条 📌 取证：转灯日志里有没有 hook 那一行、inbox 有没有过文件）
 '{"session_id":"e2e-1","hook_event_name":"Stop"}'         | & $exe --status-hook --provider claude
 # → 先绿闪，30 秒后落黄常亮
 '{"session_id":"e2e-1","hook_event_name":"SessionEnd"}'   | & $exe --status-hook --provider claude
@@ -166,7 +166,7 @@ $exe = "E:\workspace\AIProjects\ufo\src-tauri\target\debug\tauri-app.exe"
 
 ⚠️ 裸 `ufo` 只在**新开的**宿主进程里存在 —— PATH 是安装器写进 `HKCU\Environment` 的，已经在跑的 agent 进程读不到（见 `../rule/agent-status-hooks.md`「安装前提」）。
 
-想不污染真实状态目录，加 `--status-dir <临时目录>`；⚠️ 但 `hook-debug.log` 仍写在**默认**目录（见 §1 的 📌）。
+想不污染真实状态目录，加 `--status-dir <临时目录>`；inbox 与转灯日志都跟着走（只有「开关本身」仍从默认 AppData 的设置文件读，见 §1 末尾的 📌）。
 
 反例自查：`--provider <还没登记进 UFO 的名字>` 期望 **exit 1**，并把传入值原样回显成 `unknown --provider "qcoder"`（报错不列举平台清单 —— 那份清单每接一个平台就会失真一次）。这说明 `Provider` 是闭包枚举 —— 新平台必须先按 §8 登记，光配 hook 是接不进来的。
 
@@ -217,7 +217,7 @@ fn adapt(&self, payload: &Value, ctx: &AdaptContext<'_>) -> Result<Option<Adapte
 ```
 
 - `Ok(Some(..))` = 归一化成功；`Ok(None)` = **静默忽略**（不落盘、不算失败、退出码仍 0）。只关心少数事件的平台（如 Codex 只要 `PermissionRequest`）就靠这个把其余事件吃掉，避免多起进程空转。
-- `Err(..)` = 真失败，会写 `hook-debug.log` 的 FAILED 行并 exit 1。
+- `Err(..)` = 真失败：exit 1 + stderr 一行 `UFO status hook failed: …`；开着日志时（见 §1 末尾的 📌）还会在转灯日志里留下一行判定（如 `PayloadNotJson`）。
 - 信封字段（`event_id` / `pid` / `received_at_ms` / `schema_version`）由 hook 外壳 `into_event` 统一补，适配器**不要**自己拼。
 
 ⚠️ **release 构建是 `panic = "abort"`**：适配器里不得 panic（不 `unwrap` / `expect` / 裸索引 / 字节切片）。按长度截字符串要用 `chars()` 而不是 `&s[..n]`（后者遇多字节字符直接 panic，会带走整个 App）。失败一律返回 `Err(String)`。
