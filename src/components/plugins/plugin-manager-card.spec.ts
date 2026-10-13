@@ -3,7 +3,7 @@
 /**
  * 插件管理区的行为护栏。
  *
- * 锁的是「流程形状」而不是像素：装与卸都必须两步、开关只能有一个写入方、
+ * 锁的是「流程形状」而不是像素：装与卸都必须两步、启用只有一个写入入口、
  * 徽标只渲染注册表里真有其名的条目。这几条错的表现都是「用户以为自己做对了」。
  */
 import { flushPromises, mount } from '@vue/test-utils'
@@ -102,7 +102,7 @@ describe('已装列表', () => {
     expect(wrapper.findAll('.plugin-manager__perms li')).toHaveLength(3)
   })
 
-  it('校验失败的那行直接说原因，不留下一个看不懂的开关', () => {
+  it('校验失败的那行直接说原因，不说一句看不懂的空态', () => {
     const { plugins } = seed([record({ manifest: null, error: '清单缺少 entry' })])
     plugins.select('balance-board')
     const wrapper = mountCard()
@@ -187,22 +187,23 @@ describe('卸载的两步确认', () => {
 })
 
 describe('启用与热重载', () => {
-  it('启用开关写的是外壳配置（与内置组件同一个字段），不另存一份', async () => {
-    const { modules } = seed([record()])
-    const spy = vi.spyOn(modules, 'updateModuleEnabled')
+  it('启用状态在这里只读不写：唯一的入口是上方组件列表那枚开关', () => {
+    seed([record()])
     const wrapper = mountCard()
-    // setValue 会连发 input + change（与用户点一下开关的 event 形状一致）。
-    await wrapper.find('.base-switch input').setValue(false)
-    expect(spy).toHaveBeenCalledWith('balance-board', false)
+    // 组件包与内置模块共用同一张注册表，两处各放一枚开关就会互相看不见对方的变化。
+    expect(wrapper.find('.module-row .base-switch').exists()).toBe(false)
+    // 状态本身仍然看得出来（● 开着 / – 关着），只是这一行点不动。
+    expect(wrapper.get('.plugin-manager__order').text()).toBe('●')
   })
 
   it('非本地源的包，热重载开关是禁用的', () => {
     const { plugins } = seed([record({ source: 'copied', devReload: false })])
     plugins.select('balance-board')
     const wrapper = mountCard()
+    // 列表行没有开关了，卡里只剩调试卡这一枚热重载开关。
     const switches = wrapper.findAll('.base-switch input')
-    // 第一个是启用开关，第二个才是调试卡里的热重载开关。
-    expect(switches.at(-1)!.attributes('disabled')).toBeDefined()
+    expect(switches).toHaveLength(1)
+    expect(switches[0]!.attributes('disabled')).toBeDefined()
   })
 
   it('本地源的开关一拨就写入安装记录', async () => {

@@ -288,7 +288,7 @@ async function onHandleKeydown(index: number, event: KeyboardEvent) {
 
     <!--
       插件管理：压在两列下面的**满宽**卡（`grid-column: 1 / -1`，见 main.css）。
-      它排在注册表合并之后，所以这里的启用开关与上方组件列表写的是同一个 `order` / `enabled`。
+      它排在注册表合并之后，所以它左栏那一点 ●/– 读的就是本卡这一枚开关写的同一个 `enabled`。
     -->
     <PluginManagerCard />
   </div>

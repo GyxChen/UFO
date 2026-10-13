@@ -54,19 +54,13 @@ function reasonOf(record: PluginRecordJson): string {
   return record.error ?? pluginLoadErrors.value[record.id] ?? ''
 }
 
-/** 启用开关走的是**外壳配置**（与内置组件同一个字段、同一套挂载判定），安装记录不另存一份。 */
+/**
+ * 启用状态读自**外壳配置**（与内置组件同一个字段、同一套挂载判定），安装记录不另存一份。
+ * 这里只读不写：改它的路径是上方组件列表那一枚开关 —— 组件包与内置模块共用那张注册表，
+ * 一处两个入口就会互相看不见对方的变化。
+ */
 function isEnabled(record: PluginRecordJson): boolean {
   return modules.moduleEnabled(record.id, true)
-}
-
-/** 切启用；失败时开关自己会停在旧值（配置没变，列表自然回原样）。 */
-async function onToggle(record: PluginRecordJson, event: Event) {
-  const input = event.target as HTMLInputElement
-  try {
-    await modules.updateModuleEnabled(record.id, input.checked)
-  } catch {
-    input.checked = isEnabled(record)
-  }
 }
 
 /** 待确认安装的那份 preview 结果；null = 弹窗没开。 */
@@ -283,13 +277,6 @@ async function onDevReload(record: PluginRecordJson, event: Event) {
             <span class="module-row__demand">
               {{ record.manifest?.surfaces.cell ? `${record.manifest.surfaces.cell} 格` : '—' }}
             </span>
-
-            <BaseSwitch
-              :model-value="isEnabled(record)"
-              :aria-label="`启用 ${record.name || record.id}`"
-              :title="`启用 ${record.name || record.id}`"
-              @change="onToggle(record, $event)"
-            />
           </li>
         </ul>
 
