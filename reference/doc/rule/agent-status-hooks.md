@@ -16,7 +16,7 @@ UFO 从两条链路获取 agent 的生命周期事件：
 - **只有装过 UFO（MSI 或 setup.exe）之后，裸 `ufo` 才存在**；从源码跑没有这一步。
 - ⚠️ **装完必须重启 agent 宿主进程**，hook 才会开始生效。原因：hook 是 agent 进程 spawn 的子进程，子进程的环境块在 `CreateProcess` 那一刻从父进程**复制**一份、此后不再刷新；安装器改的是注册表里的环境变量，改不到一个已经在跑的 node 进程内存里。**只新开终端不管用**，要看的是那个 agent 进程本身有没有重启。
 - **开发期没有 `ufo`**：`pnpm tauri build` 会按 `tauri.conf.json` 根级 `mainBinaryName` 把 cargo 产物改名成 `UFO.exe`，但 `pnpm tauri dev` / `cargo build` 不改名，产物仍是 `src-tauri/target/debug|release/tauri-app.exe`。本地验 hook 只能写绝对路径，见 `../guide/agent-status-platform-onboarding-guide.md`。
-- 两条通道都装过会得到**两条** PATH 记录（MSI 装在 Program Files，NSIS 装在 `$LOCALAPPDATA\UFO`），`ufo` 命中哪一条由 PATH 顺序决定；卸载只摘自己那一条，不会互删。
+- ⚠️ **两条通道不要在同一台机器上混装**。Tauri 的 NSIS 模板在 `.onInit` 里会扫 `HKLM` 的卸载登记，命中同 `DisplayName` + 同 `Publisher` 的产品（也就是 MSI 那份）后**先把它卸掉再装自己**；静默模式下这一步没有任何提示。实测结果不是「两条 PATH 记录并存、卸载只摘自己那条」，而是**后装的通道把先装的踢掉**（装 NSIS 之后 MSI 的文件、卸载登记与它写的那条 PATH 都消失了）。一台机器只认一条通道；要换通道就显式走完「卸载旧的 → 装新的」。
 - 用户 PATH 只写到**装它的那个账户**名下：MSI 是机器级安装，但 PATH 落 `HKCU\Environment`，同机其他账户仍然没有 `ufo`。
 
 `--provider` 的取值大小写不敏感，且每家都认一个 `-cli` / `-code` 别名：`claude` / `claude-code`、`codex` / `codex-cli`、`qoder` / `qoder-cli`（`status/model.rs` 的 `Provider::parse`）。传不认识的值 → exit 1 并把原值回显成 `unknown --provider "…"`，报错**不**列举平台清单（那份清单每接一个平台就会失真一次）。
